@@ -1,0 +1,900 @@
+{
+  "car": {
+    "base": ["car", "vehicle", "automobile", "sedan", "hatchback", "suv", "coupe"],
+    "wheels": ["wheel", "wheels", "tire", "tires", "tyre", "rim", "alloy wheel"],
+    "mirrors": ["mirror", "mirrors", "side mirror", "rear mirror", "wing mirror"],
+    "hood": ["hood", "bonnet", "engine hood", "car hood"],
+    "windshield": ["windshield", "windscreen", "front glass", "windshield glass"],
+    "lights": ["headlight", "headlamp", "taillight", "brake light", "turn signal", "fog light"],
+    "bumpers": ["bumper", "front bumper", "rear bumper"],
+    "doors": ["door", "doors", "car door", "vehicle door", "door handle"],
+    "windows": ["window", "windows", "car window", "side window", "rear window"],
+    "roof": ["roof", "car roof", "sunroof"],
+    "body": ["trunk", "boot", "grille", "license plate", "number plate"]
+  },
+  "bicycle": {
+    "base": ["bicycle", "bike", "cycle"],
+    "wheels": ["bicycle wheel", "bike wheel", "spoke", "spokes", "tire", "pedal"],
+    "controls": ["handlebar", "brake lever", "bell"],
+    "body": ["frame", "chain", "chainring", "seat", "saddle", "fork", "kickstand"]
+  },
+  "motorcycle": {
+    "base": ["motorcycle", "motorbike", "bike", "scooter"],
+    "wheels": ["motorcycle wheel", "bike tire", "bike tyres"],
+    "controls": ["handlebar", "throttle", "brake lever"],
+    "body": ["seat", "fuel tank", "engine", "exhaust", "muffler", "helmet box"],
+    "lights": ["headlight", "taillight", "indicator"],
+    "mirrors": ["rearview mirror", "bike mirror"]
+  },
+  "bus": {
+    "base": ["bus", "coach", "minibus", "school bus"],
+    "body": ["bus door", "bus window", "windshield", "destination board", "roof rack"],
+    "wheels": ["bus wheel", "bus tire"],
+    "lights": ["bus headlight", "bus taillight"]
+  },
+  "truck": {
+    "base": ["truck", "lorry", "pickup truck", "trailer truck"],
+    "body": ["cargo bed", "trailer", "cab", "grille", "windshield", "truck door"],
+    "wheels": ["truck wheel", "truck tire"],
+    "lights": ["truck headlight", "marker light"],
+    "mirrors": ["truck mirror", "side mirror"]
+  },
+  "train": {
+    "base": ["train", "locomotive", "railcar", "carriage", "wagon"],
+    "body": ["train door", "train window", "engine car", "pantograph", "coupler"],
+    "wheels": ["train wheel", "bogie", "rail wheel"]
+  },
+  "airplane": {
+    "base": ["airplane", "plane", "aircraft", "jet", "airliner"],
+    "body": ["wing", "tail", "tail fin", "cockpit", "fuselage", "nose", "engine nacelle"],
+    "landing_gear": ["landing gear", "airplane wheel", "nose wheel"],
+    "control_surfaces": ["flap", "rudder", "aileron", "stabilizer"]
+  },
+  "boat": {
+    "base": ["boat", "ship", "vessel", "yacht", "canoe"],
+    "body": ["hull", "deck", "mast", "sail", "anchor", "cabin", "rudder", "propeller"]
+  },
+  "person": {
+    "base": ["person", "human", "man", "woman", "boy", "girl"],
+    "head": ["head", "face", "eye", "eyes", "ear", "ears", "nose", "mouth", "hair"],
+    "upper_body": ["neck", "shoulder", "arm", "elbow", "hand", "finger", "thumb", "chest", "back"],
+    "lower_body": ["waist", "leg", "knee", "foot", "feet", "ankle", "toe"],
+    "wearables": ["shirt", "tshirt", "jacket", "pants", "trousers", "shoe", "shoes", "hat", "glasses"]
+  },
+  "dog": {
+    "base": ["dog", "puppy", "canine"],
+    "head": ["snout", "paw", "tail", "ear", "fur", "collar"]
+  },
+  "cat": {
+    "base": ["cat", "kitten", "feline"],
+    "body": ["whiskers", "paw", "tail", "ear", "fur", "claw"]
+  },
+  "bird": {
+    "base": ["bird", "sparrow", "eagle", "parrot", "crow"],
+    "body": ["beak", "wing", "feather", "tail", "claw", "talon"]
+  },
+  "horse": {
+    "base": ["horse", "pony", "mare", "stallion"],
+    "body": ["mane", "hoof", "tail", "ear", "snout", "saddle"]
+  },
+  "cow": {
+    "base": ["cow", "bull", "cattle", "calf"],
+    "body": ["horn", "hoof", "tail", "udder", "ear", "snout"]
+  },
+  "sheep": {
+    "base": ["sheep", "lamb", "ram"],
+    "body": ["wool", "hoof", "tail", "ear", "snout"]
+  },
+  "elephant": {
+    "base": ["elephant"],
+    "body": ["trunk", "tusk", "ear", "tail", "leg"]
+  },
+  "bear": {
+    "base": ["bear", "grizzly", "polar bear"],
+    "body": ["paw", "snout", "fur", "claw", "ear"]
+  },
+  "zebra": {
+    "base": ["zebra"],
+    "body": ["stripe", "hoof", "mane", "tail", "ear"]
+  },
+  "giraffe": {
+    "base": ["giraffe"],
+    "body": ["neck", "horn", "hoof", "tail", "ear"]
+  },
+  "chair": {
+    "base": ["chair", "seat", "armchair", "stool"],
+    "body": ["chair leg", "seat cushion", "backrest", "armrest"]
+  },
+  "couch": {
+    "base": ["couch", "sofa", "loveseat"],
+    "body": ["cushion", "armrest", "backrest", "sofa leg", "seat cushion"]
+  },
+  "bed": {
+    "base": ["bed", "cot", "bunk bed"],
+    "body": ["mattress", "pillow", "bedsheet", "blanket", "headboard", "bed frame"]
+  },
+  "dining table": {
+    "base": ["table", "dining table", "desk"],
+    "body": ["table leg", "tabletop", "drawer"]
+  },
+  "laptop": {
+    "base": ["laptop", "computer", "notebook computer"],
+    "body": ["screen", "keyboard", "trackpad", "webcam", "hinge", "charger port"]
+  },
+  "tv": {
+    "base": ["tv", "television", "monitor", "display"],
+    "body": ["screen", "bezel", "stand", "speaker", "remote"]
+  },
+  "refrigerator": {
+    "base": ["refrigerator", "fridge"],
+    "body": ["fridge door", "freezer", "shelf", "handle", "drawer"]
+  },
+  "oven": {
+    "base": ["oven", "stove", "range"],
+    "body": ["oven door", "burner", "knob", "rack", "tray"]
+  },
+  "microwave": {
+    "base": ["microwave", "microwave oven"],
+    "body": ["microwave door", "turntable", "control panel", "button"]
+  },
+  "toilet": {
+    "base": ["toilet", "commode", "lavatory"],
+    "body": ["toilet seat", "lid", "flush tank", "flush handle", "bowl"]
+  },
+  "bottle": {
+    "base": ["bottle", "water bottle", "glass bottle", "plastic bottle"],
+    "body": ["bottle cap", "lid", "neck", "label", "base"]
+  },
+  "cup": {
+    "base": ["cup", "mug", "teacup"],
+    "body": ["handle", "rim", "base", "cup lid"]
+  },
+  "bowl": {
+    "base": ["bowl"],
+    "body": ["rim", "base", "interior"]
+  },
+  "fork": {
+    "base": ["fork"],
+    "body": ["tine", "handle"]
+  },
+  "knife": {
+    "base": ["knife"],
+    "body": ["blade", "handle", "tip"]
+  },
+  "spoon": {
+    "base": ["spoon"],
+    "body": ["bowl of spoon", "handle"]
+  },
+  "backpack": {
+    "base": ["backpack", "bagpack", "rucksack", "school bag"],
+    "body": ["strap", "zipper", "pocket", "handle", "buckle"]
+  },
+  "handbag": {
+    "base": ["handbag", "purse", "bag"],
+    "body": ["strap", "zipper", "handle", "pocket", "clasp"]
+  },
+  "suitcase": {
+    "base": ["suitcase", "luggage", "travel bag"],
+    "body": ["handle", "wheel", "zipper", "lock", "compartment"]
+  },
+  "book": {
+    "base": ["book", "notebook", "textbook"],
+    "body": ["cover", "page", "spine", "bookmark"]
+  },
+  "clock": {
+    "base": ["clock", "wall clock", "alarm clock"],
+    "body": ["clock hand", "dial", "frame", "numbers"]
+  },
+  "vase": {
+    "base": ["vase", "flower vase"],
+    "body": ["rim", "neck", "body", "base"]
+  },
+  "scissors": {
+    "base": ["scissors"],
+    "body": ["blade", "handle", "pivot"]
+  },
+  "toothbrush": {
+    "base": ["toothbrush", "brush"],
+    "body": ["bristle", "handle", "brush head"]
+  },
+  "cell phone": {
+    "base": ["cell phone", "phone", "smartphone", "mobile", "mobile phone"],
+    "body": ["screen", "camera", "button", "speaker", "port", "case"]
+  },
+  "keyboard": {
+    "base": ["keyboard"],
+    "body": ["key", "spacebar", "function key", "numpad"]
+  },
+  "mouse": {
+    "base": ["mouse", "computer mouse"],
+    "body": ["left button", "right button", "scroll wheel", "sensor"]
+  },
+  "remote": {
+    "base": ["remote", "remote control"],
+    "body": ["button", "battery cover", "sensor"]
+  },
+  "traffic light": {
+    "base": ["traffic light", "signal light"],
+    "body": ["red light", "yellow light", "green light", "pole"]
+  },
+  "fire hydrant": {
+    "base": ["fire hydrant", "hydrant"],
+    "body": ["cap", "valve", "nozzle", "body"]
+  },
+  "stop sign": {
+    "base": ["stop sign"],
+    "body": ["sign board", "pole", "reflector"]
+  },
+  "bench": {
+    "base": ["bench", "park bench"],
+    "body": ["seat slat", "backrest", "leg", "armrest"]
+  },
+  "banana": {
+    "base": ["banana"],
+    "body": ["peel", "stem", "slice"]
+  },
+  "apple": {
+    "base": ["apple"],
+    "body": ["stem", "peel", "seed", "slice"]
+  },
+  "orange": {
+    "base": ["orange"],
+    "body": ["peel", "segment", "slice", "seed"]
+  },
+  "broccoli": {
+    "base": ["broccoli"],
+    "body": ["floret", "stalk", "stem"]
+  },
+  "carrot": {
+    "base": ["carrot"],
+    "body": ["root", "top", "peel", "slice"]
+  },
+  "sandwich": {
+    "base": ["sandwich", "burger sandwich"],
+    "body": ["bread", "filling", "lettuce", "cheese", "patty"]
+  },
+  "pizza": {
+    "base": ["pizza"],
+    "body": ["slice", "crust", "cheese", "topping"]
+  },
+  "hot dog": {
+    "base": ["hot dog"],
+    "body": ["bun", "sausage", "mustard", "ketchup"]
+  },
+  "donut": {
+    "base": ["donut", "doughnut"],
+    "body": ["icing", "sprinkles", "hole"]
+  },
+  "cake": {
+    "base": ["cake"],
+    "body": ["slice", "icing", "layer", "candle"]
+  },
+  "sports ball": {
+    "base": ["sports ball", "ball", "football", "basketball", "soccer ball", "tennis ball"],
+    "body": ["panel", "seam", "surface"]
+  },
+  "baseball bat": {
+    "base": ["baseball bat", "bat"],
+    "body": ["handle", "barrel", "grip", "knob"]
+  },
+  "baseball glove": {
+    "base": ["baseball glove", "glove", "mitt"],
+    "body": ["pocket", "webbing", "finger slot", "strap"]
+  },
+  "skateboard": {
+    "base": ["skateboard", "longboard"],
+    "body": ["deck", "wheel", "truck", "grip tape"]
+  },
+  "surfboard": {
+    "base": ["surfboard"],
+    "body": ["fin", "nose", "tail", "deck", "leash"]
+  },
+  "tennis racket": {
+    "base": ["tennis racket", "racket"],
+    "body": ["string", "frame", "grip", "handle"]
+  },
+  "frisbee": {
+    "base": ["frisbee", "flying disc"],
+    "body": ["rim", "disc center"]
+  },
+  "kite": {
+    "base": ["kite"],
+    "body": ["string", "tail", "frame", "sail"]
+  },
+  "skis": {
+    "base": ["skis", "ski"],
+    "body": ["binding", "tip", "tail", "edge"]
+  },
+  "snowboard": {
+    "base": ["snowboard"],
+    "body": ["binding", "tip", "tail", "edge"]
+  },
+  "umbrella": {
+    "base": ["umbrella"],
+    "body": ["canopy", "handle", "shaft", "rib", "tip"]
+  },
+  "tie": {
+    "base": ["tie", "necktie"],
+    "body": ["knot", "blade", "tail"]
+  },
+  "shirt": {
+    "base": ["shirt", "tshirt", "t-shirt", "top"],
+    "body": ["collar", "sleeve", "cuff", "button", "pocket"]
+  },
+  "dress": {
+    "base": ["dress", "gown"],
+    "body": ["sleeve", "skirt", "zipper", "collar"]
+  },
+  "pants": {
+    "base": ["pants", "trousers", "jeans"],
+    "body": ["waistband", "pocket", "zipper", "leg opening"]
+  },
+  "jacket": {
+    "base": ["jacket", "coat", "hoodie"],
+    "body": ["sleeve", "zipper", "hood", "pocket", "collar"]
+  },
+  "hat": {
+    "base": ["hat", "cap", "helmet"],
+    "body": ["brim", "crown", "strap", "visor"]
+  },
+  "shoe": {
+    "base": ["shoe", "sneaker", "boot", "sandal"],
+    "body": ["sole", "lace", "heel", "toe box", "strap"]
+  },
+  "glasses": {
+    "base": ["glasses", "spectacles", "sunglasses"],
+    "body": ["frame", "lens", "temple", "nose pad"]
+  },
+  "cabinet": {
+    "base": ["cabinet", "cupboard"],
+    "body": ["door", "shelf", "handle", "drawer", "hinge"]
+  },
+  "sink": {
+    "base": ["sink", "wash basin"],
+    "body": ["faucet", "drain", "basin", "tap", "pipe"]
+  },
+  "toaster": {
+    "base": ["toaster"],
+    "body": ["slot", "lever", "button", "crumb tray"]
+  },
+  "washing machine": {
+    "base": ["washing machine", "washer"],
+    "body": ["door", "drum", "control panel", "button", "detergent tray"]
+  },
+  "coffee maker": {
+    "base": ["coffee maker", "coffee machine"],
+    "body": ["carafe", "filter", "water tank", "button", "spout"]
+  },
+  "lamp": {
+    "base": ["lamp", "desk lamp", "table lamp"],
+    "body": ["shade", "bulb", "stand", "switch", "cord"]
+  },
+  "headphones": {
+    "base": ["headphones", "headset", "earphones"],
+    "body": ["ear cup", "headband", "cable", "microphone", "ear pad"]
+  },
+  "radio": {
+    "base": ["radio", "speaker radio"],
+    "body": ["antenna", "speaker", "button", "dial", "display"]
+  },
+  "pen": {
+    "base": ["pen"],
+    "body": ["tip", "cap", "clip", "barrel"]
+  },
+  "pencil": {
+    "base": ["pencil"],
+    "body": ["tip", "eraser", "barrel", "lead"]
+  },
+  "bridge": {
+    "base": ["bridge", "overpass", "footbridge"],
+    "body": ["pillar", "deck", "railing", "arch", "cable"]
+  },
+  "fence": {
+    "base": ["fence", "gate"],
+    "body": ["post", "panel", "rail", "hinge", "latch"]
+  },
+  "road": {
+    "base": ["road", "street", "highway"],
+    "body": ["lane", "median", "shoulder", "crosswalk", "divider"]
+  },
+  "sidewalk": {
+    "base": ["sidewalk", "pavement", "footpath"],
+    "body": ["curb", "tile", "ramp", "edge"]
+  },
+  "stairs": {
+    "base": ["stairs", "staircase", "steps"],
+    "body": ["step", "railing", "handrail", "landing"]
+  },
+  "door": {
+    "base": ["door", "gate door"],
+    "body": ["handle", "hinge", "knob", "panel", "frame", "lock"]
+  },
+  "window": {
+    "base": ["window"],
+    "body": ["glass", "frame", "sill", "handle", "pane"]
+  },
+  "roof": {
+    "base": ["roof"],
+    "body": ["tile", "chimney", "gutter", "ridge", "solar panel"]
+  },
+  "plate": {
+    "base": ["plate", "dish"],
+    "body": ["rim", "center", "base"]
+  },
+  "pot": {
+    "base": ["pot", "cooking pot"],
+    "body": ["handle", "lid", "base", "rim"]
+  },
+  "pan": {
+    "base": ["pan", "frying pan", "skillet"],
+    "body": ["handle", "base", "rim", "lid"]
+  },
+  "cutting board": {
+    "base": ["cutting board", "chopping board"],
+    "body": ["surface", "handle", "groove"]
+  },
+  "blender": {
+    "base": ["blender", "mixer blender"],
+    "body": ["jar", "lid", "blade", "base", "button"]
+  },
+  "pressure cooker": {
+    "base": ["pressure cooker", "cooker"],
+    "body": ["lid", "handle", "valve", "gasket", "pot"]
+  },
+  "gas stove": {
+    "base": ["gas stove", "stove burner", "cooktop"],
+    "body": ["burner", "knob", "grate", "igniter"]
+  },
+  "kettle": {
+    "base": ["kettle", "tea kettle"],
+    "body": ["spout", "handle", "lid", "base"]
+  },
+  "bottle opener": {
+    "base": ["bottle opener", "opener"],
+    "body": ["handle", "hook", "blade"]
+  },
+  "school bag": {
+    "base": ["school bag", "school backpack"],
+    "body": ["strap", "zipper", "handle", "pocket"]
+  },
+  "notebook": {
+    "base": ["notebook", "exercise book"],
+    "body": ["cover", "page", "spiral", "binding"]
+  },
+  "paper": {
+    "base": ["paper", "sheet", "document"],
+    "body": ["corner", "edge", "page"]
+  },
+  "whiteboard": {
+    "base": ["whiteboard", "board"],
+    "body": ["frame", "surface", "marker tray"]
+  },
+  "blackboard": {
+    "base": ["blackboard", "chalkboard"],
+    "body": ["frame", "surface", "chalk tray"]
+  },
+  "marker": {
+    "base": ["marker", "board marker"],
+    "body": ["cap", "tip", "barrel"]
+  },
+  "eraser": {
+    "base": ["eraser", "rubber"],
+    "body": ["edge", "body"]
+  },
+  "ruler": {
+    "base": ["ruler", "scale"],
+    "body": ["edge", "marking", "center hole"]
+  },
+  "calculator": {
+    "base": ["calculator"],
+    "body": ["screen", "button", "battery cover"]
+  },
+  "printer": {
+    "base": ["printer"],
+    "body": ["paper tray", "button", "cartridge", "output slot"]
+  },
+  "scanner": {
+    "base": ["scanner"],
+    "body": ["lid", "glass", "button", "tray"]
+  },
+  "camera": {
+    "base": ["camera", "digital camera", "dslr"],
+    "body": ["lens", "button", "screen", "viewfinder", "strap"]
+  },
+  "tripod": {
+    "base": ["tripod"],
+    "body": ["leg", "head", "mount", "clamp"]
+  },
+  "microphone": {
+    "base": ["microphone", "mic"],
+    "body": ["grille", "body", "switch", "cable"]
+  },
+  "speaker": {
+    "base": ["speaker", "loudspeaker"],
+    "body": ["cone", "grille", "button", "port"]
+  },
+  "fan": {
+    "base": ["fan", "ceiling fan", "table fan"],
+    "body": ["blade", "motor", "grille", "stand", "switch"]
+  },
+  "air conditioner": {
+    "base": ["air conditioner", "ac", "aircon"],
+    "body": ["vent", "filter", "panel", "remote sensor"]
+  },
+  "generator": {
+    "base": ["generator"],
+    "body": ["engine", "handle", "wheel", "fuel tank", "control panel"]
+  },
+  "tractor": {
+    "base": ["tractor"],
+    "body": ["wheel", "cabin", "engine hood", "exhaust", "hitch"]
+  },
+  "excavator": {
+    "base": ["excavator", "digger"],
+    "body": ["boom", "arm", "bucket", "track", "cab"]
+  },
+  "bulldozer": {
+    "base": ["bulldozer", "dozer"],
+    "body": ["blade", "track", "cab", "ripper"]
+  },
+  "crane": {
+    "base": ["crane", "tower crane"],
+    "body": ["boom", "hook", "cable", "counterweight", "cabin"]
+  },
+  "forklift": {
+    "base": ["forklift"],
+    "body": ["fork", "mast", "wheel", "cabin", "lift chain"]
+  },
+  "cement mixer": {
+    "base": ["cement mixer", "concrete mixer"],
+    "body": ["drum", "wheel", "handle", "motor"]
+  },
+  "helmet": {
+    "base": ["helmet", "safety helmet", "hard hat"],
+    "body": ["shell", "strap", "visor", "padding"]
+  },
+  "traffic cone": {
+    "base": ["traffic cone", "cone"],
+    "body": ["base", "body", "reflective strip"]
+  },
+  "barrier": {
+    "base": ["barrier", "road barrier", "barricade"],
+    "body": ["rail", "leg", "reflector", "panel"]
+  },
+  "signboard": {
+    "base": ["signboard", "sign", "notice board"],
+    "body": ["panel", "frame", "pole", "text area"]
+  },
+  "parking meter": {
+    "base": ["parking meter"],
+    "body": ["screen", "coin slot", "button", "pole"]
+  },
+  "bicycle rack": {
+    "base": ["bicycle rack", "bike stand"],
+    "body": ["bar", "slot", "base"]
+  },
+  "van": {
+    "base": ["van", "minivan", "cargo van"],
+    "body": ["door", "window", "wheel", "roof", "bumper"]
+  },
+  "rickshaw": {
+    "base": ["rickshaw", "auto rickshaw", "tuk tuk"],
+    "body": ["wheel", "seat", "roof", "handlebar", "headlight"]
+  },
+  "helicopter": {
+    "base": ["helicopter", "chopper"],
+    "body": ["rotor", "tail rotor", "cockpit", "skid", "door"]
+  },
+  "subway": {
+    "base": ["subway", "metro train", "metro"],
+    "body": ["door", "window", "carriage", "pantograph"]
+  },
+  "camel": {
+    "base": ["camel"],
+    "body": ["hump", "hoof", "neck", "tail", "saddle"]
+  },
+  "goat": {
+    "base": ["goat"],
+    "body": ["horn", "hoof", "beard", "tail", "ear"]
+  },
+  "deer": {
+    "base": ["deer"],
+    "body": ["antler", "hoof", "tail", "ear"]
+  },
+  "rabbit": {
+    "base": ["rabbit", "bunny"],
+    "body": ["ear", "paw", "tail", "whiskers"]
+  },
+  "monkey": {
+    "base": ["monkey", "ape"],
+    "body": ["tail", "hand", "foot", "ear", "face"]
+  },
+  "lion": {
+    "base": ["lion"],
+    "body": ["mane", "paw", "tail", "ear", "snout"]
+  },
+  "tiger": {
+    "base": ["tiger"],
+    "body": ["stripe", "paw", "tail", "ear", "snout"]
+  },
+  "snake": {
+    "base": ["snake", "serpent"],
+    "body": ["head", "tail", "scale", "fang"]
+  },
+  "fish": {
+    "base": ["fish"],
+    "body": ["fin", "tail", "gill", "scale", "mouth"]
+  },
+  "insect": {
+    "base": ["insect", "bug", "beetle", "ant", "butterfly"],
+    "body": ["wing", "antenna", "leg", "thorax", "abdomen"]
+  },
+  "stethoscope": {
+    "base": ["stethoscope"],
+    "body": ["ear tip", "tube", "chest piece", "diaphragm"]
+  },
+  "syringe": {
+    "base": ["syringe"],
+    "body": ["needle", "plunger", "barrel", "cap"]
+  },
+  "thermometer": {
+    "base": ["thermometer", "digital thermometer"],
+    "body": ["tip", "display", "button", "sensor"]
+  },
+  "blood pressure monitor": {
+    "base": ["blood pressure monitor", "bp monitor"],
+    "body": ["cuff", "tube", "display", "pump", "button"]
+  },
+  "hospital bed": {
+    "base": ["hospital bed", "medical bed"],
+    "body": ["rail", "mattress", "wheel", "headboard", "control panel"]
+  },
+  "wheelchair": {
+    "base": ["wheelchair"],
+    "body": ["wheel", "seat", "armrest", "footrest", "handle"]
+  },
+  "crutch": {
+    "base": ["crutch"],
+    "body": ["handle", "pad", "shaft", "tip"]
+  },
+  "test tube": {
+    "base": ["test tube"],
+    "body": ["rim", "body", "base", "cap"]
+  },
+  "microscope": {
+    "base": ["microscope"],
+    "body": ["eyepiece", "objective lens", "stage", "focus knob", "base"]
+  },
+  "beaker": {
+    "base": ["beaker"],
+    "body": ["rim", "spout", "body", "base"]
+  },
+  "flask": {
+    "base": ["flask", "lab flask"],
+    "body": ["neck", "body", "base", "stopper"]
+  },
+  "pipette": {
+    "base": ["pipette", "dropper"],
+    "body": ["tip", "tube", "bulb", "plunger"]
+  },
+  "tractor trailer": {
+    "base": ["tractor trailer", "semi truck", "semi trailer"],
+    "body": ["cab", "trailer", "wheel", "mirror", "door"]
+  },
+  "plow": {
+    "base": ["plow", "plough"],
+    "body": ["blade", "handle", "frame", "share"]
+  },
+  "shovel": {
+    "base": ["shovel", "spade"],
+    "body": ["blade", "handle", "grip"]
+  },
+  "hoe": {
+    "base": ["hoe"],
+    "body": ["blade", "handle", "neck"]
+  },
+  "rake": {
+    "base": ["rake"],
+    "body": ["tine", "handle", "head"]
+  },
+  "watering can": {
+    "base": ["watering can"],
+    "body": ["handle", "spout", "body", "opening"]
+  },
+  "wheelbarrow": {
+    "base": ["wheelbarrow"],
+    "body": ["wheel", "tray", "handle", "leg"]
+  },
+  "barn": {
+    "base": ["barn"],
+    "body": ["roof", "door", "window", "wall", "loft"]
+  },
+  "greenhouse": {
+    "base": ["greenhouse"],
+    "body": ["glass", "frame", "door", "roof vent"]
+  },
+  "wheat": {
+    "base": ["wheat"],
+    "body": ["ear", "stalk", "grain", "awn"]
+  },
+  "corn": {
+    "base": ["corn", "maize"],
+    "body": ["cob", "kernel", "husk", "stalk"]
+  },
+  "rice plant": {
+    "base": ["rice plant", "paddy"],
+    "body": ["grain", "stalk", "leaf", "panicle"]
+  },
+  "tomato": {
+    "base": ["tomato"],
+    "body": ["stem", "seed", "slice", "peel"]
+  },
+  "potato": {
+    "base": ["potato"],
+    "body": ["peel", "eye", "slice", "sprout"]
+  },
+  "onion": {
+    "base": ["onion"],
+    "body": ["peel", "layer", "root", "stem"]
+  },
+  "cabbage": {
+    "base": ["cabbage"],
+    "body": ["leaf", "head", "stem"]
+  },
+  "mango": {
+    "base": ["mango"],
+    "body": ["peel", "seed", "stem", "slice"]
+  },
+  "grapes": {
+    "base": ["grapes", "grape bunch"],
+    "body": ["stem", "berry", "skin", "seed"]
+  },
+  "soap": {
+    "base": ["soap", "bar soap"],
+    "body": ["bar", "label", "edge"]
+  },
+  "shampoo bottle": {
+    "base": ["shampoo bottle", "shampoo"],
+    "body": ["cap", "label", "bottle body", "pump"]
+  },
+  "toothpaste": {
+    "base": ["toothpaste"],
+    "body": ["cap", "tube", "label", "nozzle"]
+  },
+  "towel": {
+    "base": ["towel", "bath towel"],
+    "body": ["edge", "fold", "loop"]
+  },
+  "mirror cabinet": {
+    "base": ["mirror cabinet", "bathroom cabinet"],
+    "body": ["mirror", "door", "shelf", "handle"]
+  },
+  "bathtub": {
+    "base": ["bathtub", "tub"],
+    "body": ["rim", "drain", "faucet", "base"]
+  },
+  "shower": {
+    "base": ["shower", "shower set"],
+    "body": ["shower head", "pipe", "tap", "handle", "drain"]
+  },
+  "bucket": {
+    "base": ["bucket", "pail"],
+    "body": ["handle", "rim", "base", "body"]
+  },
+  "mop": {
+    "base": ["mop"],
+    "body": ["handle", "head", "cloth strands", "grip"]
+  },
+  "broom": {
+    "base": ["broom"],
+    "body": ["handle", "bristle", "head"]
+  },
+  "dustpan": {
+    "base": ["dustpan"],
+    "body": ["handle", "tray", "lip"]
+  },
+  "lipstick": {
+    "base": ["lipstick"],
+    "body": ["cap", "tube", "bullet", "base"]
+  },
+  "perfume bottle": {
+    "base": ["perfume bottle", "perfume"],
+    "body": ["cap", "sprayer", "bottle", "label"]
+  },
+  "comb": {
+    "base": ["comb"],
+    "body": ["tooth", "handle", "spine"]
+  },
+  "hair dryer": {
+    "base": ["hair dryer", "blow dryer"],
+    "body": ["nozzle", "handle", "switch", "air intake", "cord"]
+  },
+  "bracelet": {
+    "base": ["bracelet", "bangle"],
+    "body": ["clasp", "chain", "charm"]
+  },
+  "necklace": {
+    "base": ["necklace", "chain"],
+    "body": ["clasp", "pendant", "link"]
+  },
+  "ring": {
+    "base": ["ring"],
+    "body": ["band", "stone", "setting"]
+  },
+  "earring": {
+    "base": ["earring"],
+    "body": ["stud", "hook", "stone", "backing"]
+  },
+  "watch": {
+    "base": ["watch", "wristwatch"],
+    "body": ["strap", "dial", "crown", "bezel", "case"]
+  },
+  "hammer": {
+    "base": ["hammer"],
+    "body": ["head", "handle", "claw", "face"]
+  },
+  "screwdriver": {
+    "base": ["screwdriver"],
+    "body": ["handle", "shaft", "tip"]
+  },
+  "wrench": {
+    "base": ["wrench", "spanner"],
+    "body": ["jaw", "handle", "adjuster"]
+  },
+  "drill": {
+    "base": ["drill", "power drill"],
+    "body": ["chuck", "bit", "handle", "trigger", "battery"]
+  },
+  "saw": {
+    "base": ["saw", "handsaw", "circular saw"],
+    "body": ["blade", "handle", "guard", "tooth"]
+  },
+  "pliers": {
+    "base": ["pliers"],
+    "body": ["jaw", "handle", "pivot", "grip"]
+  },
+  "nail": {
+    "base": ["nail", "metal nail"],
+    "body": ["head", "shaft", "tip"]
+  },
+  "bolt": {
+    "base": ["bolt"],
+    "body": ["head", "thread", "shaft"]
+  },
+  "nut": {
+    "base": ["nut", "hex nut"],
+    "body": ["thread", "face", "edge"]
+  },
+  "ladder": {
+    "base": ["ladder"],
+    "body": ["rung", "rail", "foot", "hinge"]
+  },
+  "workbench": {
+    "base": ["workbench"],
+    "body": ["top", "leg", "vise", "drawer", "shelf"]
+  },
+  "conveyor belt": {
+    "base": ["conveyor belt", "belt conveyor"],
+    "body": ["belt", "roller", "frame", "motor"]
+  },
+  "control panel": {
+    "base": ["control panel", "panel board"],
+    "body": ["switch", "button", "display", "dial", "casing"]
+  },
+  "robot arm": {
+    "base": ["robot arm", "industrial robot"],
+    "body": ["joint", "gripper", "base", "link", "sensor"]
+  },
+  "house": {
+    "base": ["house", "home"],
+    "body": ["roof", "door", "window", "chimney", "garage", "balcony", "porch"]
+  },
+  "building": {
+    "base": ["building", "tower", "skyscraper", "office building"],
+    "body": ["roof", "door", "window", "wall", "column", "stairs", "elevator"]
+  },
+  "tree": {
+    "base": ["tree", "plant"],
+    "body": ["branch", "leaf", "trunk", "bark", "root", "flower", "fruit"]
+  }
+}

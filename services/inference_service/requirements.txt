@@ -1,0 +1,7 @@
+Flask
+Flask-CORS
+pymongo
+mongomock
+ultralytics
+opencv-python-headless
+Pillow

@@ -1,0 +1,24 @@
+{
+  "pen": {
+    "base": [
+      "pen"
+    ],
+    "body": [
+      "tip",
+      "cap",
+      "clip",
+      "barrel"
+    ]
+  },
+  "pencil": {
+    "base": [
+      "pencil"
+    ],
+    "body": [
+      "tip",
+      "eraser",
+      "barrel",
+      "lead"
+    ]
+  }
+}

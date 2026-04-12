@@ -1,0 +1,9 @@
+Flask
+Flask-CORS
+pymongo
+mongomock
+werkzeug
+roboflow
+ultralytics
+opencv-python-headless
+Pillow

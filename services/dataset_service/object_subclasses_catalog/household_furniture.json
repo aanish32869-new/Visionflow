@@ -1,0 +1,215 @@
+{
+  "bathtub": {
+    "base": [
+      "bathtub",
+      "tub"
+    ],
+    "body": [
+      "rim",
+      "drain",
+      "faucet",
+      "base"
+    ]
+  },
+  "bed": {
+    "base": [
+      "bed",
+      "cot",
+      "bunk bed"
+    ],
+    "body": [
+      "mattress",
+      "pillow",
+      "bedsheet",
+      "blanket",
+      "headboard",
+      "bed frame"
+    ]
+  },
+  "bench": {
+    "base": [
+      "bench",
+      "park bench"
+    ],
+    "body": [
+      "seat slat",
+      "backrest",
+      "leg",
+      "armrest"
+    ]
+  },
+  "bucket": {
+    "base": [
+      "bucket",
+      "pail"
+    ],
+    "body": [
+      "handle",
+      "rim",
+      "base",
+      "body"
+    ]
+  },
+  "building": {
+    "base": [
+      "building",
+      "tower",
+      "skyscraper",
+      "office building"
+    ],
+    "body": [
+      "roof",
+      "door",
+      "window",
+      "wall",
+      "column",
+      "stairs",
+      "elevator"
+    ]
+  },
+  "cabinet": {
+    "base": [
+      "cabinet",
+      "cupboard"
+    ],
+    "body": [
+      "door",
+      "shelf",
+      "handle",
+      "drawer",
+      "hinge"
+    ]
+  },
+  "chair": {
+    "base": [
+      "chair",
+      "seat",
+      "armchair",
+      "stool"
+    ],
+    "body": [
+      "chair leg",
+      "seat cushion",
+      "backrest",
+      "armrest"
+    ]
+  },
+  "couch": {
+    "base": [
+      "couch",
+      "sofa",
+      "loveseat"
+    ],
+    "body": [
+      "cushion",
+      "armrest",
+      "backrest",
+      "sofa leg",
+      "seat cushion"
+    ]
+  },
+  "dining table": {
+    "base": [
+      "table",
+      "dining table",
+      "desk"
+    ],
+    "body": [
+      "table leg",
+      "tabletop",
+      "drawer"
+    ]
+  },
+  "door": {
+    "base": [
+      "door",
+      "gate door"
+    ],
+    "body": [
+      "handle",
+      "hinge",
+      "knob",
+      "panel",
+      "frame",
+      "lock"
+    ]
+  },
+  "house": {
+    "base": [
+      "house",
+      "home"
+    ],
+    "body": [
+      "roof",
+      "door",
+      "window",
+      "chimney",
+      "garage",
+      "balcony",
+      "porch"
+    ]
+  },
+  "mirror cabinet": {
+    "base": [
+      "mirror cabinet",
+      "bathroom cabinet"
+    ],
+    "body": [
+      "mirror",
+      "door",
+      "shelf",
+      "handle"
+    ]
+  },
+  "roof": {
+    "base": [
+      "roof"
+    ],
+    "body": [
+      "tile",
+      "chimney",
+      "gutter",
+      "ridge",
+      "solar panel"
+    ]
+  },
+  "stairs": {
+    "base": [
+      "stairs",
+      "staircase",
+      "steps"
+    ],
+    "body": [
+      "step",
+      "railing",
+      "handrail",
+      "landing"
+    ]
+  },
+  "toilet": {
+    "base": [
+      "toilet",
+      "commode",
+      "lavatory"
+    ],
+    "body": [
+      "toilet seat",
+      "lid",
+      "flush tank",
+      "flush handle",
+      "bowl"
+    ]
+  },
+  "window": {
+    "base": [
+      "window"
+    ],
+    "body": [
+      "glass",
+      "frame",
+      "sill",
+      "handle",
+      "pane"
+    ]
+  }
+}

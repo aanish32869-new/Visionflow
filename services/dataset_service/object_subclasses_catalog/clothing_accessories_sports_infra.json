@@ -1,0 +1,453 @@
+{
+  "barrier": {
+    "base": [
+      "barrier",
+      "road barrier",
+      "barricade"
+    ],
+    "body": [
+      "rail",
+      "leg",
+      "reflector",
+      "panel"
+    ]
+  },
+  "baseball bat": {
+    "base": [
+      "baseball bat",
+      "bat"
+    ],
+    "body": [
+      "handle",
+      "barrel",
+      "grip",
+      "knob"
+    ]
+  },
+  "baseball glove": {
+    "base": [
+      "baseball glove",
+      "glove",
+      "mitt"
+    ],
+    "body": [
+      "pocket",
+      "webbing",
+      "finger slot",
+      "strap"
+    ]
+  },
+  "bracelet": {
+    "base": [
+      "bracelet",
+      "bangle"
+    ],
+    "body": [
+      "clasp",
+      "chain",
+      "charm"
+    ]
+  },
+  "bridge": {
+    "base": [
+      "bridge",
+      "overpass",
+      "footbridge"
+    ],
+    "body": [
+      "pillar",
+      "deck",
+      "railing",
+      "arch",
+      "cable"
+    ]
+  },
+  "comb": {
+    "base": [
+      "comb"
+    ],
+    "body": [
+      "tooth",
+      "handle",
+      "spine"
+    ]
+  },
+  "dress": {
+    "base": [
+      "dress",
+      "gown"
+    ],
+    "body": [
+      "sleeve",
+      "skirt",
+      "zipper",
+      "collar"
+    ]
+  },
+  "earring": {
+    "base": [
+      "earring"
+    ],
+    "body": [
+      "stud",
+      "hook",
+      "stone",
+      "backing"
+    ]
+  },
+  "fence": {
+    "base": [
+      "fence",
+      "gate"
+    ],
+    "body": [
+      "post",
+      "panel",
+      "rail",
+      "hinge",
+      "latch"
+    ]
+  },
+  "fire hydrant": {
+    "base": [
+      "fire hydrant",
+      "hydrant"
+    ],
+    "body": [
+      "cap",
+      "valve",
+      "nozzle",
+      "body"
+    ]
+  },
+  "frisbee": {
+    "base": [
+      "frisbee",
+      "flying disc"
+    ],
+    "body": [
+      "rim",
+      "disc center"
+    ]
+  },
+  "glasses": {
+    "base": [
+      "glasses",
+      "spectacles",
+      "sunglasses"
+    ],
+    "body": [
+      "frame",
+      "lens",
+      "temple",
+      "nose pad"
+    ]
+  },
+  "hat": {
+    "base": [
+      "hat",
+      "cap",
+      "helmet"
+    ],
+    "body": [
+      "brim",
+      "crown",
+      "strap",
+      "visor"
+    ]
+  },
+  "jacket": {
+    "base": [
+      "jacket",
+      "coat",
+      "hoodie"
+    ],
+    "body": [
+      "sleeve",
+      "zipper",
+      "hood",
+      "pocket",
+      "collar"
+    ]
+  },
+  "kite": {
+    "base": [
+      "kite"
+    ],
+    "body": [
+      "string",
+      "tail",
+      "frame",
+      "sail"
+    ]
+  },
+  "lipstick": {
+    "base": [
+      "lipstick"
+    ],
+    "body": [
+      "cap",
+      "tube",
+      "bullet",
+      "base"
+    ]
+  },
+  "necklace": {
+    "base": [
+      "necklace",
+      "chain"
+    ],
+    "body": [
+      "clasp",
+      "pendant",
+      "link"
+    ]
+  },
+  "pants": {
+    "base": [
+      "pants",
+      "trousers",
+      "jeans"
+    ],
+    "body": [
+      "waistband",
+      "pocket",
+      "zipper",
+      "leg opening"
+    ]
+  },
+  "parking meter": {
+    "base": [
+      "parking meter"
+    ],
+    "body": [
+      "screen",
+      "coin slot",
+      "button",
+      "pole"
+    ]
+  },
+  "perfume bottle": {
+    "base": [
+      "perfume bottle",
+      "perfume"
+    ],
+    "body": [
+      "cap",
+      "sprayer",
+      "bottle",
+      "label"
+    ]
+  },
+  "ring": {
+    "base": [
+      "ring"
+    ],
+    "body": [
+      "band",
+      "stone",
+      "setting"
+    ]
+  },
+  "road": {
+    "base": [
+      "road",
+      "street",
+      "highway"
+    ],
+    "body": [
+      "lane",
+      "median",
+      "shoulder",
+      "crosswalk",
+      "divider"
+    ]
+  },
+  "shirt": {
+    "base": [
+      "shirt",
+      "tshirt",
+      "t-shirt",
+      "top"
+    ],
+    "body": [
+      "collar",
+      "sleeve",
+      "cuff",
+      "button",
+      "pocket"
+    ]
+  },
+  "shoe": {
+    "base": [
+      "shoe",
+      "sneaker",
+      "boot",
+      "sandal"
+    ],
+    "body": [
+      "sole",
+      "lace",
+      "heel",
+      "toe box",
+      "strap"
+    ]
+  },
+  "sidewalk": {
+    "base": [
+      "sidewalk",
+      "pavement",
+      "footpath"
+    ],
+    "body": [
+      "curb",
+      "tile",
+      "ramp",
+      "edge"
+    ]
+  },
+  "signboard": {
+    "base": [
+      "signboard",
+      "sign",
+      "notice board"
+    ],
+    "body": [
+      "panel",
+      "frame",
+      "pole",
+      "text area"
+    ]
+  },
+  "skateboard": {
+    "base": [
+      "skateboard",
+      "longboard"
+    ],
+    "body": [
+      "deck",
+      "wheel",
+      "truck",
+      "grip tape"
+    ]
+  },
+  "skis": {
+    "base": [
+      "skis",
+      "ski"
+    ],
+    "body": [
+      "binding",
+      "tip",
+      "tail",
+      "edge"
+    ]
+  },
+  "snowboard": {
+    "base": [
+      "snowboard"
+    ],
+    "body": [
+      "binding",
+      "tip",
+      "tail",
+      "edge"
+    ]
+  },
+  "sports ball": {
+    "base": [
+      "sports ball",
+      "ball",
+      "football",
+      "basketball",
+      "soccer ball",
+      "tennis ball"
+    ],
+    "body": [
+      "panel",
+      "seam",
+      "surface"
+    ]
+  },
+  "stop sign": {
+    "base": [
+      "stop sign"
+    ],
+    "body": [
+      "sign board",
+      "pole",
+      "reflector"
+    ]
+  },
+  "surfboard": {
+    "base": [
+      "surfboard"
+    ],
+    "body": [
+      "fin",
+      "nose",
+      "tail",
+      "deck",
+      "leash"
+    ]
+  },
+  "tennis racket": {
+    "base": [
+      "tennis racket",
+      "racket"
+    ],
+    "body": [
+      "string",
+      "frame",
+      "grip",
+      "handle"
+    ]
+  },
+  "tie": {
+    "base": [
+      "tie",
+      "necktie"
+    ],
+    "body": [
+      "knot",
+      "blade",
+      "tail"
+    ]
+  },
+  "traffic cone": {
+    "base": [
+      "traffic cone",
+      "cone"
+    ],
+    "body": [
+      "base",
+      "body",
+      "reflective strip"
+    ]
+  },
+  "traffic light": {
+    "base": [
+      "traffic light",
+      "signal light"
+    ],
+    "body": [
+      "red light",
+      "yellow light",
+      "green light",
+      "pole"
+    ]
+  },
+  "watch": {
+    "base": [
+      "watch",
+      "wristwatch"
+    ],
+    "body": [
+      "strap",
+      "dial",
+      "crown",
+      "bezel",
+      "case"
+    ]
+  }
+}

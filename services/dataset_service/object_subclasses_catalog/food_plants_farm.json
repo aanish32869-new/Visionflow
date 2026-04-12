@@ -1,0 +1,316 @@
+{
+  "apple": {
+    "base": [
+      "apple"
+    ],
+    "body": [
+      "stem",
+      "peel",
+      "seed",
+      "slice"
+    ]
+  },
+  "banana": {
+    "base": [
+      "banana"
+    ],
+    "body": [
+      "peel",
+      "stem",
+      "slice"
+    ]
+  },
+  "barn": {
+    "base": [
+      "barn"
+    ],
+    "body": [
+      "roof",
+      "door",
+      "window",
+      "wall",
+      "loft"
+    ]
+  },
+  "broccoli": {
+    "base": [
+      "broccoli"
+    ],
+    "body": [
+      "floret",
+      "stalk",
+      "stem"
+    ]
+  },
+  "cabbage": {
+    "base": [
+      "cabbage"
+    ],
+    "body": [
+      "leaf",
+      "head",
+      "stem"
+    ]
+  },
+  "cake": {
+    "base": [
+      "cake"
+    ],
+    "body": [
+      "slice",
+      "icing",
+      "layer",
+      "candle"
+    ]
+  },
+  "carrot": {
+    "base": [
+      "carrot"
+    ],
+    "body": [
+      "root",
+      "top",
+      "peel",
+      "slice"
+    ]
+  },
+  "corn": {
+    "base": [
+      "corn",
+      "maize"
+    ],
+    "body": [
+      "cob",
+      "kernel",
+      "husk",
+      "stalk"
+    ]
+  },
+  "donut": {
+    "base": [
+      "donut",
+      "doughnut"
+    ],
+    "body": [
+      "icing",
+      "sprinkles",
+      "hole"
+    ]
+  },
+  "grapes": {
+    "base": [
+      "grapes",
+      "grape bunch"
+    ],
+    "body": [
+      "stem",
+      "berry",
+      "skin",
+      "seed"
+    ]
+  },
+  "greenhouse": {
+    "base": [
+      "greenhouse"
+    ],
+    "body": [
+      "glass",
+      "frame",
+      "door",
+      "roof vent"
+    ]
+  },
+  "hoe": {
+    "base": [
+      "hoe"
+    ],
+    "body": [
+      "blade",
+      "handle",
+      "neck"
+    ]
+  },
+  "hot dog": {
+    "base": [
+      "hot dog"
+    ],
+    "body": [
+      "bun",
+      "sausage",
+      "mustard",
+      "ketchup"
+    ]
+  },
+  "mango": {
+    "base": [
+      "mango"
+    ],
+    "body": [
+      "peel",
+      "seed",
+      "stem",
+      "slice"
+    ]
+  },
+  "onion": {
+    "base": [
+      "onion"
+    ],
+    "body": [
+      "peel",
+      "layer",
+      "root",
+      "stem"
+    ]
+  },
+  "orange": {
+    "base": [
+      "orange"
+    ],
+    "body": [
+      "peel",
+      "segment",
+      "slice",
+      "seed"
+    ]
+  },
+  "pizza": {
+    "base": [
+      "pizza"
+    ],
+    "body": [
+      "slice",
+      "crust",
+      "cheese",
+      "topping"
+    ]
+  },
+  "plow": {
+    "base": [
+      "plow",
+      "plough"
+    ],
+    "body": [
+      "blade",
+      "handle",
+      "frame",
+      "share"
+    ]
+  },
+  "potato": {
+    "base": [
+      "potato"
+    ],
+    "body": [
+      "peel",
+      "eye",
+      "slice",
+      "sprout"
+    ]
+  },
+  "rake": {
+    "base": [
+      "rake"
+    ],
+    "body": [
+      "tine",
+      "handle",
+      "head"
+    ]
+  },
+  "rice plant": {
+    "base": [
+      "rice plant",
+      "paddy"
+    ],
+    "body": [
+      "grain",
+      "stalk",
+      "leaf",
+      "panicle"
+    ]
+  },
+  "sandwich": {
+    "base": [
+      "sandwich",
+      "burger sandwich"
+    ],
+    "body": [
+      "bread",
+      "filling",
+      "lettuce",
+      "cheese",
+      "patty"
+    ]
+  },
+  "shovel": {
+    "base": [
+      "shovel",
+      "spade"
+    ],
+    "body": [
+      "blade",
+      "handle",
+      "grip"
+    ]
+  },
+  "tomato": {
+    "base": [
+      "tomato"
+    ],
+    "body": [
+      "stem",
+      "seed",
+      "slice",
+      "peel"
+    ]
+  },
+  "tree": {
+    "base": [
+      "tree",
+      "plant"
+    ],
+    "body": [
+      "branch",
+      "leaf",
+      "trunk",
+      "bark",
+      "root",
+      "flower",
+      "fruit"
+    ]
+  },
+  "watering can": {
+    "base": [
+      "watering can"
+    ],
+    "body": [
+      "handle",
+      "spout",
+      "body",
+      "opening"
+    ]
+  },
+  "wheat": {
+    "base": [
+      "wheat"
+    ],
+    "body": [
+      "ear",
+      "stalk",
+      "grain",
+      "awn"
+    ]
+  },
+  "wheelbarrow": {
+    "base": [
+      "wheelbarrow"
+    ],
+    "body": [
+      "wheel",
+      "tray",
+      "handle",
+      "leg"
+    ]
+  }
+}

@@ -1,0 +1,464 @@
+{
+  "air conditioner": {
+    "base": [
+      "air conditioner",
+      "ac",
+      "aircon"
+    ],
+    "body": [
+      "vent",
+      "filter",
+      "panel",
+      "remote sensor"
+    ]
+  },
+  "backpack": {
+    "base": [
+      "backpack",
+      "bagpack",
+      "rucksack",
+      "school bag"
+    ],
+    "body": [
+      "strap",
+      "zipper",
+      "pocket",
+      "handle",
+      "buckle"
+    ]
+  },
+  "blender": {
+    "base": [
+      "blender",
+      "mixer blender"
+    ],
+    "body": [
+      "jar",
+      "lid",
+      "blade",
+      "base",
+      "button"
+    ]
+  },
+  "bottle": {
+    "base": [
+      "bottle",
+      "water bottle",
+      "glass bottle",
+      "plastic bottle"
+    ],
+    "body": [
+      "bottle cap",
+      "lid",
+      "neck",
+      "label",
+      "base"
+    ]
+  },
+  "bottle opener": {
+    "base": [
+      "bottle opener",
+      "opener"
+    ],
+    "body": [
+      "handle",
+      "hook",
+      "blade"
+    ]
+  },
+  "bowl": {
+    "base": [
+      "bowl"
+    ],
+    "body": [
+      "rim",
+      "base",
+      "interior"
+    ]
+  },
+  "broom": {
+    "base": [
+      "broom"
+    ],
+    "body": [
+      "handle",
+      "bristle",
+      "head"
+    ]
+  },
+  "coffee maker": {
+    "base": [
+      "coffee maker",
+      "coffee machine"
+    ],
+    "body": [
+      "carafe",
+      "filter",
+      "water tank",
+      "button",
+      "spout"
+    ]
+  },
+  "cup": {
+    "base": [
+      "cup",
+      "mug",
+      "teacup"
+    ],
+    "body": [
+      "handle",
+      "rim",
+      "base",
+      "cup lid"
+    ]
+  },
+  "cutting board": {
+    "base": [
+      "cutting board",
+      "chopping board"
+    ],
+    "body": [
+      "surface",
+      "handle",
+      "groove"
+    ]
+  },
+  "dustpan": {
+    "base": [
+      "dustpan"
+    ],
+    "body": [
+      "handle",
+      "tray",
+      "lip"
+    ]
+  },
+  "fan": {
+    "base": [
+      "fan",
+      "ceiling fan",
+      "table fan"
+    ],
+    "body": [
+      "blade",
+      "motor",
+      "grille",
+      "stand",
+      "switch"
+    ]
+  },
+  "fork": {
+    "base": [
+      "fork"
+    ],
+    "body": [
+      "tine",
+      "handle"
+    ]
+  },
+  "gas stove": {
+    "base": [
+      "gas stove",
+      "stove burner",
+      "cooktop"
+    ],
+    "body": [
+      "burner",
+      "knob",
+      "grate",
+      "igniter"
+    ]
+  },
+  "hair dryer": {
+    "base": [
+      "hair dryer",
+      "blow dryer"
+    ],
+    "body": [
+      "nozzle",
+      "handle",
+      "switch",
+      "air intake",
+      "cord"
+    ]
+  },
+  "handbag": {
+    "base": [
+      "handbag",
+      "purse",
+      "bag"
+    ],
+    "body": [
+      "strap",
+      "zipper",
+      "handle",
+      "pocket",
+      "clasp"
+    ]
+  },
+  "kettle": {
+    "base": [
+      "kettle",
+      "tea kettle"
+    ],
+    "body": [
+      "spout",
+      "handle",
+      "lid",
+      "base"
+    ]
+  },
+  "knife": {
+    "base": [
+      "knife"
+    ],
+    "body": [
+      "blade",
+      "handle",
+      "tip"
+    ]
+  },
+  "lamp": {
+    "base": [
+      "lamp",
+      "desk lamp",
+      "table lamp"
+    ],
+    "body": [
+      "shade",
+      "bulb",
+      "stand",
+      "switch",
+      "cord"
+    ]
+  },
+  "microwave": {
+    "base": [
+      "microwave",
+      "microwave oven"
+    ],
+    "body": [
+      "microwave door",
+      "turntable",
+      "control panel",
+      "button"
+    ]
+  },
+  "mop": {
+    "base": [
+      "mop"
+    ],
+    "body": [
+      "handle",
+      "head",
+      "cloth strands",
+      "grip"
+    ]
+  },
+  "oven": {
+    "base": [
+      "oven",
+      "stove",
+      "range"
+    ],
+    "body": [
+      "oven door",
+      "burner",
+      "knob",
+      "rack",
+      "tray"
+    ]
+  },
+  "pan": {
+    "base": [
+      "pan",
+      "frying pan",
+      "skillet"
+    ],
+    "body": [
+      "handle",
+      "base",
+      "rim",
+      "lid"
+    ]
+  },
+  "plate": {
+    "base": [
+      "plate",
+      "dish"
+    ],
+    "body": [
+      "rim",
+      "center",
+      "base"
+    ]
+  },
+  "pot": {
+    "base": [
+      "pot",
+      "cooking pot"
+    ],
+    "body": [
+      "handle",
+      "lid",
+      "base",
+      "rim"
+    ]
+  },
+  "pressure cooker": {
+    "base": [
+      "pressure cooker",
+      "cooker"
+    ],
+    "body": [
+      "lid",
+      "handle",
+      "valve",
+      "gasket",
+      "pot"
+    ]
+  },
+  "refrigerator": {
+    "base": [
+      "refrigerator",
+      "fridge"
+    ],
+    "body": [
+      "fridge door",
+      "freezer",
+      "shelf",
+      "handle",
+      "drawer"
+    ]
+  },
+  "shampoo bottle": {
+    "base": [
+      "shampoo bottle",
+      "shampoo"
+    ],
+    "body": [
+      "cap",
+      "label",
+      "bottle body",
+      "pump"
+    ]
+  },
+  "shower": {
+    "base": [
+      "shower",
+      "shower set"
+    ],
+    "body": [
+      "shower head",
+      "pipe",
+      "tap",
+      "handle",
+      "drain"
+    ]
+  },
+  "sink": {
+    "base": [
+      "sink",
+      "wash basin"
+    ],
+    "body": [
+      "faucet",
+      "drain",
+      "basin",
+      "tap",
+      "pipe"
+    ]
+  },
+  "soap": {
+    "base": [
+      "soap",
+      "bar soap"
+    ],
+    "body": [
+      "bar",
+      "label",
+      "edge"
+    ]
+  },
+  "spoon": {
+    "base": [
+      "spoon"
+    ],
+    "body": [
+      "bowl of spoon",
+      "handle"
+    ]
+  },
+  "suitcase": {
+    "base": [
+      "suitcase",
+      "luggage",
+      "travel bag"
+    ],
+    "body": [
+      "handle",
+      "wheel",
+      "zipper",
+      "lock",
+      "compartment"
+    ]
+  },
+  "toaster": {
+    "base": [
+      "toaster"
+    ],
+    "body": [
+      "slot",
+      "lever",
+      "button",
+      "crumb tray"
+    ]
+  },
+  "toothpaste": {
+    "base": [
+      "toothpaste"
+    ],
+    "body": [
+      "cap",
+      "tube",
+      "label",
+      "nozzle"
+    ]
+  },
+  "towel": {
+    "base": [
+      "towel",
+      "bath towel"
+    ],
+    "body": [
+      "edge",
+      "fold",
+      "loop"
+    ]
+  },
+  "umbrella": {
+    "base": [
+      "umbrella"
+    ],
+    "body": [
+      "canopy",
+      "handle",
+      "shaft",
+      "rib",
+      "tip"
+    ]
+  },
+  "washing machine": {
+    "base": [
+      "washing machine",
+      "washer"
+    ],
+    "body": [
+      "door",
+      "drum",
+      "control panel",
+      "button",
+      "detergent tray"
+    ]
+  }
+}

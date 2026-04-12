@@ -1,0 +1,365 @@
+{
+  "blackboard": {
+    "base": [
+      "blackboard",
+      "chalkboard"
+    ],
+    "body": [
+      "frame",
+      "surface",
+      "chalk tray"
+    ]
+  },
+  "book": {
+    "base": [
+      "book",
+      "notebook",
+      "textbook"
+    ],
+    "body": [
+      "cover",
+      "page",
+      "spine",
+      "bookmark"
+    ]
+  },
+  "calculator": {
+    "base": [
+      "calculator"
+    ],
+    "body": [
+      "screen",
+      "button",
+      "battery cover"
+    ]
+  },
+  "camera": {
+    "base": [
+      "camera",
+      "digital camera",
+      "dslr"
+    ],
+    "body": [
+      "lens",
+      "button",
+      "screen",
+      "viewfinder",
+      "strap"
+    ]
+  },
+  "cell phone": {
+    "base": [
+      "cell phone",
+      "phone",
+      "smartphone",
+      "mobile",
+      "mobile phone"
+    ],
+    "body": [
+      "screen",
+      "camera",
+      "button",
+      "speaker",
+      "port",
+      "case"
+    ]
+  },
+  "clock": {
+    "base": [
+      "clock",
+      "wall clock",
+      "alarm clock"
+    ],
+    "body": [
+      "clock hand",
+      "dial",
+      "frame",
+      "numbers"
+    ]
+  },
+  "control panel": {
+    "base": [
+      "control panel",
+      "panel board"
+    ],
+    "body": [
+      "switch",
+      "button",
+      "display",
+      "dial",
+      "casing"
+    ]
+  },
+  "eraser": {
+    "base": [
+      "eraser",
+      "rubber"
+    ],
+    "body": [
+      "edge",
+      "body"
+    ]
+  },
+  "generator": {
+    "base": [
+      "generator"
+    ],
+    "body": [
+      "engine",
+      "handle",
+      "wheel",
+      "fuel tank",
+      "control panel"
+    ]
+  },
+  "headphones": {
+    "base": [
+      "headphones",
+      "headset",
+      "earphones"
+    ],
+    "body": [
+      "ear cup",
+      "headband",
+      "cable",
+      "microphone",
+      "ear pad"
+    ]
+  },
+  "keyboard": {
+    "base": [
+      "keyboard"
+    ],
+    "body": [
+      "key",
+      "spacebar",
+      "function key",
+      "numpad"
+    ]
+  },
+  "laptop": {
+    "base": [
+      "laptop",
+      "computer",
+      "notebook computer"
+    ],
+    "body": [
+      "screen",
+      "keyboard",
+      "trackpad",
+      "webcam",
+      "hinge",
+      "charger port"
+    ]
+  },
+  "marker": {
+    "base": [
+      "marker",
+      "board marker"
+    ],
+    "body": [
+      "cap",
+      "tip",
+      "barrel"
+    ]
+  },
+  "microphone": {
+    "base": [
+      "microphone",
+      "mic"
+    ],
+    "body": [
+      "grille",
+      "body",
+      "switch",
+      "cable"
+    ]
+  },
+  "mouse": {
+    "base": [
+      "mouse",
+      "computer mouse"
+    ],
+    "body": [
+      "left button",
+      "right button",
+      "scroll wheel",
+      "sensor"
+    ]
+  },
+  "notebook": {
+    "base": [
+      "notebook",
+      "exercise book"
+    ],
+    "body": [
+      "cover",
+      "page",
+      "spiral",
+      "binding"
+    ]
+  },
+  "paper": {
+    "base": [
+      "paper",
+      "sheet",
+      "document"
+    ],
+    "body": [
+      "corner",
+      "edge",
+      "page"
+    ]
+  },
+  "printer": {
+    "base": [
+      "printer"
+    ],
+    "body": [
+      "paper tray",
+      "button",
+      "cartridge",
+      "output slot"
+    ]
+  },
+  "radio": {
+    "base": [
+      "radio",
+      "speaker radio"
+    ],
+    "body": [
+      "antenna",
+      "speaker",
+      "button",
+      "dial",
+      "display"
+    ]
+  },
+  "remote": {
+    "base": [
+      "remote",
+      "remote control"
+    ],
+    "body": [
+      "button",
+      "battery cover",
+      "sensor"
+    ]
+  },
+  "ruler": {
+    "base": [
+      "ruler",
+      "scale"
+    ],
+    "body": [
+      "edge",
+      "marking",
+      "center hole"
+    ]
+  },
+  "scanner": {
+    "base": [
+      "scanner"
+    ],
+    "body": [
+      "lid",
+      "glass",
+      "button",
+      "tray"
+    ]
+  },
+  "school bag": {
+    "base": [
+      "school bag",
+      "school backpack"
+    ],
+    "body": [
+      "strap",
+      "zipper",
+      "handle",
+      "pocket"
+    ]
+  },
+  "scissors": {
+    "base": [
+      "scissors"
+    ],
+    "body": [
+      "blade",
+      "handle",
+      "pivot"
+    ]
+  },
+  "speaker": {
+    "base": [
+      "speaker",
+      "loudspeaker"
+    ],
+    "body": [
+      "cone",
+      "grille",
+      "button",
+      "port"
+    ]
+  },
+  "toothbrush": {
+    "base": [
+      "toothbrush",
+      "brush"
+    ],
+    "body": [
+      "bristle",
+      "handle",
+      "brush head"
+    ]
+  },
+  "tripod": {
+    "base": [
+      "tripod"
+    ],
+    "body": [
+      "leg",
+      "head",
+      "mount",
+      "clamp"
+    ]
+  },
+  "tv": {
+    "base": [
+      "tv",
+      "television",
+      "monitor",
+      "display"
+    ],
+    "body": [
+      "screen",
+      "bezel",
+      "stand",
+      "speaker",
+      "remote"
+    ]
+  },
+  "vase": {
+    "base": [
+      "vase",
+      "flower vase"
+    ],
+    "body": [
+      "rim",
+      "neck",
+      "body",
+      "base"
+    ]
+  },
+  "whiteboard": {
+    "base": [
+      "whiteboard",
+      "board"
+    ],
+    "body": [
+      "frame",
+      "surface",
+      "marker tray"
+    ]
+  }
+}

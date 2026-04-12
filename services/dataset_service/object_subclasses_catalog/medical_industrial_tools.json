@@ -1,0 +1,293 @@
+{
+  "beaker": {
+    "base": [
+      "beaker"
+    ],
+    "body": [
+      "rim",
+      "spout",
+      "body",
+      "base"
+    ]
+  },
+  "blood pressure monitor": {
+    "base": [
+      "blood pressure monitor",
+      "bp monitor"
+    ],
+    "body": [
+      "cuff",
+      "tube",
+      "display",
+      "pump",
+      "button"
+    ]
+  },
+  "bolt": {
+    "base": [
+      "bolt"
+    ],
+    "body": [
+      "head",
+      "thread",
+      "shaft"
+    ]
+  },
+  "conveyor belt": {
+    "base": [
+      "conveyor belt",
+      "belt conveyor"
+    ],
+    "body": [
+      "belt",
+      "roller",
+      "frame",
+      "motor"
+    ]
+  },
+  "crutch": {
+    "base": [
+      "crutch"
+    ],
+    "body": [
+      "handle",
+      "pad",
+      "shaft",
+      "tip"
+    ]
+  },
+  "drill": {
+    "base": [
+      "drill",
+      "power drill"
+    ],
+    "body": [
+      "chuck",
+      "bit",
+      "handle",
+      "trigger",
+      "battery"
+    ]
+  },
+  "flask": {
+    "base": [
+      "flask",
+      "lab flask"
+    ],
+    "body": [
+      "neck",
+      "body",
+      "base",
+      "stopper"
+    ]
+  },
+  "hammer": {
+    "base": [
+      "hammer"
+    ],
+    "body": [
+      "head",
+      "handle",
+      "claw",
+      "face"
+    ]
+  },
+  "helmet": {
+    "base": [
+      "helmet",
+      "safety helmet",
+      "hard hat"
+    ],
+    "body": [
+      "shell",
+      "strap",
+      "visor",
+      "padding"
+    ]
+  },
+  "hospital bed": {
+    "base": [
+      "hospital bed",
+      "medical bed"
+    ],
+    "body": [
+      "rail",
+      "mattress",
+      "wheel",
+      "headboard",
+      "control panel"
+    ]
+  },
+  "ladder": {
+    "base": [
+      "ladder"
+    ],
+    "body": [
+      "rung",
+      "rail",
+      "foot",
+      "hinge"
+    ]
+  },
+  "microscope": {
+    "base": [
+      "microscope"
+    ],
+    "body": [
+      "eyepiece",
+      "objective lens",
+      "stage",
+      "focus knob",
+      "base"
+    ]
+  },
+  "nail": {
+    "base": [
+      "nail",
+      "metal nail"
+    ],
+    "body": [
+      "head",
+      "shaft",
+      "tip"
+    ]
+  },
+  "nut": {
+    "base": [
+      "nut",
+      "hex nut"
+    ],
+    "body": [
+      "thread",
+      "face",
+      "edge"
+    ]
+  },
+  "pipette": {
+    "base": [
+      "pipette",
+      "dropper"
+    ],
+    "body": [
+      "tip",
+      "tube",
+      "bulb",
+      "plunger"
+    ]
+  },
+  "pliers": {
+    "base": [
+      "pliers"
+    ],
+    "body": [
+      "jaw",
+      "handle",
+      "pivot",
+      "grip"
+    ]
+  },
+  "robot arm": {
+    "base": [
+      "robot arm",
+      "industrial robot"
+    ],
+    "body": [
+      "joint",
+      "gripper",
+      "base",
+      "link",
+      "sensor"
+    ]
+  },
+  "saw": {
+    "base": [
+      "saw",
+      "handsaw",
+      "circular saw"
+    ],
+    "body": [
+      "blade",
+      "handle",
+      "guard",
+      "tooth"
+    ]
+  },
+  "screwdriver": {
+    "base": [
+      "screwdriver"
+    ],
+    "body": [
+      "handle",
+      "shaft",
+      "tip"
+    ]
+  },
+  "stethoscope": {
+    "base": [
+      "stethoscope"
+    ],
+    "body": [
+      "ear tip",
+      "tube",
+      "chest piece",
+      "diaphragm"
+    ]
+  },
+  "syringe": {
+    "base": [
+      "syringe"
+    ],
+    "body": [
+      "needle",
+      "plunger",
+      "barrel",
+      "cap"
+    ]
+  },
+  "test tube": {
+    "base": [
+      "test tube"
+    ],
+    "body": [
+      "rim",
+      "body",
+      "base",
+      "cap"
+    ]
+  },
+  "thermometer": {
+    "base": [
+      "thermometer",
+      "digital thermometer"
+    ],
+    "body": [
+      "tip",
+      "display",
+      "button",
+      "sensor"
+    ]
+  },
+  "workbench": {
+    "base": [
+      "workbench"
+    ],
+    "body": [
+      "top",
+      "leg",
+      "vise",
+      "drawer",
+      "shelf"
+    ]
+  },
+  "wrench": {
+    "base": [
+      "wrench",
+      "spanner"
+    ],
+    "body": [
+      "jaw",
+      "handle",
+      "adjuster"
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --text: #1f2937;
+    --text-light: #6b7280;
+    --bg: #f9fafb;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --accent: #7c3aed;
+  }
+
+  body {
+    @apply font-sans bg-[var(--bg)] text-[var(--text)];
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-gray-200 rounded-xl shadow-sm;
+  }
+
+  .btn-primary {
+    @apply bg-violet-600 text-white px-4 py-2 rounded-md text-sm transition-colors duration-200 hover:bg-violet-700;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent border border-gray-300 px-4 py-2 rounded-md text-sm transition-colors duration-200 hover:bg-gray-100 text-gray-800;
+  }
+
+  .input {
+    @apply border border-gray-300 rounded-md px-3 py-2 w-full focus:outline-none focus:border-violet-600 focus:ring-1 focus:ring-violet-600 transition-colors duration-200;
+  }
+
+  .heading {
+    @apply text-[22px] font-semibold text-gray-900;
+  }
+
+  .subtext {
+    @apply text-[var(--text-light)];
+  }
+}
+
+@layer utilities {
+  @keyframes pageEnter {
+    0% { opacity: 0; transform: translateY(12px) scale(0.995); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .animate-page-enter {
+    animation: pageEnter 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes sidebarItemEnter {
+    0% { opacity: 0; transform: translateX(-15px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  .animate-sidebar-item {
+    animation: sidebarItemEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+}

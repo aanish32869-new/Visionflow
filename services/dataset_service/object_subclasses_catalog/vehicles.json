@@ -1,0 +1,429 @@
+{
+  "airplane": {
+    "base": [
+      "airplane",
+      "plane",
+      "aircraft",
+      "jet",
+      "airliner"
+    ],
+    "body": [
+      "wing",
+      "tail",
+      "tail fin",
+      "cockpit",
+      "fuselage",
+      "nose",
+      "engine nacelle"
+    ],
+    "landing_gear": [
+      "landing gear",
+      "airplane wheel",
+      "nose wheel"
+    ],
+    "control_surfaces": [
+      "flap",
+      "rudder",
+      "aileron",
+      "stabilizer"
+    ]
+  },
+  "bicycle": {
+    "base": [
+      "bicycle",
+      "bike",
+      "cycle"
+    ],
+    "wheels": [
+      "bicycle wheel",
+      "bike wheel",
+      "spoke",
+      "spokes",
+      "tire",
+      "pedal"
+    ],
+    "controls": [
+      "handlebar",
+      "brake lever",
+      "bell"
+    ],
+    "body": [
+      "frame",
+      "chain",
+      "chainring",
+      "seat",
+      "saddle",
+      "fork",
+      "kickstand"
+    ]
+  },
+  "bicycle rack": {
+    "base": [
+      "bicycle rack",
+      "bike stand"
+    ],
+    "body": [
+      "bar",
+      "slot",
+      "base"
+    ]
+  },
+  "boat": {
+    "base": [
+      "boat",
+      "ship",
+      "vessel",
+      "yacht",
+      "canoe"
+    ],
+    "body": [
+      "hull",
+      "deck",
+      "mast",
+      "sail",
+      "anchor",
+      "cabin",
+      "rudder",
+      "propeller"
+    ]
+  },
+  "bulldozer": {
+    "base": [
+      "bulldozer",
+      "dozer"
+    ],
+    "body": [
+      "blade",
+      "track",
+      "cab",
+      "ripper"
+    ]
+  },
+  "bus": {
+    "base": [
+      "bus",
+      "coach",
+      "minibus",
+      "school bus"
+    ],
+    "body": [
+      "bus door",
+      "bus window",
+      "windshield",
+      "destination board",
+      "roof rack"
+    ],
+    "wheels": [
+      "bus wheel",
+      "bus tire"
+    ],
+    "lights": [
+      "bus headlight",
+      "bus taillight"
+    ]
+  },
+  "car": {
+    "base": [
+      "car",
+      "vehicle",
+      "automobile",
+      "sedan",
+      "hatchback",
+      "suv",
+      "coupe"
+    ],
+    "wheels": [
+      "wheel",
+      "wheels",
+      "tire",
+      "tires",
+      "tyre",
+      "rim",
+      "alloy wheel"
+    ],
+    "mirrors": [
+      "mirror",
+      "mirrors",
+      "side mirror",
+      "rear mirror",
+      "wing mirror"
+    ],
+    "hood": [
+      "hood",
+      "bonnet",
+      "engine hood",
+      "car hood"
+    ],
+    "windshield": [
+      "windshield",
+      "windscreen",
+      "front glass",
+      "windshield glass"
+    ],
+    "lights": [
+      "headlight",
+      "headlamp",
+      "taillight",
+      "brake light",
+      "turn signal",
+      "fog light"
+    ],
+    "bumpers": [
+      "bumper",
+      "front bumper",
+      "rear bumper"
+    ],
+    "doors": [
+      "door",
+      "doors",
+      "car door",
+      "vehicle door",
+      "door handle"
+    ],
+    "windows": [
+      "window",
+      "windows",
+      "car window",
+      "side window",
+      "rear window"
+    ],
+    "roof": [
+      "roof",
+      "car roof",
+      "sunroof"
+    ],
+    "body": [
+      "trunk",
+      "boot",
+      "grille",
+      "license plate",
+      "number plate"
+    ]
+  },
+  "cement mixer": {
+    "base": [
+      "cement mixer",
+      "concrete mixer"
+    ],
+    "body": [
+      "drum",
+      "wheel",
+      "handle",
+      "motor"
+    ]
+  },
+  "crane": {
+    "base": [
+      "crane",
+      "tower crane"
+    ],
+    "body": [
+      "boom",
+      "hook",
+      "cable",
+      "counterweight",
+      "cabin"
+    ]
+  },
+  "excavator": {
+    "base": [
+      "excavator",
+      "digger"
+    ],
+    "body": [
+      "boom",
+      "arm",
+      "bucket",
+      "track",
+      "cab"
+    ]
+  },
+  "forklift": {
+    "base": [
+      "forklift"
+    ],
+    "body": [
+      "fork",
+      "mast",
+      "wheel",
+      "cabin",
+      "lift chain"
+    ]
+  },
+  "helicopter": {
+    "base": [
+      "helicopter",
+      "chopper"
+    ],
+    "body": [
+      "rotor",
+      "tail rotor",
+      "cockpit",
+      "skid",
+      "door"
+    ]
+  },
+  "motorcycle": {
+    "base": [
+      "motorcycle",
+      "motorbike",
+      "bike",
+      "scooter"
+    ],
+    "wheels": [
+      "motorcycle wheel",
+      "bike tire",
+      "bike tyres"
+    ],
+    "controls": [
+      "handlebar",
+      "throttle",
+      "brake lever"
+    ],
+    "body": [
+      "seat",
+      "fuel tank",
+      "engine",
+      "exhaust",
+      "muffler",
+      "helmet box"
+    ],
+    "lights": [
+      "headlight",
+      "taillight",
+      "indicator"
+    ],
+    "mirrors": [
+      "rearview mirror",
+      "bike mirror"
+    ]
+  },
+  "rickshaw": {
+    "base": [
+      "rickshaw",
+      "auto rickshaw",
+      "tuk tuk"
+    ],
+    "body": [
+      "wheel",
+      "seat",
+      "roof",
+      "handlebar",
+      "headlight"
+    ]
+  },
+  "subway": {
+    "base": [
+      "subway",
+      "metro train",
+      "metro"
+    ],
+    "body": [
+      "door",
+      "window",
+      "carriage",
+      "pantograph"
+    ]
+  },
+  "tractor": {
+    "base": [
+      "tractor"
+    ],
+    "body": [
+      "wheel",
+      "cabin",
+      "engine hood",
+      "exhaust",
+      "hitch"
+    ]
+  },
+  "tractor trailer": {
+    "base": [
+      "tractor trailer",
+      "semi truck",
+      "semi trailer"
+    ],
+    "body": [
+      "cab",
+      "trailer",
+      "wheel",
+      "mirror",
+      "door"
+    ]
+  },
+  "train": {
+    "base": [
+      "train",
+      "locomotive",
+      "railcar",
+      "carriage",
+      "wagon"
+    ],
+    "body": [
+      "train door",
+      "train window",
+      "engine car",
+      "pantograph",
+      "coupler"
+    ],
+    "wheels": [
+      "train wheel",
+      "bogie",
+      "rail wheel"
+    ]
+  },
+  "truck": {
+    "base": [
+      "truck",
+      "lorry",
+      "pickup truck",
+      "trailer truck"
+    ],
+    "body": [
+      "cargo bed",
+      "trailer",
+      "cab",
+      "grille",
+      "windshield",
+      "truck door"
+    ],
+    "wheels": [
+      "truck wheel",
+      "truck tire"
+    ],
+    "lights": [
+      "truck headlight",
+      "marker light"
+    ],
+    "mirrors": [
+      "truck mirror",
+      "side mirror"
+    ]
+  },
+  "van": {
+    "base": [
+      "van",
+      "minivan",
+      "cargo van"
+    ],
+    "body": [
+      "door",
+      "window",
+      "wheel",
+      "roof",
+      "bumper"
+    ]
+  },
+  "wheelchair": {
+    "base": [
+      "wheelchair"
+    ],
+    "body": [
+      "wheel",
+      "seat",
+      "armrest",
+      "footrest",
+      "handle"
+    ]
+  }
+}

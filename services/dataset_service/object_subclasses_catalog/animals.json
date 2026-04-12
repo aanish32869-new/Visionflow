@@ -1,0 +1,321 @@
+{
+  "bear": {
+    "base": [
+      "bear",
+      "grizzly",
+      "polar bear"
+    ],
+    "body": [
+      "paw",
+      "snout",
+      "fur",
+      "claw",
+      "ear"
+    ]
+  },
+  "bird": {
+    "base": [
+      "bird",
+      "sparrow",
+      "eagle",
+      "parrot",
+      "crow"
+    ],
+    "body": [
+      "beak",
+      "wing",
+      "feather",
+      "tail",
+      "claw",
+      "talon"
+    ]
+  },
+  "camel": {
+    "base": [
+      "camel"
+    ],
+    "body": [
+      "hump",
+      "hoof",
+      "neck",
+      "tail",
+      "saddle"
+    ]
+  },
+  "cat": {
+    "base": [
+      "cat",
+      "kitten",
+      "feline"
+    ],
+    "body": [
+      "whiskers",
+      "paw",
+      "tail",
+      "ear",
+      "fur",
+      "claw"
+    ]
+  },
+  "cow": {
+    "base": [
+      "cow",
+      "bull",
+      "cattle",
+      "calf"
+    ],
+    "body": [
+      "horn",
+      "hoof",
+      "tail",
+      "udder",
+      "ear",
+      "snout"
+    ]
+  },
+  "deer": {
+    "base": [
+      "deer"
+    ],
+    "body": [
+      "antler",
+      "hoof",
+      "tail",
+      "ear"
+    ]
+  },
+  "dog": {
+    "base": [
+      "dog",
+      "puppy",
+      "canine"
+    ],
+    "head": [
+      "snout",
+      "paw",
+      "tail",
+      "ear",
+      "fur",
+      "collar"
+    ]
+  },
+  "elephant": {
+    "base": [
+      "elephant"
+    ],
+    "body": [
+      "trunk",
+      "tusk",
+      "ear",
+      "tail",
+      "leg"
+    ]
+  },
+  "fish": {
+    "base": [
+      "fish"
+    ],
+    "body": [
+      "fin",
+      "tail",
+      "gill",
+      "scale",
+      "mouth"
+    ]
+  },
+  "giraffe": {
+    "base": [
+      "giraffe"
+    ],
+    "body": [
+      "neck",
+      "horn",
+      "hoof",
+      "tail",
+      "ear"
+    ]
+  },
+  "goat": {
+    "base": [
+      "goat"
+    ],
+    "body": [
+      "horn",
+      "hoof",
+      "beard",
+      "tail",
+      "ear"
+    ]
+  },
+  "horse": {
+    "base": [
+      "horse",
+      "pony",
+      "mare",
+      "stallion"
+    ],
+    "body": [
+      "mane",
+      "hoof",
+      "tail",
+      "ear",
+      "snout",
+      "saddle"
+    ]
+  },
+  "insect": {
+    "base": [
+      "insect",
+      "bug",
+      "beetle",
+      "ant",
+      "butterfly"
+    ],
+    "body": [
+      "wing",
+      "antenna",
+      "leg",
+      "thorax",
+      "abdomen"
+    ]
+  },
+  "lion": {
+    "base": [
+      "lion"
+    ],
+    "body": [
+      "mane",
+      "paw",
+      "tail",
+      "ear",
+      "snout"
+    ]
+  },
+  "monkey": {
+    "base": [
+      "monkey",
+      "ape"
+    ],
+    "body": [
+      "tail",
+      "hand",
+      "foot",
+      "ear",
+      "face"
+    ]
+  },
+  "person": {
+    "base": [
+      "person",
+      "human",
+      "man",
+      "woman",
+      "boy",
+      "girl"
+    ],
+    "head": [
+      "head",
+      "face",
+      "eye",
+      "eyes",
+      "ear",
+      "ears",
+      "nose",
+      "mouth",
+      "hair"
+    ],
+    "upper_body": [
+      "neck",
+      "shoulder",
+      "arm",
+      "elbow",
+      "hand",
+      "finger",
+      "thumb",
+      "chest",
+      "back"
+    ],
+    "lower_body": [
+      "waist",
+      "leg",
+      "knee",
+      "foot",
+      "feet",
+      "ankle",
+      "toe"
+    ],
+    "wearables": [
+      "shirt",
+      "tshirt",
+      "jacket",
+      "pants",
+      "trousers",
+      "shoe",
+      "shoes",
+      "hat",
+      "glasses"
+    ]
+  },
+  "rabbit": {
+    "base": [
+      "rabbit",
+      "bunny"
+    ],
+    "body": [
+      "ear",
+      "paw",
+      "tail",
+      "whiskers"
+    ]
+  },
+  "sheep": {
+    "base": [
+      "sheep",
+      "lamb",
+      "ram"
+    ],
+    "body": [
+      "wool",
+      "hoof",
+      "tail",
+      "ear",
+      "snout"
+    ]
+  },
+  "snake": {
+    "base": [
+      "snake",
+      "serpent"
+    ],
+    "body": [
+      "head",
+      "tail",
+      "scale",
+      "fang"
+    ]
+  },
+  "tiger": {
+    "base": [
+      "tiger"
+    ],
+    "body": [
+      "stripe",
+      "paw",
+      "tail",
+      "ear",
+      "snout"
+    ]
+  },
+  "zebra": {
+    "base": [
+      "zebra"
+    ],
+    "body": [
+      "stripe",
+      "hoof",
+      "mane",
+      "tail",
+      "ear"
+    ]
+  }
+}

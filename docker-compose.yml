@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "5000:80"
+    depends_on:
+      - auth-service
+      - dataset-service
+      - inference-service
+  auth-service:
+    build: ./services/auth-service
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+  dataset-service:
+    build: ./services/dataset-service
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+  inference-service:
+    build: ./services/inference-service
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017"

@@ -1,0 +1,12 @@
+{
+  "name": "visionflow-root",
+  "version": "1.0.0",
+  "description": "Root orchestrator to run backend and frontend simultaneously",
+  "scripts": {
+    "start": "concurrently \"python api-gateway/local_proxy.py\" \"node services/project_service_node/server.js\" \"python services/dataset_service/app.py\" \"python services/inference_service/app.py\" \"cd apps/web && npm run dev\"",
+    "install:all": "npm --prefix services/project_service_node install && npm --prefix apps/web install"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
