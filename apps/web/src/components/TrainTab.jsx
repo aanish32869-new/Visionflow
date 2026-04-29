@@ -119,6 +119,19 @@ function VersionOption({ version, selected, onClick }) {
           <div className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Classes</div>
         </div>
       </div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
+         <span className="text-[10px] font-bold text-gray-400">Created {formatDate(version.created_at).split(',')[0]}</span>
+         <button 
+           onClick={(e) => {
+             e.stopPropagation();
+             onClick(true); // Signal delete
+           }}
+           className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+         >
+           <Trash2 size={14} />
+         </button>
+      </div>
     </button>
   );
 }
@@ -204,6 +217,7 @@ export default function TrainTab({ projectId, onOpenVersions }) {
   const [trainingMode, setTrainingMode] = useState("local");
   const [pipelineConfig, setPipelineConfig] = useState(null);
   const [hardware, setHardware] = useState({ gpu_available: false, gpu_name: null });
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, type: null, id: null, name: "" });
 
   const selectedVersion = useMemo(
     () => versions.find((v) => String(v.version_id) === String(selectedVersionId)) || versions[0],
@@ -315,6 +329,40 @@ export default function TrainTab({ projectId, onOpenVersions }) {
     }
   };
 
+  const handleDeleteJob = async (jobId) => {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/jobs/${jobId}`, { method: "DELETE" });
+      if (response.ok) {
+        setJobs(prev => prev.filter(j => j.id !== jobId));
+        setFeedback({ type: "success", message: "Training job deleted successfully." });
+      }
+    } catch (e) {
+      setFeedback({ type: "error", message: "Failed to delete job." });
+    }
+  };
+
+  const handleDeleteVersion = async (versionId) => {
+    try {
+      const response = await fetch(`/api/versions/${versionId}`, { method: "DELETE" });
+      if (response.ok) {
+        setVersions(prev => prev.filter(v => v.version_id !== versionId));
+        if (selectedVersionId === versionId) setSelectedVersionId("");
+        setFeedback({ type: "success", message: "Dataset version deleted successfully." });
+      }
+    } catch (e) {
+      setFeedback({ type: "error", message: "Failed to delete version." });
+    }
+  };
+
+  const confirmDelete = () => {
+    if (deleteConfirm.type === 'job') {
+      handleDeleteJob(deleteConfirm.id);
+    } else {
+      handleDeleteVersion(deleteConfirm.id);
+    }
+    setDeleteConfirm({ ...deleteConfirm, isOpen: false });
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -386,7 +434,13 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                       key={v.version_id} 
                       version={v} 
                       selected={selectedVersion?.version_id === v.version_id}
-                      onClick={() => setSelectedVersionId(v.version_id)}
+                      onClick={(isDelete = false) => {
+                        if (isDelete) {
+                          setDeleteConfirm({ isOpen: true, type: 'version', id: v.version_id, name: v.name });
+                        } else {
+                          setSelectedVersionId(v.version_id);
+                        }
+                      }}
                     />
                   ))
                 ) : (
@@ -669,7 +723,8 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                        <th className="pb-4">Version</th>
                        <th className="pb-4">Progress</th>
                        <th className="pb-4">Metrics (mAP)</th>
-                       <th className="pb-4 text-right pr-2">Date</th>
+                       <th className="pb-4 text-right">Date</th>
+                       <th className="pb-4 text-right pr-2">Actions</th>
                     </tr>
                  </thead>
                  <tbody className="divide-y divide-gray-50">
@@ -715,9 +770,17 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                               <span className="text-[11px] font-bold text-gray-300 uppercase tracking-widest">In Progress</span>
                             )}
                          </td>
-                         <td className="py-5 text-right pr-2">
+                         <td className="py-5 text-right">
                             <div className="text-[12px] font-black text-gray-950">{formatDate(job.created_at).split(',')[0]}</div>
                             <div className="text-[10px] font-bold text-gray-400 mt-0.5">{formatDate(job.created_at).split(',')[1]}</div>
+                         </td>
+                         <td className="py-5 text-right pr-2">
+                            <button 
+                              onClick={() => setDeleteConfirm({ isOpen: true, type: 'job', id: job.id, name: `Job ${job.job_id?.slice(0, 8)}` })}
+                              className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                            >
+                               <Trash2 size={16} />
+                            </button>
                          </td>
                       </tr>
                     ))}
@@ -725,6 +788,36 @@ export default function TrainTab({ projectId, onOpenVersions }) {
               </table>
            </div>
         </section>
+      )}
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+           <div className="absolute inset-0 bg-gray-950/60 backdrop-blur-sm" onClick={() => setDeleteConfirm({ ...deleteConfirm, isOpen: false })} />
+           <div className="relative w-full max-w-md bg-white rounded-[32px] p-8 shadow-2xl animate-modal-enter">
+              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+                 <AlertCircle size={32} />
+              </div>
+              <h3 className="text-xl font-black text-gray-950 text-center mb-2">Confirm Deletion</h3>
+              <p className="text-sm font-bold text-gray-500 text-center mb-8">
+                 Are you sure you want to delete <span className="text-gray-950">"{deleteConfirm.name}"</span>? 
+                 This action cannot be undone and will remove it from all project records.
+              </p>
+              <div className="flex gap-3">
+                 <button 
+                   onClick={() => setDeleteConfirm({ ...deleteConfirm, isOpen: false })}
+                   className="flex-1 py-3.5 bg-gray-50 text-gray-500 rounded-2xl font-black text-[13px] hover:bg-gray-100 transition"
+                 >
+                    Cancel
+                 </button>
+                 <button 
+                   onClick={confirmDelete}
+                   className="flex-1 py-3.5 bg-red-600 text-white rounded-2xl font-black text-[13px] hover:bg-red-700 transition shadow-lg shadow-red-100"
+                 >
+                    Confirm Delete
+                 </button>
+              </div>
+           </div>
+        </div>
       )}
     </div>
   );
