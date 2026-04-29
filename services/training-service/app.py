@@ -123,24 +123,43 @@ ARCH_MAP = {
     "resnet18": {"label": "ResNet18",                  "weights": "resnet18.pt", "task": "classify"},
 }
 
-def _get_hardware_status():
-    """Detect GPU availability and details."""
+import threading
+_hardware_cache = {
+    "gpu_available": False, 
+    "gpu_name": "Detecting...", 
+    "torch_version": "Detecting...", 
+    "cuda_version": None,
+    "initialized": False
+}
+
+def _bg_hardware_detection():
+    """Heavy hardware detection in a background thread."""
+    global _hardware_cache
     try:
         import torch
         gpu_available = torch.cuda.is_available()
         gpu_name = torch.cuda.get_device_name(0) if gpu_available else None
-        return {
+        _hardware_cache.update({
             "gpu_available": gpu_available,
             "gpu_name": gpu_name,
             "torch_version": torch.__version__,
-            "cuda_version": torch.version.cuda if gpu_available else None
-        }
-    except Exception:
-        return {
+            "cuda_version": torch.version.cuda if gpu_available else None,
+            "initialized": True
+        })
+    except Exception as e:
+        _hardware_cache.update({
             "gpu_available": False,
             "gpu_name": None,
-            "torch_version": "Not Found"
-        }
+            "torch_version": "Error",
+            "initialized": True
+        })
+
+# Start detection thread immediately
+threading.Thread(target=_bg_hardware_detection, daemon=True).start()
+
+def _get_hardware_status():
+    """Return cached hardware details."""
+    return _hardware_cache
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
