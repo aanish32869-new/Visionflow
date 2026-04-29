@@ -98,6 +98,25 @@ ARCH_MAP = {
     "resnet18": {"label": "ResNet18",                  "weights": "resnet18.pt", "task": "classify"},
 }
 
+def _get_hardware_status():
+    """Detect GPU availability and details."""
+    try:
+        import torch
+        gpu_available = torch.cuda.is_available()
+        gpu_name = torch.cuda.get_device_name(0) if gpu_available else None
+        return {
+            "gpu_available": gpu_available,
+            "gpu_name": gpu_name,
+            "torch_version": torch.__version__,
+            "cuda_version": torch.version.cuda if gpu_available else None
+        }
+    except Exception:
+        return {
+            "gpu_available": False,
+            "gpu_name": None,
+            "torch_version": "Not Found"
+        }
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/api/training/health")
@@ -108,7 +127,13 @@ def health():
         "service": "training-service",
         "mode": conf.get("training_mode", "local"),
         "device": conf.get("training_device", "cpu"),
+        "hardware": _get_hardware_status()
     })
+
+
+@app.route("/api/training/hardware")
+def get_hardware():
+    return jsonify(_get_hardware_status())
 
 
 @app.route("/api/training/config")
@@ -282,7 +307,23 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
         _generate_demo_yaml(data_yaml, version_id, project_id, conf)
 
     data_yaml_abs = str(data_yaml.resolve())
-    device_arg = "0" if device == "gpu" else "cpu"
+    
+    # ── Hardware Fallback Logic ────────────────────────────────────────────────
+    hw = _get_hardware_status()
+    actual_device = device
+    
+    if device == "gpu":
+        if not hw["gpu_available"]:
+            print(f"[TRAIN] GPU requested but not found. Falling back to CPU.")
+            actual_device = "cpu"
+            _update({"actual_device": "cpu (fallback)"})
+        else:
+            print(f"[TRAIN] Using GPU: {hw['gpu_name']}")
+            _update({"actual_device": f"gpu ({hw['gpu_name']})"})
+    else:
+        _update({"actual_device": "cpu"})
+
+    device_arg = "0" if actual_device == "gpu" else "cpu"
     
     # Check if weights exist, if not and it's not a standard YOLO, we might need to simulate
     weights = arch_info.get("weights", "yolov8n.pt")

@@ -203,6 +203,7 @@ export default function TrainTab({ projectId, onOpenVersions }) {
   const [device, setDevice] = useState("cpu");
   const [trainingMode, setTrainingMode] = useState("local");
   const [pipelineConfig, setPipelineConfig] = useState(null);
+  const [hardware, setHardware] = useState({ gpu_available: false, gpu_name: null });
 
   const selectedVersion = useMemo(
     () => versions.find((v) => String(v.version_id) === String(selectedVersionId)) || versions[0],
@@ -246,6 +247,23 @@ export default function TrainTab({ projectId, onOpenVersions }) {
           setBatchSize(config.local.batch_size);
           setImgSize(config.local.img_size);
           setWorkers(config.local.workers);
+        }
+
+        // Fetch Hardware specifically
+        try {
+          const hRes = await fetch('/api/training/hardware');
+          if (hRes.ok) {
+            const hData = await hRes.json();
+            setHardware(hData);
+            // Auto-select GPU if available
+            if (hData.gpu_available) {
+              setDevice("gpu");
+            } else {
+              setDevice("cpu");
+            }
+          }
+        } catch (hErr) {
+          console.error("Hardware detection failed", hErr);
         }
     } catch (e) {
       console.error("Failed to load training data:", e);
@@ -568,9 +586,20 @@ export default function TrainTab({ projectId, onOpenVersions }) {
 
            {/* Hardware & Mode */}
            <section className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-sm">
-              <h2 className="text-[17px] font-black text-gray-950 mb-6 flex items-center gap-2">
-                 <Monitor size={18} className="text-violet-600" /> Hardware & Mode
-              </h2>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-[17px] font-black text-gray-950 flex items-center gap-2">
+                   <Monitor size={18} className="text-violet-600" /> Hardware & Mode
+                </h2>
+                {hardware.gpu_available ? (
+                  <div className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase rounded-md border border-emerald-100 flex items-center gap-1">
+                    <Zap size={8} fill="currentColor" /> GPU Detected
+                  </div>
+                ) : (
+                  <div className="px-2 py-0.5 bg-gray-50 text-gray-400 text-[8px] font-black uppercase rounded-md border border-gray-100">
+                    CPU Only
+                  </div>
+                )}
+              </div>
               <div className="space-y-6">
                  <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Training Mode</label>
