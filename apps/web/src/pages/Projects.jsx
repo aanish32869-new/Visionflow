@@ -146,7 +146,7 @@ export default function Projects() {
 
   return (
     <Layout>
-      <div className="w-full max-w-[1450px] mx-auto pt-2 pb-12 flex flex-col h-full animate-page-enter relative">
+      <div className="w-full max-w-[1450px] mx-auto pt-2 pb-12 flex flex-col min-h-full animate-page-enter relative">
         {toastMessage && (
           <div className="fixed top-28 left-1/2 -translate-x-1/2 w-full max-w-[480px] z-40 bg-white rounded-[10px] shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-gray-100 p-5 animate-slide-up flex items-center justify-between gap-4">
             <div className="flex items-center gap-2.5 text-gray-900 font-bold text-[15px]">
@@ -342,9 +342,14 @@ export default function Projects() {
             </div>
 
             {isLoading ? (
-              <div className="rounded-2xl border border-gray-200 bg-white p-12 text-center text-gray-500">
-                <Loader2 size={24} className="animate-spin mx-auto mb-4 text-violet-600" />
-                Loading workspace projects...
+              <div className="rounded-2xl bg-gradient-to-b from-white to-gray-50 border border-gray-100 p-16 text-center shadow-sm">
+                <div className="relative w-16 h-16 mx-auto mb-6">
+                  <div className="absolute inset-0 border-4 border-violet-100 rounded-full"></div>
+                  <div className="absolute inset-0 border-4 border-violet-600 rounded-full border-t-transparent animate-spin"></div>
+                  <div className="absolute inset-0 m-auto w-2 h-2 bg-violet-400 rounded-full animate-pulse"></div>
+                </div>
+                <h3 className="text-[18px] font-bold text-gray-900 tracking-tight mb-2">Preparing Workspace</h3>
+                <p className="text-[13px] text-gray-500 font-medium">Syncing projects and folders securely...</p>
               </div>
             ) : filteredProjects.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center">

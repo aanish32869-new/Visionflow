@@ -1,14 +1,14 @@
 /* eslint-disable react-hooks/exhaustive-deps, no-unused-vars */
 import { useNavigate, useLocation } from "react-router-dom";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { 
   Upload, Tag, HelpCircle, HardDrive, Edit3, Database, Layers, BarChart2, Hash, 
   Cpu, Box, Eye, Rocket, Check, ArrowUp, FileImage, FileCode, Film, FileText, Code, Globe, Lock,
   Sparkles, User, Users, Building, ChevronRight, UploadCloud, Activity, List, Share2, Network, PieChart,
-  Search, X, Plus, Crop, FileCheck, MoreVertical, ArrowRight, Image as ImageIcon, CheckCircle, Info, ChevronDown, Trash
+  Search, X, Plus, Crop, FileCheck, MoreVertical, ArrowRight, Image as ImageIcon, CheckCircle, Info, ChevronDown, Trash, Download,
+  Calendar, Clock, EyeOff, ArrowLeft, Loader2
 } from "lucide-react";
 import AnnotationTool from "../components/AnnotationTool";
-import VersionsTab from "../components/VersionsTab";
 import TrainTab from "../components/TrainTab";
 import DeployTab from "../components/DeployTab";
 import AnalyticsTab from "../components/AnalyticsTab";
@@ -16,8 +16,12 @@ import ClassesTab from "../components/ClassesTab";
 import ModelsTab from "../components/ModelsTab";
 import VisualizeTab from "../components/VisualizeTab";
 import AutoLabelBatchPanel from "../components/AutoLabelBatchPanel";
+import DatasetTab from "../components/DatasetTab";
+import VersionsTab from "../components/VersionsTab";
+import GenerateVersionModal from "../components/GenerateVersionModal";
 import * as tf from '@tensorflow/tfjs';
 import * as mobilenet from '@tensorflow-models/mobilenet';
+import logger from "../utils/logger";
 
 function buildBatchId(label) {
   return `${(label || "uploaded-batch").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "uploaded-batch"}-${Date.now()}`;
@@ -34,6 +38,13 @@ export default function ProjectUpload() {
   
   const [activeTab, setActiveTab] = useState(location.state?.activeTab || "upload");
   const [assets, setAssets] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [sortBy, setSortBy] = useState("newest");
+  const [autoLabelClasses, setAutoLabelClasses] = useState([{ name: "", description: "" }]);
+  const [createBatchInstantly, setCreateBatchInstantly] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [selectedBatch, setSelectedBatch] = useState(null);
+  const [isAutoLabeling, setIsAutoLabeling] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadComplete, setIsUploadComplete] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({});
@@ -45,27 +56,90 @@ export default function ProjectUpload() {
   const [isDragging, setIsDragging] = useState(false);
   const [projectType, setProjectType] = useState(location.state?.projectType || "Object Detection");
   const [classificationType, setClassificationType] = useState(location.state?.classificationType || null);
-  const [annotateView, setAnnotateView] = useState(location.state?.annotateView || 'board');
-  const [createBatchInstantly, setCreateBatchInstantly] = useState(true);
-  const [autoLabelClasses, setAutoLabelClasses] = useState([{ name: "", description: "" }]);
-  const [autoLabelStrategy, setAutoLabelStrategy] = useState("auto");
-  const [autoLabelPreview, setAutoLabelPreview] = useState([]);
-  const [autoLabelStatus, setAutoLabelStatus] = useState("");
-  const [autoLabelError, setAutoLabelError] = useState("");
-  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
-  const [isApplyingAutoLabel, setIsApplyingAutoLabel] = useState(false);
+  const [annotateView, setAnnotateView] = useState(location.state?.annotateView || 'board'); // 'board' | 'auto-batch' | 'batch' | 'tool' | 'batch-preview'
+  const [activeAnnotationBatchId, setActiveAnnotationBatchId] = useState(location.state?.activeAnnotationBatchId || null);
+  const [activeAnnotationState, setActiveAnnotationState] = useState(location.state?.activeAnnotationState || null);
+  const [activeImageId, setActiveImageId] = useState(null);
+  const [isGenerateVersionModalOpen, setIsGenerateVersionModalOpen] = useState(false);
+  const [versionCounter, setVersionCounter] = useState(0);
+
+  const [batchImages, setBatchImages] = useState([]);
+  const [batchImagesLoading, setBatchImagesLoading] = useState(false);
+  const [batchImagesOffset, setBatchImagesOffset] = useState(0);
+  const [batchImagesLimit] = useState(50);
+  const [batchImagesTotal, setBatchImagesTotal] = useState(0);
+  
+  // Batch Actions State
+  const [activeMenuBatchId, setActiveMenuBatchId] = useState(null);
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [batchToAction, setBatchToAction] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteActionType, setDeleteActionType] = useState("all"); // all | annotations
+  const [isBatchActionLoading, setIsBatchActionLoading] = useState(false);
+
   const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+  const menuRef = useRef(null);
+
+  // Close menu on click outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setActiveMenuBatchId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
 
   useEffect(() => {
     if (projectId) {
       localStorage.setItem("visionflow_active_project_id", projectId);
       fetchAssets();
       fetchProjectData();
+      fetchJobs();
     }
     if (projectName) {
       localStorage.setItem("visionflow_active_project_name", projectName);
     }
-  }, [projectId]);
+  }, [projectId, projectName]);
+
+  useEffect(() => {
+     if (annotateView === 'batch-preview' && activeAnnotationBatchId) {
+        fetchBatchImages(activeAnnotationBatchId, batchImagesOffset);
+     }
+  }, [annotateView, activeAnnotationBatchId, batchImagesOffset]);
+
+  const fetchJobs = async () => {
+    if (!projectId || projectId === "undefined") return;
+    try {
+      const res = await fetch(`/api/jobs?project_id=${projectId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setJobs(data);
+      }
+    } catch (err) {
+      // Ignored for polling
+    }
+  };
+
+  // Poll for job updates if there are active auto-labeling jobs
+  useEffect(() => {
+    const hasActiveAutoJobs = jobs.some(j => j.labeler_name === "Rapid AI" && j.annotated_count < j.total_images);
+    let interval = null;
+    
+    if (hasActiveAutoJobs) {
+      interval = setInterval(() => {
+        fetchJobs();
+      }, 3000);
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [jobs, projectId]);
 
   useEffect(() => {
     if (location.state?.activeTab) {
@@ -90,31 +164,110 @@ export default function ProjectUpload() {
     }
   }, [detectedObject]);
 
+  useEffect(() => {
+    const handleSwitchTab = (e) => {
+      if (e.detail) setActiveTab(e.detail);
+    };
+    const handleOpenGenerate = () => {
+      setIsGenerateVersionModalOpen(true);
+    };
+
+    window.addEventListener('visionflow_switch_tab', handleSwitchTab);
+    window.addEventListener('visionflow_open_generate_modal', handleOpenGenerate);
+
+    return () => {
+      window.removeEventListener('visionflow_switch_tab', handleSwitchTab);
+      window.removeEventListener('visionflow_open_generate_modal', handleOpenGenerate);
+    };
+  }, []);
+
   const fetchProjectData = async () => {
+    logger.debug(`Fetching data for project ${projectId}...`);
     try {
       const res = await fetch("/api/projects");
       if (res.ok) {
         const data = await res.json();
         const me = data.find(p => String(p.id) === String(projectId));
         if (me) {
+           logger.info(`Project data loaded: ${me.name}`);
            if (me.project_type) setProjectType(me.project_type);
            if (me.classification_type) setClassificationType(me.classification_type);
+        } else {
+           logger.warn(`Project ${projectId} not found in projects list`);
         }
+      } else {
+        logger.error(`Failed to fetch projects: ${res.status}`);
       }
     } catch(err) {
-      console.error(err);
+      logger.error("Error fetching project data", err);
     }
   };
 
   const fetchAssets = async () => {
+    logger.debug(`Fetching assets for project ${projectId}...`);
     try {
       const res = await fetch(`/api/assets?project_id=${projectId}`);
       if (res.ok) {
-        setAssets(await res.json());
+        const data = await res.json();
+        logger.info(`Successfully fetched ${data.length} assets`);
+        setAssets(data);
+      } else {
+        logger.error(`Failed to fetch assets: ${res.status}`);
       }
     } catch(err) {
-      console.error(err);
+      logger.error("Error fetching assets", err);
     }
+  };
+
+  const fetchBatchImages = async (batchId, offset = 0) => {
+     if (!batchId) return;
+     setBatchImagesLoading(true);
+     logger.debug(`Fetching batch images for ${batchId} offset ${offset}`);
+     try {
+        const res = await fetch(`/api/assets?project_id=${projectId}&batch_id=${batchId}&status=annotated&limit=${batchImagesLimit}&offset=${offset}`);
+        if (res.ok) {
+           const data = await res.json();
+           if (offset === 0) {
+              setBatchImages(data);
+           } else {
+              setBatchImages(prev => [...prev, ...data]);
+           }
+           // Since our backend doesn't return total count yet in assets array, we estimate or fetch separately.
+           // For now, let's assume if we get less than limit, we reached the end.
+           setBatchImagesTotal(prev => offset === 0 ? data.length : prev); 
+        }
+     } catch (err) {
+        logger.error("Error fetching batch images", err);
+     } finally {
+        setBatchImagesLoading(false);
+     }
+  };
+
+  const handleAddToDataset = async (batch) => {
+     if (!batch) return;
+     const confirmed = window.confirm(`Move all labeled images in "${batch.batch_name}" to the finalized Dataset?`);
+     if (!confirmed) return;
+
+     logger.info(`Moving batch ${batch.batch_id} to dataset`);
+     try {
+        const res = await fetch(`/api/batches/${batch.batch_id}/dataset`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ project_id: projectId })
+        });
+        if (res.ok) {
+           logger.info(`Batch ${batch.batch_id} moved to dataset successfully`);
+           // Refresh everything
+           fetchAssets();
+           setAnnotateView('board');
+           setActiveAnnotationBatchId(null);
+           setBatchImages([]);
+        } else {
+           logger.error(`Failed to move batch to dataset: ${res.status}`);
+        }
+     } catch (err) {
+        logger.error("Error adding to dataset", err);
+     }
   };
 
   const deleteAsset = async (assetId) => {
@@ -232,16 +385,57 @@ export default function ProjectUpload() {
        await Promise.all(promises);
     }
     
-    // Trigger the dialogue box showing options instead of auto navigating!
-    setIsUploadComplete(true);
+    setIsUploading(false);
+    setActiveAnnotationBatchId(batchMeta.batchId);
+    fetchAssets();
+    setActiveTab("annotate");
+    setAnnotateView("batch");
   };
 
   const handleFileChange = (e) => processFiles(e.target.files);
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files) processFiles(e.dataTransfer.files);
+    const items = e.dataTransfer.items;
+    if (items) {
+      const files = [];
+      const getFileFromEntry = (entry) => {
+        return new Promise((resolve) => {
+          entry.file(file => resolve(file));
+        });
+      };
+      const readDir = async (dirEntry) => {
+        const dirReader = dirEntry.createReader();
+        const entries = await new Promise((resolve) => {
+          dirReader.readEntries(entries => resolve(entries));
+        });
+        for (const entry of entries) {
+          if (entry.isFile) {
+            const file = await getFileFromEntry(entry);
+            files.push(file);
+          } else if (entry.isDirectory) {
+            await readDir(entry);
+          }
+        }
+      };
+      
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+          if (entry && entry.isDirectory) {
+            await readDir(entry);
+          } else {
+            const file = item.getAsFile();
+            if (file) files.push(file);
+          }
+        }
+      }
+      if (files.length > 0) processFiles(files);
+    } else if (e.dataTransfer.files) {
+      processFiles(e.dataTransfer.files);
+    }
   };
 
   const updateAutoLabelClass = (index, field, value) => {
@@ -273,7 +467,9 @@ export default function ProjectUpload() {
       const endpoint = "/api/infer/yolo-label";
       const payload = asset
         ? { asset_id: asset.id, model: "yolov8s.pt", conf: batchConfidenceThreshold }
-        : { project_id: projectId, model: "yolov8s.pt", conf: batchConfidenceThreshold };
+        : activeAnnotationBatchId
+          ? { project_id: projectId, batch_id: activeAnnotationBatchId, model: "yolov8s.pt", conf: batchConfidenceThreshold }
+          : { project_id: projectId, model: "yolov8s.pt", conf: batchConfidenceThreshold };
       
       const res = await fetch(endpoint, {
         method: "POST",
@@ -301,12 +497,338 @@ export default function ProjectUpload() {
 
   const applyAutoLabelToBatch = () => runYoloLabeling();
 
+  const createJob = async ({ batch, labeler, reviewer, instructions }) => {
+    if (!batch || !labeler) return false;
+    logger.info(`Creating job for batch ${batch.batch_id} (labeler: ${labeler})`);
+    try {
+      const res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          batch_id: batch.batch_id,
+          labeler_name: labeler,
+          reviewer_name: reviewer || (reviewMode ? assignForm.reviewer : null),
+          instructionsText: instructions || "",
+        }),
+      });
+      if (res.ok) {
+        logger.info(`Job created successfully for ${batch.batch_id}`);
+        await fetchJobs();
+        await fetchAssets();
+        return true;
+      } else {
+        const errText = await res.text();
+        logger.error(`Failed to create job: ${res.status}`, { body: errText });
+        return false;
+      }
+    } catch (err) {
+      logger.error("Network error creating job", err);
+      return false;
+    }
+  };
+
+  const handleAssignBatch = async () => {
+    const success = await createJob({ 
+      batch: selectedBatch, 
+      labeler: assignForm.labeler, 
+      reviewer: assignForm.reviewer, 
+      instructions: assignForm.instructions 
+    });
+    if (success) {
+      setIsAssignModalOpen(false);
+      setAssignForm({ labeler: "", reviewer: "", instructions: "" });
+    }
+  };
+
+  const startManualLabeling = async (batch) => {
+    logger.info(`Starting manual labeling for batch ${batch.batch_id}`);
+    const success = await createJob({
+      batch: batch,
+      labeler: "Self (Manual)",
+      instructions: "Manually started session."
+    });
+    if (success) {
+      setActiveAnnotationBatchId(batch.batch_id);
+      setActiveAnnotationState('unassigned');
+      setAnnotateView('tool');
+    }
+  };
+
+  const handleAnnotateBatch = async (batch) => {
+    logger.info(`Initializing annotation for batch ${batch.batch_id}`);
+    try {
+      const res = await fetch(`/api/batches/${batch.batch_id}/annotate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      });
+      if (res.ok) {
+        setActiveAnnotationBatchId(batch.batch_id);
+        setActiveAnnotationState('unassigned');
+        setAnnotateView('tool');
+      } else {
+        logger.error(`Failed to initialize annotation: ${res.status}`);
+      }
+    } catch (err) {
+      logger.error("Network error initializing annotation", err);
+    }
+  };
+
+  const approveAsset = async (assetId) => {
+    try {
+      const res = await fetch(`/api/assets/${assetId}/review`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approve" }),
+      });
+      if (res.ok) await fetchAssets();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const rejectAsset = async (assetId, comment) => {
+    try {
+      const res = await fetch(`/api/assets/${assetId}/review`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reject", comment }),
+      });
+      if (res.ok) await fetchAssets();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBatchRename = async () => {
+    if (!batchToAction || !renameValue.trim()) return;
+    setIsBatchActionLoading(true);
+    try {
+      const res = await fetch(`/api/batches/${batchToAction.batch_id}/rename`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId, new_name: renameValue.trim() })
+      });
+      if (res.ok) {
+        await fetchAssets();
+        setIsRenameModalOpen(false);
+        setActiveMenuBatchId(null);
+      }
+    } catch (err) {
+      console.error("Rename failed", err);
+    } finally {
+      setIsBatchActionLoading(false);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (!batchToAction) return;
+    setIsBatchActionLoading(true);
+    try {
+      if (deleteActionType === "annotations") {
+        // Find all annotated assets in this batch
+        const assetsToClear = assets.filter(a => a.batch_id === batchToAction.batch_id && (a.status === 'annotated' || a.is_annotated));
+        
+        logger.info(`Clearing annotations for ${assetsToClear.length} assets in batch ${batchToAction.batch_id}`);
+        
+        // Clear each one via the Node.js API which we know works
+        for (const asset of assetsToClear) {
+          await fetch(`/api/assets/${asset.id}/annotations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ annotations: [] })
+          });
+        }
+        
+        // Update local state
+        setAssets(prev => prev.map(a => 
+          a.batch_id === batchToAction.batch_id 
+            ? { ...a, status: 'unassigned', is_annotated: false, annotation_count: 0, state: null } 
+            : a
+        ));
+      } else {
+        // Find all assets to delete based on the action type
+        const assetsToDelete = assets.filter(a => {
+          if (a.batch_id !== batchToAction.batch_id) return false;
+          if (deleteActionType === "unassigned") {
+            // Match the UI's definition of unassigned
+            return a.status === 'unassigned' || (!a.status && !a.is_annotated && a.state !== 'approved');
+          }
+          if (deleteActionType === "dataset") return a.state === 'approved';
+          return true; // "all" or "forever"
+        });
+
+        logger.info(`Deleting ${assetsToDelete.length} assets in batch ${batchToAction.batch_id}`);
+
+        // Delete each one via the Node.js API
+        for (const asset of assetsToDelete) {
+          await fetch(`/api/assets/${asset.id}`, { method: 'DELETE' });
+        }
+
+        // Update local state
+        const idsToDelete = new Set(assetsToDelete.map(a => a.id));
+        setAssets(prev => prev.filter(a => !idsToDelete.has(a.id)));
+      }
+      
+      // Final refresh to ensure everything is in sync
+      await fetchAssets();
+      setIsDeleteModalOpen(false);
+      setActiveMenuBatchId(null);
+    } catch (err) {
+      console.error("Batch action failed", err);
+      logger.error("Batch action failed", err);
+    } finally {
+      setIsBatchActionLoading(false);
+    }
+  };
+
+  const handleBatchUnassign = async (batch) => {
+    setIsBatchActionLoading(true);
+    try {
+      const res = await fetch(`/api/batches/${batch.batch_id}/unassign`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId })
+      });
+      if (res.ok) {
+        await fetchAssets();
+        setActiveMenuBatchId(null);
+      }
+    } catch (err) {
+      console.error("Unassign failed", err);
+    } finally {
+      setIsBatchActionLoading(false);
+    }
+  };
+  const handleMoveToAnnotated = async (batch) => {
+    setIsBatchActionLoading(true);
+    try {
+      const res = await fetch(`/api/batches/${batch.batch_id}/move-to-annotated`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId })
+      });
+      if (res.ok) {
+        await fetchAssets();
+        setActiveMenuBatchId(null);
+      }
+    } catch (err) {
+      console.error("Move to annotated failed", err);
+    } finally {
+      setIsBatchActionLoading(false);
+    }
+  };
+
+
+  const handleBatchDownload = async (batch, state = null) => {
+    setIsBatchActionLoading(true);
+    try {
+      let url = `/api/batches/${batch.batch_id}/export?project_id=${projectId}`;
+      if (state) url += `&state=${state}`;
+      
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.download_url) {
+          // Force download
+          const link = document.createElement('a');
+          link.href = data.download_url;
+          link.download = `${batch.batch_name.replace(/\s+/g, '_')}_coco.zip`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      }
+    } catch (err) {
+      console.error("Download failed", err);
+    } finally {
+      setIsBatchActionLoading(false);
+      setActiveMenuBatchId(null);
+    }
+  };
+
+
+  const unassignedBatches = useMemo(() => {
+    const batches = {};
+    assets.filter(a => a.status === 'unassigned' || (!a.status && !a.is_annotated && a.state !== 'approved')).forEach(a => {
+      if (!batches[a.batch_id]) {
+        batches[a.batch_id] = {
+          batch_id: a.batch_id,
+          batch_name: a.batch_name,
+          count: 0,
+          has_suggestions: false,
+          uploaded_at: a.uploaded_at,
+        };
+      }
+      batches[a.batch_id].count++;
+    });
+    return Object.values(batches).sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
+  }, [assets]);
+
+  const annotatedBatches = useMemo(() => {
+    const batches = {};
+    assets.filter(a => a.status === 'annotated' || (a.is_annotated && a.state !== 'approved')).forEach(a => {
+      if (!batches[a.batch_id]) {
+        batches[a.batch_id] = {
+          batch_id: a.batch_id,
+          batch_name: a.batch_name,
+          count: 0,
+          uploaded_at: a.uploaded_at,
+          job: jobs.find(j => j.batch_id === a.batch_id) // Link to active job if exists
+        };
+      }
+      batches[a.batch_id].count++;
+    });
+    return Object.values(batches).sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
+  }, [assets, jobs]);
+
+
+  const datasetBatches = useMemo(() => {
+    const batchGroups = {};
+    assets.forEach(a => {
+      if (!batchGroups[a.batch_id]) {
+        batchGroups[a.batch_id] = {
+          batch_id: a.batch_id,
+          batch_name: a.batch_name,
+          assets: [],
+          uploaded_at: a.uploaded_at
+        };
+      }
+      batchGroups[a.batch_id].assets.push(a);
+    });
+
+    return Object.values(batchGroups).filter(group => {
+      return group.assets.some(a => a.state === 'approved');
+    }).map(group => {
+      const approvedAssets = group.assets.filter(a => a.state === 'approved');
+      return {
+        batch_id: group.batch_id,
+        batch_name: group.batch_name,
+        count: approvedAssets.length,
+        uploaded_at: group.uploaded_at,
+        finalized_at: approvedAssets.reduce((latest, a) => {
+          const d = new Date(a.updated_at || a.uploaded_at);
+          return d > latest ? d : latest;
+        }, new Date(0))
+      };
+    }).sort((a,b) => b.finalized_at - a.finalized_at);
+  }, [assets]);
+
+  const approvedImages = assets.filter(a => a.state === 'approved');
+
+  const filteredJobs = useMemo(() => {
+    let result = [...jobs];
+    if (sortBy === "newest") result.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+    if (sortBy === "oldest") result.sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+    // Additional sorting as needed
+    return result;
+  }, [jobs, sortBy]);
+
   const hasAssets = assets.length > 0;
-  // TODO: Check if versions exist for Models disabled state, for now lock Models if no assets
-  const hasVersions = false;
 
   return (
-    <div className="min-h-screen bg-white flex font-sans animate-page-enter">
+    <div className="h-screen overflow-y-auto bg-white flex font-sans animate-page-enter">
       
       {/* 1. Thin Dark Edge Sidebar */}
       <div className="w-[60px] bg-[#1a1423] flex flex-col items-center py-4 justify-between shrink-0 h-screen sticky top-0">
@@ -358,7 +880,7 @@ export default function ProjectUpload() {
             <nav className="flex flex-col gap-0.5">
               <NavItem icon={<Upload size={16} />} label="Upload Data" active={activeTab === 'upload'} onClick={() => setActiveTab('upload')} />
               <NavItem icon={<Edit3 size={16} />} label="Annotate" active={activeTab === 'annotate'} onClick={() => setActiveTab('annotate')} disabled={!hasAssets} />
-              <NavItem icon={<Database size={16} />} label="Dataset" active={activeTab === 'dataset'} onClick={() => setActiveTab('dataset')} disabled={!hasAssets} />
+              <NavItem icon={<Database size={16} />} label="Dataset" active={activeTab === 'dataset'} onClick={(e) => { e.stopPropagation(); setActiveTab('dataset'); }} disabled={!hasAssets} />
               <NavItem icon={<Layers size={16} />} label="Versions" active={activeTab === 'versions'} onClick={() => setActiveTab('versions')} disabled={!hasAssets} />
               <NavItem icon={<Activity size={16} />} label="Analytics" active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} disabled={!hasAssets} />
               <NavItem icon={<List size={16} />} label="Classes & Tags" active={activeTab === 'classes'} onClick={() => setActiveTab('classes')} disabled={!hasAssets} />
@@ -395,68 +917,11 @@ export default function ProjectUpload() {
         )}
 
         {/* Dynamic Inner Tab Router */}
-        <div className={`flex flex-col flex-1 overflow-x-hidden relative ${activeTab === 'annotate' ? 'p-0' : 'px-5 sm:px-10 xl:flex-row gap-8 py-8'}`}>
+        <div className={`flex flex-col flex-1 overflow-x-hidden relative ${activeTab === 'annotate' ? 'p-0' : 'px-5 sm:px-10 py-8'}`}>
           
           {/* UPLOAD TAB */}
           {activeTab === 'upload' && (
             <>
-              {/* Upload Complete Dialogue Box */}
-              {isUploadComplete && (
-                 <div className="absolute inset-0 bg-black/10 backdrop-blur-[2px] z-50 flex items-center justify-center animate-fade-in p-4 rounded-xl">
-                    <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md p-6 animate-slide-up relative">
-                       <button 
-                         className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition bg-gray-50 rounded-full p-1.5"
-                         onClick={() => {
-                            setIsUploadComplete(false);
-                            setIsUploading(false);
-                            fetchAssets();
-                            setActiveTab("dataset");
-                         }}
-                       >
-                         <X size={16} />
-                       </button>
-                       <div className="w-12 h-12 bg-violet-100 rounded-full flex items-center justify-center mb-4">
-                          <Check className="text-violet-600" size={24} strokeWidth={3} />
-                       </div>
-                       <h3 className="text-[20px] font-bold text-gray-900 mb-2 tracking-tight">Upload Complete!</h3>
-                       <p className="text-[13px] text-gray-600 mb-6 font-medium leading-[1.6]">
-                          Your files have been uploaded into a project batch successfully.
-                          {detectedObject && detectedObject !== 'related objects' && (
-                             <span> VisionFlow suggests starting with <strong className="text-violet-600 px-1 py-0.5 bg-violet-50 rounded uppercase text-[11px] tracking-widest">"{detectedObject}"</strong> as an AI labeling class.</span>
-                          )}
-                          <br/><br/>
-                          Next, choose whether you want to review the dataset grid or go straight into AI-assisted labeling.
-                       </p>
-                       
-                       <div className="flex gap-3 w-full">
-                          <button 
-                             onClick={() => {
-                                setIsUploadComplete(false);
-                                setIsUploading(false);
-                                fetchAssets();
-                                setActiveTab("dataset");
-                             }}
-                             className="flex-1 px-4 py-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold rounded-lg transition text-[13px] shadow-sm"
-                          >
-                             Review Dataset
-                          </button>
-                           <button 
-                             onClick={() => {
-                                setIsUploadComplete(false);
-                                setIsUploading(false);
-                                fetchAssets();
-                                setActiveTab(createBatchInstantly ? "annotate" : "dataset");
-                                setAnnotateView("batch");
-                             }}
-                             className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-lg shadow-md transition flex items-center justify-center gap-2 text-[13px]"
-                          >
-                             <Sparkles size={16}/> Open YOLO Labeling
-                          </button>
-                       </div>
-                    </div>
-                 </div>
-              )}
-
               {/* Left Upload Configurations */}
               <div className="flex-1 flex flex-col min-w-0">
                 <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-6">
@@ -546,7 +1011,16 @@ export default function ProjectUpload() {
                            style={{ display: 'none' }} 
                            onChange={handleFileChange} 
                          />
-                         <button onClick={handleUploadClick} className="bg-white border text-gray-700 w-full sm:w-auto px-6 py-3 sm:py-2.5 rounded-[8px] flex items-center justify-center font-bold gap-2 hover:bg-gray-50 transition shadow-sm border-gray-300">
+                         <input 
+                           type="file" 
+                           multiple 
+                           webkitdirectory="true"
+                           directory="true"
+                           ref={folderInputRef} 
+                           style={{ display: 'none' }} 
+                           onChange={handleFileChange} 
+                         />
+                         <button onClick={() => folderInputRef.current?.click()} className="bg-white border text-gray-700 w-full sm:w-auto px-6 py-3 sm:py-2.5 rounded-[8px] flex items-center justify-center font-bold gap-2 hover:bg-gray-50 transition shadow-sm border-gray-300">
                             <Box size={18} className="text-gray-500" /> Select Folder
                          </button>
                        </div>
@@ -557,18 +1031,6 @@ export default function ProjectUpload() {
                             <h4 className="text-[13px] text-gray-800 font-bold flex items-center gap-2 mb-1"><FileImage size={14}/> Images</h4>
                             <p className="text-[12px] text-gray-400 font-mono tracking-tighter">.jpeg, .png, .heic, .hevc, .webp</p>
                             <p className="text-[10px] text-gray-400 mt-2">*Max size of 500GB and infinite pixels.</p>
-                          </div>
-                          <div>
-                            <h4 className="text-[13px] text-gray-800 font-bold flex items-center gap-2 mb-1"><FileCode size={14}/> Annotations</h4>
-                            <p className="text-[12px] text-violet-600 font-medium">in 26 formats ↗</p>
-                          </div>
-                          <div>
-                            <h4 className="text-[13px] text-gray-800 font-bold flex items-center gap-2 mb-1"><Film size={14}/> Videos</h4>
-                            <p className="text-[12px] text-gray-400 font-mono tracking-tighter">.mov, .mp4, .avi</p>
-                          </div>
-                          <div>
-                            <h4 className="text-[13px] text-gray-800 font-bold flex items-center gap-2 mb-1"><FileText size={14}/> PDFs</h4>
-                            <p className="text-[12px] text-gray-400 font-mono tracking-tighter">.pdf</p>
                           </div>
                        </div>
                     </div>
@@ -621,31 +1083,93 @@ export default function ProjectUpload() {
 
           {/* DATASET TAB */}
           {activeTab === 'dataset' && (
-              <div className="flex-1 w-full flex flex-col items-start min-w-0">
-                <h3 className="font-bold text-gray-800 text-[18px] mb-6">Generated Dataset ({assets.length} images)</h3>
-                {assets.length === 0 ? (
-                  <div className="w-full h-64 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center text-gray-400 text-[14px]">No generated assets found for this project yet. Upload data first!</div>
-                ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 w-full">
-                    {assets.map(asset => (
-                      <div key={asset.id} onClick={() => setActiveTab('annotate')} className="w-full bg-gray-100 rounded-lg aspect-square overflow-hidden border border-gray-200 shadow-sm relative group cursor-pointer hover:border-violet-500 hover:shadow-md transition">
-                         <img src={asset.url} className="w-full h-full object-cover" />
-                         <div className={`absolute top-2 left-2 text-white text-[10px] font-bold px-2 py-0.5 rounded cursor-default border shadow-sm ${asset.is_annotated ? 'bg-green-500 border-green-600' : 'bg-black/60 border-white/20'}`}>
-                            {asset.is_annotated ? 'Annotated' : 'Unannotated'}
+             <div className="flex-1 w-full flex flex-col xl:flex-row gap-8 min-w-0 animate-page-enter">
+                {/* Left Side: Generated Summary (Sidebar) */}
+                <div className="w-full xl:w-[380px] shrink-0">
+                   <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm sticky top-0">
+                      <div className="flex items-center gap-3 mb-6">
+                         <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center text-violet-600">
+                            <ImageIcon size={20} />
                          </div>
-                         <button 
-                            onClick={(e) => { e.stopPropagation(); deleteAsset(asset.id); }}
-                            className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-600 text-white p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition shadow-sm z-10"
-                            title="Delete Image"
-                         >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
-                         </button>
+                         <div>
+                            <h3 className="font-black text-gray-900 text-[18px] leading-tight">Generated Assets</h3>
+                            <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Project Library</p>
+                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+
+                      <div className="grid grid-cols-2 gap-4 mb-8">
+                         <div className="bg-violet-50/50 p-4 rounded-2xl border border-violet-100/50">
+                            <span className="block text-[10px] font-bold text-violet-600 uppercase tracking-widest mb-1">Total</span>
+                            <div className="flex items-baseline gap-1">
+                               <span className="text-3xl font-black text-violet-900">{assets.length}</span>
+                               <span className="text-[10px] font-bold text-violet-400">IMG</span>
+                            </div>
+                         </div>
+                         <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/50">
+                            <span className="block text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Labeled</span>
+                            <div className="flex items-baseline gap-1">
+                               <span className="text-3xl font-black text-emerald-900">{assets.filter(a => a.is_annotated).length}</span>
+                               <span className="text-[10px] font-bold text-emerald-400">BOX</span>
+                            </div>
+                         </div>
+                      </div>
+
+                      <div className="space-y-4 mb-8">
+                         <div className="flex justify-between items-center px-1">
+                            <span className="text-[12px] font-bold text-gray-700">Recent Uploads</span>
+                            <span className="text-[10px] font-bold text-violet-600 hover:underline cursor-pointer" onClick={() => setActiveTab('upload')}>View All</span>
+                         </div>
+                         <div className="flex flex-col gap-2 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
+                            {assets.length === 0 ? (
+                               <div className="py-10 text-center border-2 border-dashed border-gray-100 rounded-xl">
+                                  <p className="text-[11px] text-gray-400 font-medium px-4">No assets generated yet.</p>
+                               </div>
+                            ) : (
+                               assets.slice(0, 12).map(asset => (
+                                  <div key={asset.id} className="flex items-center gap-3 p-2.5 hover:bg-gray-50 rounded-xl transition-all border border-transparent hover:border-gray-100 group cursor-pointer" onClick={() => setActiveTab('annotate')}>
+                                     <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden border border-gray-100 shadow-sm">
+                                        <img src={asset.url} className="w-full h-full object-cover transition-transform group-hover:scale-110" />
+                                     </div>
+                                     <div className="flex-1 min-w-0">
+                                        <p className="text-[11px] font-bold text-gray-800 truncate" title={asset.filename}>{asset.filename}</p>
+                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                           <div className={`w-1.5 h-1.5 rounded-full ${asset.is_annotated ? 'bg-emerald-500' : 'bg-gray-300'}`}></div>
+                                           <span className={`text-[9px] font-bold uppercase tracking-tighter ${asset.is_annotated ? 'text-emerald-600' : 'text-gray-400'}`}>
+                                              {asset.is_annotated ? 'Annotated' : 'Raw'}
+                                           </span>
+                                        </div>
+                                     </div>
+                                     <button 
+                                        onClick={(e) => { e.stopPropagation(); deleteAsset(asset.id); }}
+                                        className="p-1.5 text-gray-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                                     >
+                                        <Trash size={14} />
+                                     </button>
+                                  </div>
+                               ))
+                            )}
+                         </div>
+                      </div>
+
+                      <button 
+                         onClick={() => setActiveTab('upload')}
+                         className="w-full py-3 bg-gray-900 text-white rounded-xl text-[13px] font-bold hover:bg-violet-600 transition-all shadow-lg shadow-gray-200 flex items-center justify-center gap-2"
+                      >
+                         <UploadCloud size={16} /> Import More Data
+                      </button>
+                   </div>
+                </div>
+
+                {/* Right Side: Full Dataset Explorer (The main management view) */}
+                <div className="flex-1 min-w-0 h-full">
+                   <div className="bg-white border border-gray-200 rounded-3xl shadow-xl shadow-gray-100/50 h-full overflow-hidden flex flex-col">
+                      <DatasetTab projectId={projectId} />
+                   </div>
+                </div>
+             </div>
           )}
+
+
 
           {/* ANNOTATE TAB */}
           {activeTab === 'annotate' && (
@@ -655,131 +1179,410 @@ export default function ProjectUpload() {
                     <div className="flex justify-between items-center px-8 py-6 mb-2">
                         <div className="flex items-center gap-3">
                            <Crop className="text-gray-500" size={24} />
-                           <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">Annotate</h2>
+                           <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">Image Lifecycle</h2>
                         </div>
                         <div className="flex items-center gap-4">
                            <div className="flex items-center gap-2 text-[13px] font-bold text-gray-700">
                               <Users size={16} className="text-gray-500" /> VisionFlow Labeling
                            </div>
-                           <button className="px-4 py-2 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition">
-                              <FileCheck size={16} className="text-gray-500" /> Enable Review Mode <span className="bg-violet-100 text-violet-700 p-0.5 rounded ml-1"><Lock size={12}/></span>
+                           <button 
+                             onClick={() => setReviewMode(!reviewMode)}
+                             className={`px-4 py-2 border rounded-[8px] text-[13px] font-bold shadow-sm flex items-center gap-2 transition ${reviewMode ? 'bg-violet-600 text-white border-violet-700' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                           >
+                              <FileCheck size={16} className={reviewMode ? 'text-white' : 'text-gray-500'} /> 
+                              {reviewMode ? 'Review Mode ON' : 'Enable Review Mode'} 
+                              {!reviewMode && <span className="bg-violet-100 text-violet-700 p-0.5 rounded ml-1"><Lock size={12}/></span>}
                            </button>
-                           <button className="px-5 py-2 bg-violet-600 text-white rounded-[8px] text-[13px] font-bold shadow-sm flex items-center gap-2 hover:bg-violet-700 transition">
-                              <Plus size={16} /> New Version
-                           </button>
+                           <button
+                              onClick={() => setActiveTab('versions')}
+                              className="px-5 py-2 bg-violet-600 text-white rounded-[8px] text-[13px] font-bold shadow-sm flex items-center gap-2 hover:bg-violet-700 transition"
+                           >
+                               <Plus size={16} /> New Version
+                            </button>
                         </div>
                     </div>
 
                     <div className="px-8 pb-4">
                        <div className="flex items-center gap-2 mb-6">
                            <span className="text-[12px] font-bold text-gray-500 uppercase tracking-wide">Sort By:</span>
-                           <button className="px-3 py-1.5 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition">
-                              Newest <ChevronDown size={14} className="text-gray-400" />
-                           </button>
+                           <select 
+                             value={sortBy}
+                             onChange={(e) => setSortBy(e.target.value)}
+                             className="px-3 py-1.5 border border-gray-200 rounded-[8px] bg-white shadow-sm outline-none cursor-pointer text-[13px] font-bold text-gray-700"
+                           >
+                              <option value="newest">Newest</option>
+                              <option value="oldest">Oldest</option>
+                              <option value="unassigned">Unassigned</option>
+                              <option value="progress">In Progress</option>
+                           </select>
                        </div>
                     
                        {/* Kanban Columns */}
-                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full items-stretch w-full">
-                          
-                          {/* Unassigned */}
-                          <div className="bg-white border border-gray-200 rounded-[12px] shadow-sm flex flex-col p-5">
-                             <div className="flex justify-between items-start mb-6">
-                                <div className="flex-1 text-center pr-4 pl-8">
-                                   <h3 className="font-bold text-[16px] text-gray-900 tracking-tight">Unassigned</h3>
-                                   <p className="text-[12px] text-gray-400 font-mono tracking-tighter mt-1 uppercase">1 Batch</p>
-                                </div>
-                                <HelpCircle size={14} className="text-gray-400 cursor-pointer" />
-                             </div>
-                             
-                             <div className="flex flex-col gap-4 items-center mb-8">
-                                <button onClick={() => setActiveTab('upload')} className="text-violet-600 text-[13px] font-bold flex items-center gap-2 hover:text-violet-800 transition">
-                                   <UploadCloud size={16} /> Upload More Images
-                                </button>
-                                <button onClick={() => setAnnotateView('batch')} className="text-violet-600 text-[13px] font-bold flex items-center gap-2 hover:text-violet-800 transition">
-                                   <Search size={16} /> View Unassigned Images
-                                </button>
-                             </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full items-stretch w-full mb-12">
+                           
+                           {/* COLUMN 1: UNASSIGNED */}
+                           <div className="bg-white border border-gray-200 rounded-[12px] shadow-sm flex flex-col p-5">
+                              <div className="flex justify-between items-start mb-6 border-b border-gray-50 pb-3">
+                                 <div>
+                                    <h3 className="font-bold text-[16px] text-gray-900 tracking-tight flex items-center gap-2">
+                                       Unassigned
+                                       <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full">{unassignedBatches.length}</span>
+                                    </h3>
+                                    <p className="text-[11px] text-gray-400 font-medium mt-0.5">Ready to be assigned or reviewed</p>
+                                 </div>
+                                 <HelpCircle size={14} className="text-gray-300 cursor-pointer hover:text-gray-400 transition" />
+                              </div>
 
-                             <div className="border border-gray-200 rounded-[10px] p-5 shadow-sm relative hover:border-violet-300 transition group cursor-pointer" onClick={() => setAnnotateView('batch')}>
-                                <div className="flex justify-between items-start mb-4">
-                                   <h4 className="text-[13px] font-bold text-gray-900 w-3/4">Uploaded on {new Date().toLocaleDateString(undefined, { year: '2-digit', month: '2-digit', day: '2-digit' })} at {new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</h4>
-                                   <MoreVertical size={16} className="text-gray-400" />
-                                </div>
-                                <p className="text-[12px] text-gray-700 font-medium mb-8">{assets.length || 1} unassigned images</p>
-                                
-                                <button className="absolute bottom-5 right-5 text-violet-600 text-[12px] font-bold flex items-center gap-1.5 group-hover:text-violet-800 transition">
-                                   Annotate Images <ArrowRight size={14} />
-                                </button>
-                             </div>
-                          </div>
+                              <div className="flex flex-col gap-4 overflow-y-auto max-h-[600px] pr-1 custom-scrollbar">
+                                 {unassignedBatches.length === 0 ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center py-20 bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
+                                       <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm mb-3">
+                                          <UploadCloud size={20} className="text-gray-300" />
+                                       </div>
+                                       <p className="text-[13px] text-gray-400 font-medium text-center px-4 mb-4">No unassigned batches.<br/>Upload more images to start.</p>
+                                       <button 
+                                          onClick={() => setActiveTab('upload')}
+                                          className="px-4 py-2 bg-violet-600 text-white rounded-lg text-xs font-bold hover:bg-violet-700 transition shadow-sm flex items-center gap-2"
+                                       >
+                                          <UploadCloud size={14} /> Upload More Images
+                                       </button>
+                                    </div>
+                                 ) : (
+                                    unassignedBatches.map(batch => (
+                                       <div key={batch.batch_id} className="bg-white border border-gray-200 rounded-[12px] p-5 shadow-sm relative hover:border-violet-300 hover:shadow-md transition-all group overflow-hidden cursor-pointer" onClick={() => navigate(`/annotate/batch/${batch.batch_id}?project_id=${projectId}`)}>
+                                          {batch.has_suggestions && (
+                                             <div className="absolute top-0 right-0 py-1 px-3 bg-violet-600 text-white text-[9px] font-bold uppercase tracking-widest rounded-bl-lg shadow-sm">
+                                                Suggestions Available
+                                             </div>
+                                          )}
+                                          <div className="flex justify-between items-start mb-3">
+                                             <div className="max-w-[80%]">
+                                                <h4 className="text-[13px] font-bold text-gray-900 truncate mb-1">{batch.batch_name}</h4>
+                                                <div className="flex items-center gap-2 text-[11px] text-gray-400 font-medium">
+                                                   <Calendar size={12} />
+                                                   {new Date(batch.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                                </div>
+                                             </div>
+                                             <div className="relative">
+                                                <button 
+                                                  onClick={(e) => { e.stopPropagation(); setActiveMenuBatchId(activeMenuBatchId === "unassigned-" + batch.batch_id ? null : "unassigned-" + batch.batch_id); }}
+                                                  className="p-1 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition invisible group-hover:visible"
+                                                >
+                                                   <MoreVertical size={16} />
+                                                </button>
+                                                
+                                                {activeMenuBatchId === "unassigned-" + batch.batch_id && (
+                                                  <div ref={menuRef} className="absolute right-0 top-8 w-40 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); setBatchToAction(batch); setRenameValue(batch.batch_name); setIsRenameModalOpen(true); setActiveMenuBatchId(null); }}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2"
+                                                     >
+                                                        <Edit3 size={14} /> Rename Batch
+                                                     </button>
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch); }}
+                                                       disabled={isBatchActionLoading}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                     >
+                                                        {isBatchActionLoading ? (
+                                                          <><Loader2 size={14} className="animate-spin" /> Exporting...</>
+                                                        ) : (
+                                                          <><UploadCloud size={14} /> Download (COCO)</>
+                                                        )}
+                                                     </button>
+                                                     <div className="h-[1px] bg-gray-50 my-1"></div>
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); setBatchToAction(batch); setDeleteActionType("unassigned"); setIsDeleteModalOpen(true); setActiveMenuBatchId(null); }}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-rose-500 hover:bg-rose-50 transition flex items-center gap-2"
+                                                     >
+                                                        <Trash size={14} /> Delete Unassigned
+                                                     </button>
+                                                  </div>
+                                                )}
+                                             </div>
+                                          </div>
 
-                          {/* Annotating */}
-                          <div className="bg-white border border-gray-200 rounded-[12px] shadow-sm flex flex-col p-5">
-                             <div className="flex justify-between items-start mb-6">
-                                <div className="flex-1 text-center pr-4 pl-8">
-                                   <h3 className="font-bold text-[16px] text-gray-900 tracking-tight">Annotating</h3>
-                                   <p className="text-[12px] text-gray-400 font-mono tracking-tighter mt-1 uppercase">0 Jobs</p>
-                                </div>
-                                <HelpCircle size={14} className="text-gray-400 cursor-pointer" />
-                             </div>
-                             <div className="flex-1 flex items-center justify-center">
-                                <p className="text-[14px] text-gray-400 font-medium">Upload and assign images to an annotator.</p>
-                             </div>
-                          </div>
+                                          <div className="flex items-center gap-4 mb-6">
+                                             <div className="flex flex-col">
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Images</span>
+                                                <span className="text-[13px] font-mono font-bold text-gray-700">{batch.count}</span>
+                                             </div>
+                                             <div className="w-[1px] h-8 bg-gray-100"></div>
+                                             <div className="flex flex-col">
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Status</span>
+                                                <span className="text-[11px] font-bold text-amber-500 uppercase">{batch.has_suggestions ? 'Auto-Labeled' : 'Raw'}</span>
+                                             </div>
+                                          </div>
+                                          
+                                          <div className="flex gap-2">
+                                             <button 
+                                               onClick={(e) => { e.stopPropagation(); handleAnnotateBatch(batch); }}
+                                               className="flex-1 text-white bg-violet-600 px-3 py-2.5 rounded-lg text-[13px] font-bold shadow-sm hover:bg-violet-700 transition flex items-center justify-center gap-2"
+                                             >
+                                                <Edit3 size={16} /> Annotate
+                                             </button>
+                                          </div>
+                                       </div>
+                                    ))
+                                 )}
+                              </div>
 
-                          {/* Dataset */}
-                          <div className="bg-white border border-gray-200 rounded-[12px] shadow-sm flex flex-col p-5">
-                             <div className="flex justify-between items-start mb-6">
-                                <div className="flex-1 text-center pr-4 pl-8">
-                                   <h3 className="font-bold text-[16px] text-gray-900 tracking-tight">Dataset</h3>
-                                   <p className="text-[12px] text-gray-400 font-mono tracking-tighter mt-1 uppercase">{assets.length > 0 ? '1 Job' : '0 Jobs'}</p>
-                                </div>
-                                <HelpCircle size={14} className="text-gray-400 cursor-pointer" />
-                             </div>
-                             
-                             <div className="flex justify-center mb-6">
-                                <button onClick={() => setActiveTab('dataset')} className="text-violet-600 text-[13px] font-bold flex items-center gap-2 hover:text-violet-800 transition">
-                                   <ImageIcon size={16} /> See all {assets.length || 0} images
-                                </button>
-                             </div>
+                              <div className="mt-4 pt-4 border-t border-gray-50 flex flex-col items-center">
+                                 <button 
+                                    onClick={() => setActiveTab('upload')}
+                                    className="w-full py-2.5 bg-gray-50 border border-gray-200 text-gray-500 rounded-xl text-[12px] font-bold hover:bg-white hover:text-violet-600 hover:border-violet-200 transition flex items-center justify-center gap-2 group"
+                                 >
+                                    <UploadCloud size={16} className="text-gray-400 group-hover:text-violet-500 transition-colors" /> Upload More Images
+                                 </button>
+                                 <p className="text-[10px] text-gray-400 mt-2 font-medium">Need more data? Jump to upload.</p>
+                              </div>
+                           </div>
 
-                             <div className="flex flex-col gap-3">
-                                {assets.length > 0 && (
-                                  <div className="border border-gray-200 rounded-[10px] p-4 shadow-sm hover:border-violet-300 transition group relative">
-                                     <div className="flex justify-between items-start mb-2 cursor-pointer" onClick={() => setActiveTab('dataset')}>
-                                        <h4 className="text-[13px] font-bold text-gray-900 truncate max-w-[80%]">Batch {new Date().toLocaleDateString(undefined, { month: '2-digit', day: '2-digit', year: '2-digit' })}</h4>
-                                        <MoreVertical size={16} className="text-gray-400" />
-                                     </div>
-                                     <p className="text-[12px] text-gray-600 font-medium mb-1 truncate cursor-pointer" onClick={() => setActiveTab('dataset')}>Workspace Owner</p>
-                                     <div className="flex justify-between items-end">
-                                        <p className="text-[12px] text-gray-500 font-medium cursor-pointer" onClick={() => setActiveTab('dataset')}>{assets.length} Images</p>
-                                        <div className="flex items-center gap-2 bg-gray-50 border border-gray-100 p-1 rounded">
-                                           <button 
-                                             onClick={async () => {
-                                                const ok = window.confirm("Are you sure you want to delete this dataset subset?");
-                                                if (!ok) return;
-                                                try {
-                                                   await Promise.all(assets.map((asset) => fetch(`/api/assets/${asset.id}`, { method: 'DELETE' })));
-                                                   setAssets([]);
-                                                } catch (err) {
-                                                   console.error("Failed deleting dataset subset", err);
-                                                }
-                                             }} 
-                                             className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition" 
-                                             title="Delete Job"
-                                           >
-                                              <Trash size={14} />
-                                           </button>
-                                        </div>
-                                     </div>
-                                  </div>
-                                )}
-                             </div>
-                          </div>
+                           {/* COLUMN 2: ANNOTATIONS */}
+                           <div className="bg-white border border-gray-200 rounded-[12px] shadow-sm flex flex-col p-5">
+                              <div className="flex justify-between items-start mb-6 border-b border-gray-50 pb-3">
+                                 <div>
+                                    <h3 className="font-bold text-[16px] text-gray-900 tracking-tight flex items-center gap-2">
+                                       Annotations
+                                       <span className="bg-violet-100 text-violet-600 text-[10px] font-bold px-2 py-0.5 rounded-full" title="Total Batches">{annotatedBatches.length} Patches</span>
+                                       <span className="bg-emerald-100 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full" title="Total Annotated Images">
+                                          {assets.filter(a => a.status === 'annotated').length} Labeled
+                                       </span>
+                                    </h3>
+                                    <p className="text-[11px] text-gray-400 font-medium mt-0.5">Finalized and suggestion-ready data</p>
+                                 </div>
+                                 <HelpCircle size={14} className="text-gray-300 cursor-pointer" />
+                              </div>
+                              
+                              <div className="flex flex-col gap-4 overflow-y-auto max-h-[600px] pr-1 custom-scrollbar">
+                                 {annotatedBatches.length === 0 ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center py-20 bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
+                                       <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm mb-3 text-gray-300">
+                                       <Edit3 size={20} />
+                                       </div>
+                                       <p className="text-[13px] text-gray-400 font-medium">No annotated patches found.</p>
+                                    </div>
+                                 ) : (
+                                    annotatedBatches.map(batch => (
+                                       <div 
+                                           key={batch.batch_id} 
+                                           className="bg-white border border-gray-200 rounded-[12px] p-5 shadow-sm hover:border-violet-300 hover:shadow-md transition-all group cursor-pointer"
+                                           onClick={() => {
+                                              setActiveAnnotationBatchId(batch.batch_id);
+                                              setActiveAnnotationState('annotated');
+                                              setAnnotateView('batch-preview');
+                                              setBatchImagesOffset(0);
+                                           }}
+                                        >
+                                          <div className="flex justify-between items-start mb-3">
+                                             <div className="max-w-[75%]">
+                                                <h4 className="text-[13px] font-bold text-gray-900 truncate mb-1">{batch.batch_name}</h4>
+                                                <div className="flex items-center gap-1.5 text-[11px] text-gray-400 font-medium">
+                                                   <span className="bg-gray-100 px-1.5 py-0.5 rounded font-mono text-[10px]">#{batch.batch_id.length > 6 ? batch.batch_id.slice(-6).toUpperCase() : batch.batch_id.toUpperCase()}</span>
+                                                   <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                                                   <span>{new Date(batch.uploaded_at).toLocaleDateString()}</span>
+                                                </div>
+                                             </div>
+                                             <div className="relative">
+                                                <button 
+                                                  onClick={(e) => { e.stopPropagation(); setActiveMenuBatchId(activeMenuBatchId === "annotated-" + batch.batch_id ? null : "annotated-" + batch.batch_id); }}
+                                                  className="p-1 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition invisible group-hover:visible"
+                                                >
+                                                   <MoreVertical size={16} />
+                                                </button>
+                                                
+                                                {activeMenuBatchId === "annotated-" + batch.batch_id && (
+                                                  <div ref={menuRef} className="absolute right-0 top-8 w-[180px] bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); setBatchToAction(batch); setRenameValue(batch.batch_name); setIsRenameModalOpen(true); setActiveMenuBatchId(null); }}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2"
+                                                     >
+                                                        <Edit3 size={14} /> Rename Job
+                                                     </button>
+                                                     
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch); }}
+                                                       disabled={isBatchActionLoading}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                     >
+                                                        {isBatchActionLoading ? (
+                                                          <><Loader2 size={14} className="animate-spin" /> Exporting...</>
+                                                        ) : (
+                                                          <><Download size={14} /> Download (COCO)</>
+                                                        )}
+                                                     </button>
+                                                     <div className="h-[1px] bg-gray-50 my-1"></div>
+                                                     <button 
+                                                        onClick={(e) => { 
+                                                           e.stopPropagation(); 
+                                                           setBatchToAction(batch); 
+                                                           setDeleteActionType("annotations");
+                                                           setIsDeleteModalOpen(true); 
+                                                           setActiveMenuBatchId(null); 
+                                                        }}
+                                                        className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2"
+                                                      >
+                                                         <Trash size={14} /> Clear Annotations
+                                                      </button>
+                                                      <div className="h-[1px] bg-gray-50 my-1"></div>
+                                                      <button 
+                                                        onClick={(e) => { 
+                                                           e.stopPropagation(); 
+                                                           setBatchToAction(batch); 
+                                                           setDeleteActionType("all");
+                                                           setIsDeleteModalOpen(true); 
+                                                           setActiveMenuBatchId(null); 
+                                                        }}
+                                                        className="w-full text-left px-4 py-2 text-[12px] font-bold text-rose-500 hover:bg-rose-50 transition flex items-center gap-2"
+                                                      >
+                                                         <Trash size={14} /> Delete Forever
+                                                      </button>
+                                                  </div>
+                                                )}
+                                             </div>
+                                          </div>                                          
+                                          
+                                          {batch.job && batch.job.annotated_count < batch.job.total_images && (
+                                             <div className="mb-4">
+                                                <div className="flex justify-between items-end mb-1.5">
+                                                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">AI Progress</span>
+                                                   <span className="text-[11px] font-bold text-gray-700 font-mono">{batch.job.annotated_count}/{batch.job.total_images}</span>
+                                                </div>
+                                                <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden border border-gray-50 p-0.5">
+                                                   <div 
+                                                     className="bg-amber-500 animate-pulse h-full rounded-full transition-all duration-700 ease-out shadow-sm"
+                                                     style={{ width: `${Math.round((batch.job.annotated_count / (batch.job.total_images || 1)) * 100)}%` }}
+                                                   ></div>
+                                                </div>
+                                             </div>
+                                          )}
 
-                       </div>
-                    </div>
-                 </div>
+                                          <div className="flex justify-between items-center bg-gray-50/80 p-3 rounded-lg border border-gray-100">
+                                             <div className="flex flex-col">
+                                                <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">Annotated</span>
+                                                <div className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 mt-0.5 w-fit">
+                                                   <Check size={10} strokeWidth={4} /> {batch.count}
+                                                </div>
+                                             </div>
+                                             <button 
+                                                onClick={(e) => { 
+                                                   e.stopPropagation();
+                                                   setActiveAnnotationBatchId(batch.batch_id); 
+                                                   setActiveAnnotationState('annotated'); 
+                                                   setAnnotateView('tool'); 
+                                                }}
+                                                className="bg-white border border-gray-200 text-violet-600 px-3 py-1.5 rounded-md text-[11px] font-bold hover:bg-violet-600 hover:text-white hover:border-violet-600 transition shadow-sm"
+                                             >
+                                                Continue
+                                             </button>
+                                          </div>
+
+                                       </div>
+                                    ))
+                                 )}
+                              </div>
+                           </div>
+
+                           {/* COLUMN 3: DATASET */}
+                           <div className="bg-white border border-gray-200 rounded-[12px] shadow-sm flex flex-col p-5">
+                              <div className="flex justify-between items-start mb-6 border-b border-gray-50 pb-3">
+                                 <div>
+                                    <h3 className="font-bold text-[16px] text-gray-900 tracking-tight flex items-center gap-2">
+                                       Dataset
+                                       <span className="bg-emerald-100 text-emerald-600 text-[10px] font-bold px-2 py-0.5 rounded-full">{datasetBatches.length}</span>
+                                    </h3>
+                                    <p className="text-[11px] text-gray-400 font-medium mt-0.5">Finalized training-ready data</p>
+                                 </div>
+                                 <HelpCircle size={14} className="text-gray-300 cursor-pointer" />
+                              </div>
+                              
+                              <div className="flex flex-col gap-4 overflow-y-auto max-h-[600px] pr-1 custom-scrollbar">
+                                 {datasetBatches.length === 0 ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center py-20 bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
+                                       <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm mb-3">
+                                          <Check size={20} className="text-gray-200" />
+                                       </div>
+                                       <p className="text-[13px] text-gray-400 font-medium text-center px-4">No finalized batches yet.<br/>Approve images to see them here.</p>
+                                    </div>
+                                 ) : (
+                                    datasetBatches.map(batch => (
+                                       <div key={batch.batch_id} className="bg-gray-50/30 border border-gray-200 rounded-[12px] p-5 shadow-sm hover:border-emerald-300 transition-all group relative overflow-hidden cursor-pointer" onClick={(e) => { e.stopPropagation(); setActiveTab('dataset'); }}>
+                                          <div className="absolute top-0 right-0 p-2 bg-emerald-500 text-white rounded-bl-xl shadow-sm">
+                                             <Check size={14} strokeWidth={4} />
+                                          </div>
+                                          <div className="mb-4 flex justify-between items-start">
+                                             <div className="max-w-[75%]">
+                                                <h4 className="text-[13px] font-bold text-gray-900 truncate mb-1">{batch.batch_name}</h4>
+                                                <div className="flex items-center gap-2 text-[11px] text-gray-400 font-medium">
+                                                   <Clock size={12} />
+                                                   Finalized {new Date(batch.finalized_at).toLocaleDateString()}
+                                                </div>
+                                             </div>
+                                             <div className="relative">
+                                                <button 
+                                                  onClick={(e) => { e.stopPropagation(); setActiveMenuBatchId(activeMenuBatchId === "dataset-" + batch.batch_id ? null : "dataset-" + batch.batch_id); }}
+                                                  className="p-1 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition invisible group-hover:visible"
+                                                >
+                                                   <MoreVertical size={16} />
+                                                </button>
+                                                
+                                                {activeMenuBatchId === "dataset-" + batch.batch_id && (
+                                                  <div ref={menuRef} className="absolute right-0 top-8 w-[180px] bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1 overflow-hidden animate-in fade-in zoom-in duration-200">
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); setBatchToAction(batch); setRenameValue(batch.batch_name); setIsRenameModalOpen(true); setActiveMenuBatchId(null); }}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2"
+                                                     >
+                                                        <Edit3 size={14} /> Rename Job
+                                                     </button>
+                                                     
+                                                     <button 
+                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch, 'approved'); }}
+                                                       disabled={isBatchActionLoading}
+                                                       className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                     >
+                                                        {isBatchActionLoading ? (
+                                                          <><Loader2 size={14} className="animate-spin" /> Exporting...</>
+                                                        ) : (
+                                                          <><Download size={14} /> Download</>
+                                                        )}
+                                                     </button>
+                                                     <div className="h-[1px] bg-gray-50 my-1"></div>
+                                                     <button 
+                                                        onClick={(e) => { 
+                                                           e.stopPropagation(); 
+                                                           handleBatchUnassign(batch);
+                                                        }}
+                                                        className="w-full text-left px-4 py-2 text-[12px] font-bold text-violet-600 hover:bg-violet-50 transition flex items-center gap-2"
+                                                      >
+                                                         <ArrowLeft size={14} /> Unassigned
+                                                      </button>
+                                                  </div>
+                                                )}
+                                             </div>
+                                          </div>
+                                          
+                                          <div className="mb-4">
+                                             <div className="bg-white border border-gray-100 p-2 rounded-lg text-center">
+                                                <p className="text-[9px] text-gray-400 font-bold uppercase tracking-tight">Total Images</p>
+                                                <p className="text-[16px] font-bold text-gray-800 font-mono">{batch.count}</p>
+                                             </div>
+                                          </div>
+
+                                          <button 
+                                            onClick={(e) => { e.stopPropagation(); setActiveTab('dataset'); }}
+                                            className="w-full text-emerald-600 bg-white border border-emerald-100 py-2 rounded-lg text-[12px] font-bold hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition flex items-center justify-center gap-2 shadow-sm"
+                                          >
+                                             <Eye size={14} /> View in Dataset
+                                          </button>
+                                       </div>
+                                    ))
+                                 )}
+                              </div>
+                           </div>
+
+                        </div>
+                     </div>
+                  </div>
               ) : annotateView === 'auto-batch' ? (
                 <AutoLabelBatchPanel
                   assetCount={assets.length}
@@ -835,7 +1638,7 @@ export default function ProjectUpload() {
                       <div className="flex-[2] p-8 overflow-y-auto border-r border-gray-100 bg-white">
                          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                             {assets.map((a, i) => (
-                               <div key={a.id} className="flex flex-col group cursor-pointer" onClick={() => setAnnotateView('tool')}>
+                               <div key={a.id} className="flex flex-col group cursor-pointer" onClick={() => { setActiveAnnotationBatchId(a.batch_id); setAnnotateView('tool'); }}>
                                   <div className="aspect-[4/3] bg-gray-100 rounded-[10px] overflow-hidden border border-gray-200 shadow-sm group-hover:border-violet-400 group-hover:shadow-md transition">
                                      <img src={a.url} className="w-full h-full object-cover" />
                                   </div>
@@ -873,7 +1676,7 @@ export default function ProjectUpload() {
                             </div>
 
                             {/* Label Assist */}
-                            <div onClick={() => setAnnotateView('tool')} className="bg-white border border-gray-200 rounded-[12px] p-5 cursor-pointer hover:border-violet-300 hover:shadow-md transition group">
+                            <div onClick={() => { setActiveAnnotationBatchId(selectedBatch?.batch_id || (assets.length > 0 ? assets[0].batch_id : null)); setAnnotateView('tool'); }} className="bg-white border border-gray-200 rounded-[12px] p-5 cursor-pointer hover:border-violet-300 hover:shadow-md transition group">
                                <div className="flex gap-4">
                                   <div className="text-gray-400 mt-0.5 group-hover:text-violet-500 transition-colors"><User size={24} strokeWidth={2} /></div>
                                   <div>
@@ -886,7 +1689,7 @@ export default function ProjectUpload() {
                             </div>
 
                             {/* Smart Polygon */}
-                            <div onClick={() => setAnnotateView('tool')} className="bg-white border border-gray-200 rounded-[12px] p-5 cursor-pointer hover:border-violet-300 hover:shadow-md transition group">
+                            <div onClick={() => { setActiveAnnotationBatchId(selectedBatch?.batch_id || (assets.length > 0 ? assets[0].batch_id : null)); setAnnotateView('tool'); }} className="bg-white border border-gray-200 rounded-[12px] p-5 cursor-pointer hover:border-violet-300 hover:shadow-md transition group">
                                <div className="flex gap-4">
                                   <div className="text-gray-400 mt-0.5 group-hover:text-violet-500 transition-colors"><Crop size={24} strokeWidth={2} /></div>
                                   <div>
@@ -899,7 +1702,7 @@ export default function ProjectUpload() {
                             </div>
 
                             {/* Box Prompting */}
-                            <div onClick={() => setAnnotateView('tool')} className="bg-white border border-gray-200 rounded-[12px] p-5 cursor-pointer hover:border-violet-300 hover:shadow-md transition group">
+                            <div onClick={() => { setActiveAnnotationBatchId(selectedBatch?.batch_id || (assets.length > 0 ? assets[0].batch_id : null)); setAnnotateView('tool'); }} className="bg-white border border-gray-200 rounded-[12px] p-5 cursor-pointer hover:border-violet-300 hover:shadow-md transition group">
                                <div className="flex gap-4">
                                   <div className="text-gray-400 mt-0.5 group-hover:text-violet-500 transition-colors"><Box size={24} strokeWidth={2} /></div>
                                   <div>
@@ -958,46 +1761,149 @@ export default function ProjectUpload() {
                       </div>
                    </div>
                 </div>
-              ) : (
+              ) : annotateView === 'tool' ? (
                 <div className="flex-1 w-full flex flex-col min-w-0 h-[calc(100vh-80px)] px-5 sm:px-10 py-6">
                    <div className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-500">
-                      <button onClick={() => setAnnotateView('batch')} className="hover:text-violet-600 flex items-center gap-1">
-                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                         Back to Batch
-                      </button>
+                       <button 
+                          onClick={() => { 
+                             if (activeAnnotationBatchId) {
+                                setAnnotateView('batch-preview');
+                             } else {
+                                setAnnotateView('board'); 
+                                setActiveAnnotationBatchId(null); 
+                                setActiveAnnotationState(null);
+                             }
+                          }} 
+                          className="hover:text-violet-600 flex items-center gap-1"
+                       >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                          {activeAnnotationBatchId ? "Back to Batch" : "Back to Board"}
+                       </button>
                    </div>
                    <AnnotationTool 
-                      assets={assets} 
-                      projectId={projectId} 
-                      projectType={projectType} 
-                      classificationType={classificationType} 
-                      updateAsset={(id, isAnnotated) => {
-                         setAssets(assets.map(a => a.id === id ? { ...a, is_annotated: isAnnotated } : a));
-                      }}
-                   />
+                        assets={annotateView === 'batch-preview' || (activeAnnotationBatchId && assets.some(a => a.batch_id === activeAnnotationBatchId)) ? 
+                          assets.filter(a => a.batch_id === activeAnnotationBatchId) : 
+                          assets.filter(a => {
+                            if (activeAnnotationBatchId && a.batch_id !== activeAnnotationBatchId) return false;
+                            if (activeAnnotationState && a.state !== activeAnnotationState && a.status !== activeAnnotationState) return false;
+                            return true;
+                          })
+                        } 
+                        initialAssetId={activeImageId}
+                        projectId={projectId} 
+                        projectType={projectType} 
+                        classificationType={classificationType} 
+                        updateAsset={(id, isAnnotated) => {
+                           setAssets(assets.map(a => a.id === id ? { ...a, is_annotated: isAnnotated, status: isAnnotated ? 'annotated' : 'unassigned' } : a));
+                        }}
+                        onBatchComplete={() => {
+                           fetchAssets();
+                           setAnnotateView('board');
+                           setActiveAnnotationBatchId(null);
+                           setActiveAnnotationState(null);
+                        }}
+                     />
                 </div>
-              )
+              ) : annotateView === 'batch-preview' ? (
+                <div className="flex-1 w-full flex flex-col min-w-0 h-[calc(100vh-80px)] px-5 sm:px-10 py-6 overflow-hidden">
+                   <div className="flex items-center justify-between mb-8">
+                       <div className="flex items-center gap-4">
+                          <button 
+                             onClick={() => { 
+                                setAnnotateView('board'); 
+                                setActiveAnnotationBatchId(null); 
+                                setBatchImages([]);
+                             }} 
+                             className="text-gray-400 hover:text-gray-600 bg-white border border-gray-200 p-2 rounded-xl transition"
+                          >
+                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                          </button>
+                          <div>
+                             <h2 className="text-xl font-bold text-gray-900 tracking-tight">
+                                {annotatedBatches.find(b => b.batch_id === activeAnnotationBatchId)?.batch_name || "Batch Preview"}
+                             </h2>
+                             <p className="text-xs text-gray-400 font-medium">{batchImagesTotal} images in this patch</p>
+                          </div>
+                       </div>
+
+                       <button 
+                          onClick={() => {
+                             const batch = annotatedBatches.find(b => b.batch_id === activeAnnotationBatchId);
+                             if (batch) handleAddToDataset(batch);
+                          }}
+                          disabled={batchImagesTotal === 0}
+                          className="flex items-center gap-2 px-6 py-3 bg-violet-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-violet-200 hover:bg-violet-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                       >
+                          <Database size={18} /> Add {batchImagesTotal} Dataset
+                       </button>
+                   </div>
+
+                   {batchImagesLoading && batchImages.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center">
+                         <div className="w-12 h-12 border-4 border-violet-100 border-t-violet-600 rounded-full animate-spin mb-4" />
+                         <p className="text-gray-400 font-bold">Loading annotated preview...</p>
+                      </div>
+                   ) : batchImages.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50/50 rounded-3xl border-2 border-dashed border-gray-100">
+                         <div className="w-16 h-16 bg-white text-gray-200 rounded-full flex items-center justify-center mb-4 shadow-sm">
+                            <EyeOff size={32} />
+                         </div>
+                         <h3 className="text-lg font-bold text-gray-900">No images found</h3>
+                         <p className="text-gray-400 text-sm mb-6 text-center max-w-xs">We couldn't find any annotated images in this batch.</p>
+                         <button onClick={() => setAnnotateView('board')} className="px-6 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl font-bold text-sm hover:bg-gray-50 transition">Go Back</button>
+                      </div>
+                   ) : (
+                      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+                            {batchImages.map((asset, idx) => (
+                               <div 
+                                 key={asset.id} 
+                                 onClick={() => {
+                                    setActiveImageId(asset.id);
+                                    setAnnotateView('tool');
+                                 }}
+                                 className="group cursor-pointer flex flex-col"
+                               >
+                                  <div className="aspect-[4/3] bg-gray-100 rounded-2xl overflow-hidden border-2 border-transparent group-hover:border-violet-500 transition-all relative shadow-sm group-hover:shadow-xl group-hover:-translate-y-1">
+                                     <img src={asset.url} className="w-full h-full object-cover transition-transform group-hover:scale-105" alt="Preview" />
+                                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                                     <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-lg shadow-sm flex items-center gap-1.5 border border-gray-100">
+                                        <Tag size={10} className="text-violet-500" fill="currentColor" />
+                                        <span className="text-[10px] font-black text-gray-700">{asset.annotation_count || 0}</span>
+                                     </div>
+                                  </div>
+                                  <div className="mt-3 px-1 truncate">
+                                     <p className="text-[11px] font-bold text-gray-900 truncate" title={asset.filename}>{asset.filename}</p>
+                                     <p className="text-[9px] text-gray-400 font-medium">#{asset.id.slice(-6).toUpperCase()}</p>
+                                  </div>
+                               </div>
+                            ))}
+                         </div>
+                         
+                         {batchImagesTotal > batchImagesLimit && (
+                            <div className="mt-12 flex justify-center pb-8">
+                               <button 
+                                 onClick={() => setBatchImagesOffset(prev => prev + batchImagesLimit)}
+                                 className="px-8 py-3 bg-white border border-gray-200 text-gray-600 rounded-2xl font-bold text-sm hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200 transition shadow-sm"
+                               >
+                                  Load More Images
+                               </button>
+                            </div>
+                         )}
+                      </div>
+                   )}
+                </div>
+              ) : null
           )}
 
-          {/* VERSIONS TAB */}
-          {activeTab === 'versions' && (
-              <div className="flex-1 w-full flex flex-col min-w-0">
-                 <VersionsTab
-                   projectId={projectId}
-                   onTrainVersion={(version) => {
-                     localStorage.setItem("visionflow_selected_version", JSON.stringify(version));
-                     setActiveTab("train");
-                   }}
-                 />
-              </div>
-          )}
+
+
 
           {/* TRAIN TAB */}
           {activeTab === 'train' && (
               <div className="flex-1 w-full flex flex-col min-w-0">
                  <TrainTab
                    projectId={projectId}
-                   onOpenVersions={() => setActiveTab('versions')}
                    onOpenModels={() => setActiveTab('models')}
                  />
               </div>
@@ -1006,7 +1912,7 @@ export default function ProjectUpload() {
           {/* ANALYTICS TAB */}
           {activeTab === 'analytics' && (
               <div className="flex-1 w-full flex flex-col min-w-0">
-                 <AnalyticsTab assets={assets} />
+                 <AnalyticsTab assets={activeAnnotationBatchId ? assets.filter(a => a.batch_id === activeAnnotationBatchId) : assets} />
               </div>
           )}
 
@@ -1041,9 +1947,120 @@ export default function ProjectUpload() {
               </div>
           )}
 
+          {activeTab === 'versions' && (
+            <div className="flex-1 w-full flex flex-col min-w-0">
+              <VersionsTab 
+                key={`versions-${versionCounter}`}
+                projectId={projectId} 
+                onOpenGenerate={() => setIsGenerateVersionModalOpen(true)}
+                onTrainModel={(version) => {
+                  localStorage.setItem("visionflow_selected_version", JSON.stringify(version));
+                  setActiveTab('train');
+                }}
+              />
+            </div>
+          )}
+
+          <GenerateVersionModal 
+            projectId={projectId}
+            isOpen={isGenerateVersionModalOpen}
+            onClose={() => setIsGenerateVersionModalOpen(false)}
+            onGenerated={() => {
+              setVersionCounter(prev => prev + 1);
+              setActiveTab('versions');
+            }}
+          />
+
+
 
         </div>
       </div>
+
+      {/* RENAME BATCH MODAL */}
+      {isRenameModalOpen && batchToAction && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-slide-up">
+              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                 <h3 className="text-[18px] font-bold text-gray-900">Rename Batch</h3>
+                 <button onClick={() => setIsRenameModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition bg-white p-1.5 rounded-full border border-gray-100 shadow-sm">
+                    <X size={18} />
+                 </button>
+              </div>
+              <div className="p-6">
+                 <label className="block text-[12px] font-bold text-gray-500 uppercase tracking-wider mb-2">New Batch Name</label>
+                 <input 
+                   type="text" 
+                   value={renameValue}
+                   onChange={(e) => setRenameValue(e.target.value)}
+                   onKeyDown={(e) => e.key === 'Enter' && handleBatchRename()}
+                   className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition font-medium text-gray-900"
+                   placeholder="e.g. Traffic Camera North-East"
+                   autoFocus
+                 />
+                 <p className="text-[11px] text-gray-400 mt-3 font-medium">Use descriptive names to organize your data lifecycle better.</p>
+              </div>
+              <div className="p-6 pt-0 flex gap-3">
+                 <button 
+                   onClick={() => setIsRenameModalOpen(false)}
+                   className="flex-1 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition text-[13px]"
+                 >
+                    Cancel
+                 </button>
+                 <button 
+                   onClick={handleBatchRename}
+                   disabled={isBatchActionLoading || !renameValue.trim() || renameValue === batchToAction.batch_name}
+                   className="flex-1 px-4 py-2.5 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition text-[13px] shadow-md flex items-center justify-center gap-2"
+                 >
+                    {isBatchActionLoading ? <Cpu size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                    Save Changes
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* DELETE BATCH CONFIRMATION MODAL */}
+      {isDeleteModalOpen && batchToAction && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-slide-up">
+              <div className="p-8 text-center">
+                 <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Trash size={32} className="text-rose-500" />
+                 </div>
+                 <h3 className="text-[20px] font-bold text-gray-900 mb-2">
+                    {deleteActionType === "annotations" ? "Clear Annotations?" : deleteActionType === "unassigned" ? "Delete Unassigned?" : "Delete Forever?"}
+                 </h3>
+                  <p className="text-[14px] text-gray-500 font-medium leading-[1.6]">
+                     You are about to {deleteActionType === "annotations" ? "clear labels for" : "delete"} <strong className="text-gray-900">"{batchToAction.batch_name}"</strong>. 
+                     {deleteActionType === "annotations" 
+                       ? ` This will permanently remove all labels and bounding boxes from ${batchToAction.count} images and move the batch back to Unassigned.`
+                       : deleteActionType === "unassigned"
+                       ? ` Only Unassigned images (${batchToAction.count}) will be deleted. Annotated data will remain safe.`
+                       : ` This will permanently remove all ${batchToAction.count} images and associated annotations from the database.`}
+                  </p>
+                 <div className="mt-6 bg-rose-50/50 border border-rose-100 p-3 rounded-lg flex items-center gap-2 text-rose-600 text-[12px] font-bold">
+                    <Info size={14} /> This action cannot be undone.
+                 </div>
+              </div>
+              <div className="p-6 bg-gray-50 flex gap-3">
+                 <button 
+                   onClick={() => setIsDeleteModalOpen(false)}
+                   className="flex-1 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition text-[13px]"
+                 >
+                    Keep Batch
+                 </button>
+                 <button 
+                   onClick={handleBatchDelete}
+                   disabled={isBatchActionLoading}
+                   className="flex-1 px-4 py-2.5 bg-rose-500 text-white font-bold rounded-xl hover:bg-rose-600 disabled:opacity-50 transition text-[13px] shadow-md flex items-center justify-center gap-2"
+                 >
+                     {isBatchActionLoading ? <Cpu size={16} className="animate-spin" /> : <Trash size={16} />}
+                     {deleteActionType === "annotations" ? "Clear Annotations" : "Delete Forever"}
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1074,3 +2091,7 @@ function NavItem({ icon, label, active, onClick, disabled }) {
     </div>
   );
 }
+
+
+
+

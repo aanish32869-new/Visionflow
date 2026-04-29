@@ -13,7 +13,24 @@
   }
 
   body {
-    @apply font-sans bg-[var(--bg)] text-[var(--text)];
+    @apply font-sans bg-black text-[var(--text)];
+    overflow: hidden;
+  }
+
+  /* Premium Custom Scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.3); /* violet-500 with opacity */
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.6);
   }
 }
 
@@ -59,5 +76,19 @@
   .animate-sidebar-item {
     animation: sidebarItemEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     opacity: 0;
+  }
+
+  /* Force 1920x1080 Resolution overrides for Tailwind Utilities */
+  .h-screen {
+    height: 1080px !important;
+  }
+  .w-screen {
+    width: 1920px !important;
+  }
+  .min-h-screen {
+    min-height: 1080px !important;
+  }
+  .max-h-screen {
+    max-height: 1080px !important;
   }
 }

@@ -5,7 +5,6 @@ import { X } from "lucide-react";
 export default function CreateProject() {
   const navigate = useNavigate();
   const [projectType, setProjectType] = useState("Object Detection");
-  const [classificationType, setClassificationType] = useState("Multi-Label");
   const [projectName, setProjectName] = useState("");
   const [annotationGroup, setAnnotationGroup] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -26,7 +25,6 @@ export default function CreateProject() {
         body: JSON.stringify({
           name: trimmedName,
           project_type: projectType,
-          classification_type: projectType === "Classification" ? classificationType : null,
           annotation_group: annotationGroup,
         }),
       });
@@ -43,7 +41,6 @@ export default function CreateProject() {
           projectName: trimmedName,
           projectId: data.id,
           projectType,
-          classificationType: projectType === "Classification" ? classificationType : null,
         },
       });
     } catch (err) {
@@ -55,7 +52,7 @@ export default function CreateProject() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col font-sans animate-page-enter">
+    <div className="h-screen overflow-y-auto bg-white flex flex-col font-sans animate-page-enter">
       <header className="flex justify-between items-center px-6 py-3 border-b border-gray-100">
         <div className="text-[22px] font-bold flex items-center gap-2">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -130,73 +127,9 @@ export default function CreateProject() {
               <p className={`text-[13px] font-medium tracking-tight ${projectType === "Object Detection" ? "text-gray-600" : "text-gray-500"}`}>Identify objects and their positions with bounding boxes.</p>
             </div>
 
-            <div
-              onClick={() => setProjectType("Classification")}
-              className={`border p-5 cursor-pointer transition rounded-lg ${projectType === "Classification" ? "border-violet-400 bg-violet-50/50 relative z-10 shadow-sm" : "border-transparent border-t-0 border-x-0 border-b-gray-100 bg-white hover:bg-gray-50/50"}`}
-            >
-              <div className="flex justify-between items-center mb-2">
-                <h4 className={`text-[14px] ${projectType === "Classification" ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>Classification</h4>
-                <div className={`flex gap-[6px] text-[10px] uppercase font-bold tracking-wider ${projectType === "Classification" ? "text-violet-600" : "text-gray-400"}`}>
-                  <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm ${projectType === "Classification" ? "bg-white border border-violet-100" : "bg-gray-50"}`}>
-                    <span className="w-2 h-2 border border-current rounded-[1px]" />
-                    Image Labels
-                  </span>
-                  <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm ${projectType === "Classification" ? "bg-white border border-violet-100" : "bg-gray-50"}`}>Filtering</span>
-                  <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm ${projectType === "Classification" ? "bg-white border border-violet-100" : "bg-gray-50"}`}>Content Moderation</span>
-                </div>
-              </div>
-              <p className={`text-[13px] font-medium tracking-tight mb-2 ${projectType === "Classification" ? "text-gray-600" : "text-gray-500"}`}>Assign labels to the entire image.</p>
-              <div className={`flex gap-2 text-[10px] uppercase font-bold tracking-wider ${projectType === "Classification" ? "text-violet-600" : "text-gray-400"}`}>
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setClassificationType("Single-Label");
-                    setProjectType("Classification");
-                  }}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm cursor-pointer transition ${classificationType === "Single-Label" && projectType === "Classification" ? "bg-white border text-violet-600 border-violet-600" : "bg-gray-50 text-gray-400 border border-transparent hover:border-gray-300"}`}
-                >
-                  {classificationType === "Single-Label" && projectType === "Classification" ? "◉" : "○"} Single-Label
-                </span>
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setClassificationType("Multi-Label");
-                    setProjectType("Classification");
-                  }}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm cursor-pointer transition ${classificationType === "Multi-Label" && projectType === "Classification" ? "bg-white border text-violet-600 border-violet-600" : "bg-gray-50 text-gray-400 border border-transparent hover:border-gray-300"}`}
-                >
-                  {classificationType === "Multi-Label" && projectType === "Classification" ? "◉" : "○"} Multi-Label
-                </span>
-              </div>
-            </div>
           </div>
 
           <div className="w-full lg:w-[55%] flex flex-col items-center justify-center p-8 bg-gray-50/50 rounded-xl relative overflow-hidden self-start sticky top-6">
-            {projectType === "Classification" && classificationType === "Single-Label" && (
-              <div className="w-full max-w-[550px] border-[6px] border-[#3bff39] rounded-[4px] flex flex-col bg-white overflow-hidden shadow-sm">
-                <div className="bg-[#3bff39] text-black font-mono font-bold text-[14px] px-3 py-1.5 w-full">basketball</div>
-                <img
-                  src="https://images.unsplash.com/photo-1546519638-68e109498ffc?q=80&w=1000&auto=format&fit=crop"
-                  alt="Basketball player"
-                  className="w-full h-auto object-cover max-h-[400px] aspect-[4/3] bg-gray-100"
-                />
-              </div>
-            )}
-
-            {projectType === "Classification" && classificationType === "Multi-Label" && (
-              <div className="w-full max-w-[550px] border-[6px] border-[#3bff39] rounded-[4px] flex flex-col bg-white overflow-hidden shadow-sm">
-                <div className="bg-[#3bff39] text-black font-mono font-bold text-[14px] px-3 py-1.5 w-full">basketball</div>
-                <div className="border-t-0 border-[6px] border-[#ffe800] flex flex-col w-full bg-white">
-                  <div className="bg-[#ffe800] text-black font-mono font-bold text-[14px] px-3 py-1.5 w-full border-t border-[#ffe800]">daytime</div>
-                  <img
-                    src="https://images.unsplash.com/photo-1546519638-68e109498ffc?q=80&w=1000&auto=format&fit=crop"
-                    alt="Basketball player"
-                    className="w-full h-auto object-cover max-h-[358px] aspect-[4/3] bg-gray-100"
-                  />
-                </div>
-              </div>
-            )}
-
             {projectType === "Object Detection" && (
               <div className="w-full max-w-[550px] aspect-[4/3] relative flex items-center justify-center rounded-[4px] overflow-hidden bg-gray-900 shadow-sm">
                 <img

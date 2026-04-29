@@ -17,4 +17,6 @@ venv/
 *.pt
 storage/
 uploads/
+logs/
+scratch/
 

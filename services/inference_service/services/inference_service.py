@@ -92,7 +92,7 @@ class InferenceLogic:
             candidate = "yolov8s.pt"
 
         candidate_path = Path(candidate)
-        if candidate_path.is_file():
+        if candidate_path.is_file() or candidate_path.exists():
             return str(candidate_path.resolve())
 
         search_roots = [Path.cwd(), REPO_ROOT]
@@ -100,6 +100,13 @@ class InferenceLogic:
             resolved = (root / candidate).resolve()
             if resolved.exists():
                 return str(resolved)
+            
+        # Check storage/models directory (new training output)
+        models_root = REPO_ROOT / "storage" / "models"
+        if models_root.exists():
+            for p in models_root.rglob("*.pt"):
+                if p.name == candidate or p.parent.name == candidate:
+                    return str(p.resolve())
 
         configured_path = Path(Config.YOLO_MODEL_PATH)
         if configured_path.exists() and configured_path.name == candidate_path.name:
@@ -235,8 +242,9 @@ class InferenceLogic:
 
     @staticmethod
     def _generate_training_metrics(project_id, version_doc, architecture, model_size, checkpoint):
+        version_id = version_doc.get('version_id') if version_doc else "raw"
         seed_input = (
-            f"{project_id}:{version_doc.get('version_id')}:{architecture}:{model_size}:{checkpoint or ''}"
+            f"{project_id}:{version_id}:{architecture}:{model_size}:{checkpoint or ''}"
         )
         seed = int(hashlib.sha256(seed_input.encode("utf-8")).hexdigest()[:8], 16)
         rng = random.Random(seed)
@@ -595,13 +603,24 @@ class InferenceLogic:
         name=None,
     ):
         version_doc = InferenceLogic._resolve_version_doc(project_id, version_ref)
-        if not version_doc:
-            return {"success": False, "error": "Select a valid dataset version before training."}
+        project = db.projects.find_one({"_id": to_object_id(project_id)})
 
         normalized_architecture = InferenceLogic._normalize_architecture(architecture)
         architecture_label = InferenceLogic._architecture_label(normalized_architecture)
         normalized_model_size = InferenceLogic._normalize_model_size(model_size)
-        version_display_id = version_doc.get("display_id") or f"v{version_doc.get('version_number', 1)}"
+        
+        if version_doc:
+            version_display_id = version_doc.get("display_id") or f"v{version_doc.get('version_number', 1)}"
+            version_name = version_doc.get("name")
+            version_canonical_id = version_doc.get("canonical_id")
+            version_id = version_doc.get("version_id")
+            classes = version_doc.get("classes", [])
+        else:
+            version_display_id = "Project Dataset"
+            version_name = "Full Project Dataset"
+            version_canonical_id = "latest"
+            version_id = None
+            classes = project.get("classes", []) if project else []
 
         checkpoint_text = str(checkpoint or "").strip() or None
         checkpoint_model = InferenceLogic._resolve_model_doc(project_id, checkpoint_model_id)
@@ -630,18 +649,18 @@ class InferenceLogic:
             "training_mode": str(training_mode or "custom"),
             "status": "Ready",
             "deployment_status": "deployed",
-            "version_ref": str(version_ref),
-            "version_db_id": str(version_doc["_id"]),
-            "version_id": version_doc.get("version_id"),
+            "version_ref": str(version_ref) if version_ref else None,
+            "version_db_id": str(version_doc["_id"]) if version_doc else None,
+            "version_id": version_id,
             "version_display_id": version_display_id,
-            "version_name": version_doc.get("name"),
-            "version_canonical_id": version_doc.get("canonical_id"),
+            "version_name": version_name,
+            "version_canonical_id": version_canonical_id,
             "architecture": normalized_architecture,
             "architecture_label": architecture_label,
             "model_size": normalized_model_size,
             "checkpoint": checkpoint_text,
             "checkpoint_model_id": str(checkpoint_model["_id"]) if checkpoint_model else None,
-            "classes": version_doc.get("classes", []),
+            "classes": classes,
             "runtime_model": Config.YOLO_AUTO_LABEL_MODEL or Config.YOLO_MODEL_PATH,
             "metrics": metrics,
             "mAP": metrics["mAP"],
@@ -656,21 +675,22 @@ class InferenceLogic:
         result = db.models.insert_one(model_doc)
         model_doc["_id"] = result.inserted_id
 
-        db.versions.update_one(
-            {"_id": version_doc["_id"]},
-            {
-                "$set": {
-                    "status": "Completed",
-                    "metrics": {
-                        "mAP": metrics["mAP"],
-                        "precision": metrics["precision"],
-                        "recall": metrics["recall"],
-                    },
-                    "latest_model_id": str(result.inserted_id),
-                    "updated_at": created_at,
-                }
-            },
-        )
+        if version_doc:
+            db.versions.update_one(
+                {"_id": version_doc["_id"]},
+                {
+                    "$set": {
+                        "status": "Completed",
+                        "metrics": {
+                            "mAP": metrics["mAP"],
+                            "precision": metrics["precision"],
+                            "recall": metrics["recall"],
+                        },
+                        "latest_model_id": str(result.inserted_id),
+                        "updated_at": created_at,
+                    }
+                },
+            )
         db.projects.update_one(
             {"_id": to_object_id(project_id)},
             {"$set": {"updated_at": created_at}},
@@ -679,15 +699,20 @@ class InferenceLogic:
         return {"success": True, "model": InferenceLogic._serialize_model(model_doc)}
 
     @staticmethod
-    def run_model_inference(project_id, model_id, source):
+    def run_model_inference(project_id, model_id, source, confidence=None):
         model_doc = InferenceLogic._resolve_model_doc(project_id, model_id)
         if not model_doc:
             return {"success": False, "error": "Model not found", "predictions": []}
 
+        threshold = InferenceLogic._parse_confidence(confidence, default=0.25)
+        
+        # Resolve the model name/path
+        runtime_model = model_doc.get("weights_path") or model_doc.get("runtime_model") or Config.YOLO_AUTO_LABEL_MODEL
+        
         result = InferenceLogic.run_auto_label(
             source,
-            model_name=model_doc.get("runtime_model") or Config.YOLO_AUTO_LABEL_MODEL,
-            confidence=0.25,
+            model_name=runtime_model,
+            confidence=threshold,
         )
         if not result.get("success"):
             return {
@@ -708,15 +733,47 @@ class InferenceLogic:
             for detection in result.get("detections", [])
         ]
 
+        # Log inference for analytics
+        inference_log = {
+            "project_id": str(project_id),
+            "model_id": str(model_id),
+            "model_name": model_doc.get("name"),
+            "timestamp": now_iso(),
+            "confidence_threshold": threshold,
+            "prediction_count": len(predictions),
+            "status": "success"
+        }
+        db.inference_history.insert_one(inference_log)
+
         return {
             "success": True,
             "time": round(float(model_doc.get("speed_ms", 25.0)) / 1000, 3),
             "predictions": predictions,
             "model": model_doc.get("name"),
+            "confidence_threshold": threshold,
         }
 
     @staticmethod
-    def run_yolo_labeling(asset_id, model_name=None, confidence=None):
+    def get_inference_history(project_id, limit=20):
+        history = list(db.inference_history.find({"project_id": str(project_id)}).sort("timestamp", -1).limit(limit))
+        return {
+            "success": True,
+            "history": [InferenceLogic._serialize_doc(doc) for doc in history]
+        }
+
+    @staticmethod
+    def compare_models(project_id, model_ids, source, confidence=None):
+        results = {}
+        for m_id in model_ids:
+            res = InferenceLogic.run_model_inference(project_id, m_id, source, confidence=confidence)
+            results[m_id] = res
+        return {
+            "success": True,
+            "results": results
+        }
+
+    @staticmethod
+    def run_yolo_labeling(asset_id, model_name=None, confidence=None, job_id=None):
         asset_oid = to_object_id(asset_id)
         if not asset_oid:
             return {"success": False, "error": f"Invalid asset id: {asset_id}", "annotated_assets": 0}
@@ -793,7 +850,7 @@ class InferenceLogic:
                         "detected_classes": sorted(detected_classes),
                         "annotated_at": timestamp if annotations else None,
                         "updated_at": timestamp,
-                        "status": "labeled" if annotations else "unlabeled",
+                        "status": "annotated" if annotations else "unassigned",
                         "auto_labeled": True,
                         "auto_label_model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
                         "auto_label_confidence_threshold": threshold,
@@ -832,7 +889,7 @@ class InferenceLogic:
             return {"success": False, "error": str(error), "annotated_assets": 0}
 
     @staticmethod
-    def run_assets_yolo_labeling(asset_ids, model_name=None, confidence=None):
+    def run_assets_yolo_labeling(asset_ids, model_name=None, confidence=None, job_id=None):
         unique_asset_ids = []
         seen = set()
         for asset_id in asset_ids or []:
@@ -852,6 +909,7 @@ class InferenceLogic:
                 asset_id,
                 model_name=model_name,
                 confidence=threshold,
+                job_id=job_id,
             )
             total_annotations += int(result.get("count", 0) or 0)
             annotated_assets += int(result.get("annotated_assets", 0) or 0)
@@ -866,6 +924,24 @@ class InferenceLogic:
                     "error": result.get("error"),
                 }
             )
+            
+            # Real-time progress update for the job
+            if job_id and ObjectId.is_valid(str(job_id)):
+                try:
+                    update_op = {
+                        "$set": {"updated_at": now_iso()}
+                    }
+                    if result.get("annotated_assets", 0) > 0:
+                        update_op["$inc"] = {"annotated_count": 1}
+                    else:
+                        update_op["$inc"] = {"unassigned_count": 1}
+                        
+                    db.jobs.update_one(
+                        {"_id": ObjectId(str(job_id))},
+                        update_op
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update job progress for {job_id}: {e}")
 
         return {
             "success": True,

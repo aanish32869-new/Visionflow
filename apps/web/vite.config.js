@@ -48,6 +48,7 @@ const visionflowConfig = loadVisionflowConfig()
 const authTarget = `http://localhost:${Number(visionflowConfig.PORT_AUTH_SERVICE || 5001)}`
 const datasetTarget = `http://localhost:${Number(visionflowConfig.PORT_DATASET_SERVICE || 5003)}`
 const projectTarget = `http://localhost:${Number(visionflowConfig.PORT_PROJECT_SERVICE || 5004)}`
+const trainingTarget = `http://localhost:${Number(visionflowConfig.PORT_TRAINING_SERVICE || 5005)}`
 const inferenceTarget = `http://localhost:${Number(visionflowConfig.PORT_INFERENCE_SERVICE || 5006)}`
 
 const createProxy = (target) => ({
@@ -64,11 +65,25 @@ export default defineConfig({
       // Route directly to backend services so `npm run dev` in `apps/web`
       // works even when the optional local gateway on port 5000 is not running.
       '^/api/(signup|login)(?:$|[/?])': createProxy(authTarget),
+      
+      // Training Service (Registry, Jobs, Config)
+      '^/api/training(?:$|[/?])': createProxy(trainingTarget),
+      '^/api/models(?:$|[/?])': createProxy(trainingTarget),
+      '^/api/projects/[^/]+/(train|jobs)(?:$|[/?])': createProxy(trainingTarget),
+      '^/api/projects/[^/]+/models(?:$|[/?])': createProxy(trainingTarget),
+
+      // Inference Service
       '^/api/projects/[^/]+/models/[^/]+/infer(?:$|[/?])': createProxy(inferenceTarget),
-      '^/api/projects/[^/]+/models(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
-      '^/api/projects/[^/]+/(versions|annotation-status)(?:$|[/?])': createProxy(datasetTarget),
-      '^/api/(projects|assets|folders|workspace-overview)(?:$|[/?])': createProxy(projectTarget),
+      
+      // Dataset Service
+      '^/api/projects/[^/]+/(versions|annotation-status|dataset)(?:$|[/?])': createProxy(datasetTarget),
+      '^/api/annotations(?:$|[/?])': createProxy(datasetTarget),
+      '^/api/batches/[^/]+/export(?:$|[/?])': createProxy(datasetTarget),
+      '^/api/projects/[^/]+/dataset/export(?:$|[/?])': createProxy(datasetTarget),
+      
+      // Project Service (Node)
+      '^/api/(projects|assets|folders|workspace-overview|jobs|batches)(?:$|[/?])': createProxy(projectTarget),
       '/uploads': createProxy(projectTarget),
       '/datasets': createProxy(datasetTarget),
     },

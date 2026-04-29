@@ -1,28 +1,15 @@
-import logging
 import os
-from logging.handlers import RotatingFileHandler
+import sys
 
-def setup_logger(name):
-    # Logs directory
-    log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+# Add service root and repository root to path
+service_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+repo_root = os.path.abspath(os.path.join(service_root, "..", ".."))
 
-    # Format
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+if service_root not in sys.path:
+    sys.path.insert(0, service_root)
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+from services.common.logger_py import get_logger
 
-    # File handler
-    file_handler = RotatingFileHandler(os.path.join(log_dir, 'dataset-service.log'), maxBytes=10*1024*1024, backupCount=5)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    return logger
-
-logger = setup_logger("dataset-service")
+logger = get_logger("DATASET")

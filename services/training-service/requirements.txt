@@ -1,4 +1,5 @@
 Flask
 Flask-CORS
 pymongo
-mongomock
+ultralytics
+torch

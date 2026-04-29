@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
+from utils.logger import logger
 
 from services.inference_service import InferenceLogic
 
@@ -18,9 +19,7 @@ def auto_label():
     queries = data.get("queries")
     confidence = data.get("conf")
 
-    if not source:
-        return jsonify({"error": "Missing url"}), 400
-
+    logger.info(f"Auto-label request for {source} with model {model}")
     try:
         result = InferenceLogic.run_auto_label(
             source,
@@ -29,8 +28,10 @@ def auto_label():
             confidence=confidence,
         )
         status_code = 200 if result.get("success", True) else 400
+        logger.info(f"Auto-label completed with status {status_code}")
         return jsonify(result), status_code
     except Exception as error:
+        logger.error(f"Auto-label failed: {error}")
         return jsonify({"error": str(error)}), 500
 
 
@@ -87,19 +88,28 @@ def create_model(project_id):
 
 @inference_bp.route("/api/projects/<project_id>/models/<model_id>/infer", methods=["POST"])
 def infer_model(project_id, model_id):
+    confidence = request.form.get("conf") or request.args.get("conf")
     uploaded_file = request.files.get("file")
+    
+    # Also support JSON source if no file
+    source = None
     if not uploaded_file:
+        data = request.json or {}
+        source = data.get("source") or data.get("url")
+    
+    if not uploaded_file and not source:
         return jsonify({"error": "No image to process"}), 400
 
-    suffix = Path(uploaded_file.filename or "image.jpg").suffix or ".jpg"
     temp_path = None
-
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-            uploaded_file.save(handle.name)
-            temp_path = handle.name
+        if uploaded_file:
+            suffix = Path(uploaded_file.filename or "image.jpg").suffix or ".jpg"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                uploaded_file.save(handle.name)
+                temp_path = handle.name
+            source = temp_path
 
-        result = InferenceLogic.run_model_inference(project_id, model_id, temp_path)
+        result = InferenceLogic.run_model_inference(project_id, model_id, source, confidence=confidence)
         status_code = 200 if result.get("success") else 400
         return jsonify(result), status_code
     except Exception as error:
@@ -107,6 +117,33 @@ def infer_model(project_id, model_id):
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+@inference_bp.route("/api/projects/<project_id>/compare", methods=["POST"])
+def compare_models(project_id):
+    data = request.json or {}
+    model_ids = data.get("model_ids", [])
+    source = data.get("source")
+    confidence = data.get("conf")
+
+    if not model_ids or not source:
+        return jsonify({"error": "Missing models or source"}), 400
+
+    try:
+        result = InferenceLogic.compare_models(project_id, model_ids, source, confidence=confidence)
+        return jsonify(result), 200
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+
+@inference_bp.route("/api/projects/<project_id>/inference-history", methods=["GET"])
+def get_inference_history(project_id):
+    limit = request.args.get("limit", 20, type=int)
+    try:
+        result = InferenceLogic.get_inference_history(project_id, limit=limit)
+        return jsonify(result), 200
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
 
 
 @inference_bp.route("/api/infer/yolo-label", methods=["POST"])
@@ -122,15 +159,14 @@ def yolo_label():
     if isinstance(asset_ids, list):
         normalized_asset_ids = [str(item).strip() for item in asset_ids if str(item).strip()]
 
-    if not normalized_asset_ids and not asset_id and not project_id:
-        return jsonify({"error": "Missing asset_id, asset_ids, or project_id"}), 400
-
+    logger.info(f"YOLO labeling request for project {project_id} / asset {asset_id} with model {model}")
     try:
         if normalized_asset_ids:
             result = InferenceLogic.run_assets_yolo_labeling(
                 normalized_asset_ids,
                 model_name=model,
                 confidence=confidence,
+                job_id=data.get("job_id"),
             )
         elif asset_id:
             result = InferenceLogic.run_yolo_labeling(
@@ -145,8 +181,10 @@ def yolo_label():
                 confidence=confidence,
             )
 
+        logger.info("YOLO labeling completed successfully")
         return jsonify(result), 200
     except Exception as error:
+        logger.error(f"YOLO labeling failed: {error}")
         return jsonify({"error": str(error)}), 500
 
 

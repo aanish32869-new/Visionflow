@@ -11,6 +11,10 @@ from utils.logger import logger
 from controllers.asset_controller import asset_bp
 from controllers.project_controller import project_bp
 from controllers.workspace_controller import workspace_bp
+from controllers.analytics_controller import analytics_bp
+from controllers.class_controller import class_bp
+from controllers.tag_controller import tag_bp
+from controllers.dataset_controller import dataset_bp
 from controllers.version_controller import version_bp
 
 def create_app():
@@ -25,6 +29,10 @@ def create_app():
     app.register_blueprint(asset_bp)
     app.register_blueprint(project_bp)
     app.register_blueprint(workspace_bp)
+    app.register_blueprint(analytics_bp)
+    app.register_blueprint(class_bp)
+    app.register_blueprint(tag_bp)
+    app.register_blueprint(dataset_bp)
     app.register_blueprint(version_bp)
     
     # Static file serving for uploads and datasets
@@ -60,15 +68,19 @@ def create_app():
 
     @app.route("/datasets/<filename>")
     def serve_dataset(filename):
-        return send_from_directory(Config.DATASET_DIR, filename)
+        return send_from_directory(Config.DATASET_DIR, filename, as_attachment=True)
 
     @app.route('/health')
     def health():
-        return jsonify({"status": "ok", "service": "dataset-service", "version": "2.0.0"})
+        return jsonify({"status": "ok", "service": "dataset-service", "version": "2.0.1"})
+
+    @app.route('/api/diag/version')
+    def diag_version():
+        return jsonify({"version": "2.0.1", "status": "deployed"})
 
     logger.info("Initializing Dataset Service v2.0...")
     return app
 
 if __name__ == '__main__':
     app = create_app()
-    app.run(host='0.0.0.0', port=Config.PORT)
+    app.run(host='0.0.0.0', port=Config.PORT, debug=False)

@@ -9,17 +9,26 @@ import CreateProject from "./pages/CreateProject";
 import RapidUpload from "./pages/RapidUpload";
 import ProjectUpload from "./pages/ProjectUpload";
 import Uploads from "./pages/Uploads";
+import BatchPreview from "./pages/BatchPreview";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 // Define the global router configuration exactly once outside the React tree
 const globalRouter = createBrowserRouter([
-  { path: "/", element: <Dashboard /> },
-  { path: "/projects", element: <Projects /> },
-  { path: "/deploy", element: <Deployments /> },
-  { path: "/create", element: <CreateProject /> },
-  { path: "/rapid-upload", element: <RapidUpload /> },
-  { path: "/upload", element: <ProjectUpload /> },
-  { path: "/uploads", element: <Uploads /> },
-  { path: "*", element: <Navigate to="/" replace /> }
+  {
+    path: "/",
+    errorElement: <ErrorBoundary />,
+    children: [
+      { path: "/", element: <Dashboard /> },
+      { path: "/projects", element: <Projects /> },
+      { path: "/deploy", element: <Deployments /> },
+      { path: "/create", element: <CreateProject /> },
+      { path: "/rapid-upload", element: <RapidUpload /> },
+      { path: "/upload", element: <ProjectUpload /> },
+      { path: "/uploads", element: <Uploads /> },
+      { path: "/annotate/batch/:batchId", element: <BatchPreview /> },
+      { path: "*", element: <Navigate to="/" replace /> }
+    ]
+  }
 ]);
 
 export default function TestHost() {

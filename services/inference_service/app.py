@@ -2,7 +2,10 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 from config import Config
+from utils.logger import logger
 from controllers.inference_controller import inference_bp
+
+logger.info("Initializing Inference Service v2.0...")
 
 def create_app():
     app = Flask(__name__)

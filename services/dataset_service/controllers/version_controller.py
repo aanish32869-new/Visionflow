@@ -1,14 +1,51 @@
-from flask import Blueprint, jsonify, request
+import threading
+import uuid
+import base64
+from io import BytesIO
+from flask import Blueprint, jsonify, request, send_from_directory
 from bson.objectid import ObjectId
 
 from config import Config
-from dataset_exporter import generate_dataset_archive
 from models.db import db, serialize_doc
 from services.asset_service import get_utc_now
+from services.version_manager import VersionManager
 from utils.logger import logger
 
 
 version_bp = Blueprint("version_bp", __name__)
+
+
+@version_bp.route("/api/projects/<project_id>/annotation-status", methods=["GET"])
+def get_annotation_status(project_id):
+    """Check how many assets in 'dataset' state are annotated, used by the Versions tab."""
+    try:
+        # Count assets that are in the dataset state (these are the ones versions care about)
+        dataset_assets = list(db.assets.find(
+            {"project_id": project_id, "status": "dataset"},
+            {"_id": 1, "is_annotated": 1, "annotation_count": 1}
+        ))
+
+        total = len(dataset_assets)
+        annotated = sum(1 for a in dataset_assets if a.get("is_annotated") or (a.get("annotation_count", 0) > 0))
+
+        # Also check via annotations collection for any missing flags
+        if total > 0 and annotated < total:
+            asset_ids = [str(a["_id"]) for a in dataset_assets if not a.get("is_annotated")]
+            annotated_via_db = db.annotations.distinct("asset_id", {"asset_id": {"$in": asset_ids}})
+            annotated += len(set(annotated_via_db))
+            annotated = min(annotated, total)
+
+        return jsonify({
+            "total_assets": total,
+            "annotated_assets": annotated,
+            "unannotated_assets": total - annotated,
+            "all_annotated": total > 0 and annotated >= total,
+            "has_dataset_assets": total > 0,
+        })
+    except Exception as error:
+        logger.error(f"Error fetching annotation status for {project_id}: {error}")
+        return jsonify({"error": str(error)}), 500
+
 
 
 def _slugify(value):
@@ -55,172 +92,27 @@ def _annotation_status(project_id):
     }
 
 
-def _annotation_count(project_id):
-    asset_ids = [str(asset["_id"]) for asset in db.assets.find({"project_id": project_id}, {"_id": 1})]
-    if not asset_ids:
-        return 0
-    return db.annotations.count_documents({"asset_id": {"$in": asset_ids}})
-
-
-def _normalize_split_input(split):
-    split = split or {}
-    train = _safe_int(split.get("train", 70), 70)
-    valid = _safe_int(split.get("valid", split.get("val", 20)), 20)
-    test = _safe_int(split.get("test", 10), 10)
-    total = max(train + valid + test, 1)
-    normalized_train = round(train / total * 100)
-    normalized_valid = round(valid / total * 100)
-    return {
-        "train": normalized_train,
-        "valid": normalized_valid,
-        "test": max(0, 100 - normalized_train - normalized_valid),
-    }
-
-
-def _normalize_resize_input(resize):
-    resize = resize or {}
-    return {
-        "enabled": bool(resize.get("enabled")),
-        "width": _safe_int(resize.get("width"), 640),
-        "height": _safe_int(resize.get("height"), _safe_int(resize.get("width"), 640)),
-        "mode": resize.get("mode", "stretch"),
-    }
-
-
-def _normalize_preprocessing_input(payload):
-    payload = payload or {}
-    preprocessing = payload.get("preprocessing") or {}
-    resize = preprocessing.get("resize") or payload.get("resize") or {}
-    return {
-        "auto_orient": preprocessing.get("auto_orient", True),
-        "grayscale": bool(preprocessing.get("grayscale", False)),
-        "resize": _normalize_resize_input(resize),
-    }
-
-
-def _normalize_augmentation_input(payload):
-    payload = payload or {}
-    raw_augmentations = payload.get("augmentations") or []
-    if isinstance(raw_augmentations, dict):
-        enabled = [key for key, value in raw_augmentations.items() if value]
-    else:
-        enabled = [str(item).strip() for item in raw_augmentations if str(item).strip()]
-
-    deduped = []
-    seen = set()
-    for item in enabled:
-        lowered = item.lower()
-        if lowered and lowered not in seen:
-            seen.add(lowered)
-            deduped.append(lowered)
-
-    max_version_size = _safe_int(
-        payload.get("max_version_size")
-        or payload.get("maximum_version_size")
-        or (payload.get("augmentation_config") or {}).get("max_version_size"),
-        1,
-    )
-    return {
-        "enabled": deduped,
-        "max_version_size": max(1, min(max_version_size, 8)),
-    }
-
-
-def _normalize_tag_filter_input(payload):
-    payload = payload or {}
-    raw = payload.get("tag_filter") or {}
-
-    def normalize(values):
-        normalized = []
-        seen = set()
-        for value in values or []:
-            text = str(value or "").strip()
-            lowered = text.lower()
-            if text and lowered not in seen:
-                seen.add(lowered)
-                normalized.append(text)
-        return normalized
-
-    return {
-        "require": normalize(raw.get("require")),
-        "exclude": normalize(raw.get("exclude")),
-        "allow": normalize(raw.get("allow")),
-    }
-
-
-def _build_preprocessing_summary(preprocessing_config):
-    preprocessing_config = preprocessing_config or {}
-    resize = preprocessing_config.get("resize") or {}
-    if resize.get("enabled"):
-        resize_value = f"{resize.get('width', 640)}x{resize.get('height', resize.get('width', 640))}"
-        mode = resize.get("mode", "stretch")
-    else:
-        resize_value = "Original"
-        mode = "none"
-    return {
-        "resize": resize_value,
-        "mode": mode,
-        "auto_orient": preprocessing_config.get("auto_orient", True),
-        "grayscale": preprocessing_config.get("grayscale", False),
-    }
-
-
 def _normalize_version(version, index=0, total=0):
     doc = serialize_doc(version)
     version_number = doc.get("version_number") or max(total - index, 1)
-    version_archive_id = doc.get("version_id") or doc.get("archive_id")
-    project_slug = doc.get("project_slug") or _slugify((doc.get("canonical_id") or "project").split("/")[0])
-    preprocessing_config = doc.get("preprocessing_config") or _normalize_preprocessing_input(doc)
-    augmentation_config = doc.get("augmentation_config") or _normalize_augmentation_input(doc)
-    tag_filter = doc.get("tag_filter") or _normalize_tag_filter_input(doc)
-
+    
+    # Ensure UI-friendly fields
     doc.setdefault("display_id", f"v{version_number}")
     doc.setdefault("name", f"Version {version_number}")
-    doc.setdefault("created_at", get_utc_now())
-    doc.setdefault("project_slug", project_slug)
-    doc.setdefault("canonical_id", f"{project_slug}/{version_number}")
-    doc.setdefault("source_images_count", doc.get("images_count", 0))
-    doc.setdefault("images_count", doc.get("source_images_count", 0))
-    doc.setdefault(
-        "generated_images_count",
-        max(
-            int(doc.get("images_count", 0) or 0) - int(doc.get("source_images_count", 0) or 0),
-            0,
-        ),
-    )
-    doc.setdefault("annotations_count", doc.get("annotation_count", 0))
     doc.setdefault("status", "Ready")
-    doc.setdefault("export_format", "yolov8")
-    doc.setdefault("download_url", f"/datasets/{version_archive_id}.zip" if version_archive_id else None)
-    doc.setdefault("split", {"train": 70, "valid": 20, "test": 10})
-    doc.setdefault("split_counts", {"train": doc.get("images_count", 0), "valid": 0, "test": 0})
-    doc["preprocessing_config"] = preprocessing_config
-    doc["preprocessing"] = doc.get("preprocessing") or _build_preprocessing_summary(preprocessing_config)
-    doc["augmentation_config"] = augmentation_config
-    doc["augmentations"] = doc.get("augmentations") or augmentation_config.get("enabled", [])
-    doc.setdefault("max_version_size", augmentation_config.get("max_version_size", 1))
-    doc["tag_filter"] = tag_filter
+    doc.setdefault("created_at", get_utc_now())
     doc.setdefault("metrics", {"mAP": None, "precision": None, "recall": None})
+    
+    # Analytics data
+    if "analytics" in doc:
+        doc["heatmap"] = doc["analytics"].get("heatmap")
+        doc["class_distribution"] = doc["analytics"].get("class_distribution")
+    
+    # Download URL
+    if doc.get("archive_id"):
+        doc["download_url"] = f"/datasets/{doc['archive_id']}.zip"
+    
     return doc
-
-
-def _touch_project(project_id, updated_at):
-    try:
-        result = db.projects.update_one({"_id": ObjectId(project_id)}, {"$set": {"updated_at": updated_at}})
-        if result.matched_count:
-            return
-    except Exception:
-        pass
-    db.projects.update_one({"_id": project_id}, {"$set": {"updated_at": updated_at}})
-
-
-@version_bp.route("/api/projects/<project_id>/annotation-status", methods=["GET"])
-def get_annotation_status(project_id):
-    try:
-        return jsonify(_annotation_status(project_id))
-    except Exception as error:
-        logger.error(f"Error fetching annotation status for {project_id}: {error}")
-        return jsonify({"error": "Failed to fetch annotation status"}), 500
 
 
 @version_bp.route("/api/projects/<project_id>/versions", methods=["GET"])
@@ -241,69 +133,195 @@ def create_version(project_id):
         readiness = _annotation_status(project_id)
         if readiness["total_assets"] == 0:
             return jsonify({"error": "Add images before creating a dataset version."}), 400
-        if not readiness["all_annotated"]:
-            return jsonify({"error": "All images must be annotated before creating a dataset version."}), 400
-
+            
         project = _find_project(project_id)
+        
+        # Optional: Validate Class balance before versioning
+        if data.get("validate_health", False):
+            from services.analytics_service import AnalyticsService
+            health = AnalyticsService.get_health_score(project_id)
+            if health["score"] < 30: # Arbitrary threshold for "bad" dataset
+                return jsonify({
+                    "error": "Dataset health is too low for versioning.",
+                    "health": health
+                }), 400
+
         project_slug = _slugify((project or {}).get("name") or "project")
         version_number = db.versions.count_documents({"project_id": project_id}) + 1
-        export_format = data.get("export_format", "yolov8")
-        split = _normalize_split_input(data.get("split"))
-        preprocessing_config = _normalize_preprocessing_input(data)
-        augmentation_config = _normalize_augmentation_input(data)
-        tag_filter = _normalize_tag_filter_input(data)
+        version_id = uuid.uuid4().hex
+        
+        # Build options for management
+        options = {
+            "name": data.get("name") or f"Version {version_number}",
+            "split": data.get("split", {"train": 70, "valid": 20, "test": 10}),
+            "preprocessing": data.get("preprocessing", {}),
+            "augmentations": data.get("augmentations", []),
+            "tag_filter": data.get("tag_filter", {}),
+            "class_remap": data.get("class_remap", {}),
+            "export_format": data.get("export_format", "yolov8")
+        }
 
-        version_archive_id, archive_stats = generate_dataset_archive(
-            db,
-            project_id,
-            export_format,
-            Config.UPLOAD_DIR,
-            Config.DATASET_DIR,
-            {
-                "split": split,
-                "preprocessing": preprocessing_config,
-                "augmentations": augmentation_config["enabled"],
-                "max_version_size": augmentation_config["max_version_size"],
-                "tag_filter": tag_filter,
-            },
-        )
-
-        if not archive_stats.get("exported_images_count"):
-            return jsonify({"error": "No exportable project assets matched the selected version filters."}), 400
-
-        created_at = get_utc_now()
-        canonical_id = f"{project_slug}/{version_number}"
+        # Initial Document
         new_version = {
             "project_id": project_id,
             "project_slug": project_slug,
-            "version_id": version_archive_id,
+            "version_id": version_id,
             "version_number": version_number,
             "display_id": f"v{version_number}",
-            "canonical_id": canonical_id,
-            "name": data.get("name") or f"Version {version_number}",
-            "created_at": created_at,
-            "images_count": archive_stats.get("exported_images_count", 0),
-            "source_images_count": archive_stats.get("source_images_count", 0),
-            "generated_images_count": archive_stats.get("augmentation_copies", 0),
-            "annotations_count": archive_stats.get("annotations_count", _annotation_count(project_id)),
-            "classes": archive_stats.get("classes", []),
-            "split": archive_stats.get("split_percentages", split),
-            "split_counts": archive_stats.get("split_counts", {}),
-            "preprocessing": _build_preprocessing_summary(preprocessing_config),
-            "preprocessing_config": preprocessing_config,
-            "augmentations": augmentation_config["enabled"],
-            "augmentation_config": augmentation_config,
-            "max_version_size": augmentation_config["max_version_size"],
-            "tag_filter": archive_stats.get("tag_filter", tag_filter),
-            "export_format": export_format,
-            "status": "Ready",
-            "download_url": f"/datasets/{version_archive_id}.zip",
-            "metrics": {"mAP": None, "precision": None, "recall": None},
+            "canonical_id": f"{project_slug}/{version_number}",
+            "name": options["name"],
+            "created_at": get_utc_now(),
+            "status": "Queued",
+            "options": options,
+            "images_count": 0,
+            "annotations_count": 0,
+            "metrics": {"mAP": None, "precision": None, "recall": None}
         }
-        result = db.versions.insert_one(new_version)
-        new_version["_id"] = result.inserted_id
-        _touch_project(project_id, created_at)
-        return jsonify(_normalize_version(new_version, 0, version_number)), 201
+        
+        db.versions.insert_one(new_version)
+        
+        # Start background job
+        VersionManager.start_generation(project_id, version_id, options)
+        
+        return jsonify(_normalize_version(new_version)), 202
     except Exception as error:
-        logger.error(f"Error creating version for {project_id}: {error}")
+        logger.error(f"Error initiating version for {project_id}: {error}")
         return jsonify({"error": str(error)}), 500
+
+
+@version_bp.route("/api/versions/<version_id>/export", methods=["POST"])
+def export_version(version_id):
+    data = request.json or {}
+    export_format = data.get("format", "yolov8")
+    try:
+        version = db.versions.find_one({"version_id": version_id})
+        if not version:
+            return jsonify({"error": "Version not found"}), 404
+            
+        from services.dataset_exporter import generate_dataset_archive
+        archive_id, stats = generate_dataset_archive(
+            db, 
+            version["project_id"], 
+            export_format, 
+            Config.UPLOAD_DIR, 
+            Config.DATASET_DIR,
+            {**version.get("options", {}), "version_id": version_id, "export_format": export_format}
+        )
+        
+        download_url = f"/datasets/{archive_id}.zip"
+        db.versions.update_one({"version_id": version_id}, {"$set": {"download_url": download_url}})
+        
+        return jsonify({"download_url": download_url, "stats": stats})
+    except Exception as error:
+        logger.error(f"Error exporting version {version_id}: {error}")
+        return jsonify({"error": str(error)}), 500
+
+
+@version_bp.route("/api/versions/<version_id>/rebalance", methods=["POST"])
+def rebalance_version(version_id):
+    data = request.json or {}
+    new_split = data.get("split")
+    if not new_split:
+        return jsonify({"error": "Split ratios required"}), 400
+        
+    try:
+        success = VersionManager.rebalance_split(version_id, new_split)
+        if success:
+            return jsonify({"success": True})
+        return jsonify({"error": "Failed to rebalance version"}), 500
+    except Exception as error:
+        logger.error(f"Error rebalancing version {version_id}: {error}")
+        return jsonify({"error": str(error)}), 500
+
+
+@version_bp.route("/api/versions/<version_id>", methods=["GET"])
+def get_version_details(version_id):
+    try:
+        version = db.versions.find_one({"version_id": version_id})
+        if not version:
+            return jsonify({"error": "Version not found"}), 404
+        return jsonify(_normalize_version(version))
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+
+@version_bp.route("/api/versions/<version_id>/analytics", methods=["GET"])
+def get_version_analytics(version_id):
+    try:
+        version = db.versions.find_one({"version_id": version_id}, {"analytics": 1, "split_counts": 1})
+        if not version:
+            return jsonify({"error": "Version not found"}), 404
+        return jsonify(version.get("analytics" or {}))
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+
+@version_bp.route("/api/versions/<version_id>", methods=["DELETE"])
+def delete_version(version_id):
+    try:
+        VersionManager.delete_version(version_id)
+        return jsonify({"success": True})
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+@version_bp.route("/api/projects/<project_id>/augment/preview", methods=["POST"])
+def preview_augmentation(project_id):
+    data = request.json or {}
+    asset_id = data.get("asset_id")
+    augmentations = data.get("augmentations", [])
+    preprocessing = data.get("preprocessing", {})
+    
+    from config import Config
+    from dataset_exporter import _load_asset_image, _apply_resize, _apply_augmentation, _normalize_preprocessing
+    from PIL import ImageOps
+    
+    if not asset_id:
+        asset = db.assets.find_one({"project_id": project_id, "status": "dataset"})
+        if not asset:
+            return jsonify({"error": "No assets found in dataset"}), 404
+    else:
+        from bson.objectid import ObjectId
+        asset = db.assets.find_one({"_id": ObjectId(asset_id)})
+        
+    if not asset:
+        return jsonify({"error": "Asset not found"}), 404
+
+    img = _load_asset_image(db, asset, Config.UPLOAD_DIR)
+    if not img:
+        return jsonify({"error": "Could not load image"}), 404
+
+    # Apply Preprocessing
+    prep_opts = _normalize_preprocessing({"preprocessing": preprocessing})
+    if prep_opts.get("auto_orient", True):
+        img = ImageOps.exif_transpose(img)
+    if prep_opts.get("grayscale"):
+        img = img.convert("L")
+    if prep_opts.get("resize", {}).get("enabled"):
+        img = _apply_resize(img, prep_opts["resize"])
+
+    previews = []
+    
+    # Pre-calculated preview for original
+    def to_b64(pil_img):
+        buffered = BytesIO()
+        pil_img.save(buffered, format="JPEG")
+        return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
+
+    previews.append({
+        "type": "original",
+        "image": to_b64(img)
+    })
+
+    # Apply each augmentation
+    for aug in augmentations:
+        try:
+            # We want to show what this specific augmentation does to the PREPROCESSED original
+            aug_img = _apply_augmentation(img.copy(), aug)
+            previews.append({
+                "type": aug,
+                "image": to_b64(aug_img)
+            })
+        except Exception as e:
+            logger.error(f"Failed to preview {aug}: {e}")
+
+    return jsonify({"previews": previews})

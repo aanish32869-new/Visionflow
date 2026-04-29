@@ -22,6 +22,8 @@ export default function RapidUpload() {
   const [uploadedAssets, setUploadedAssets] = useState([]);
   const [activeAssetIndex, setActiveAssetIndex] = useState(0); // selected image in carousel
   const [uploadError, setUploadError] = useState(null);
+  const [sessionBatchId] = useState(`rapid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  const [sessionBatchName] = useState(`Rapid Import ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
 
   // Build State
   const [searchQuery, setSearchQuery] = useState("");
@@ -209,6 +211,8 @@ export default function RapidUpload() {
 
         formData.append('file', resizedPayload.file);
         if (projectId) formData.append('project_id', projectId);
+        formData.append('batch_id', sessionBatchId);
+        formData.append('batch_name', sessionBatchName);
 
         const res = await fetch("/api/assets", {
           method: "POST",
@@ -307,7 +311,30 @@ export default function RapidUpload() {
     }
     setLabelActionError(null);
     setLabelActionStatus(null);
-    openAnnotationPage();
+    
+    // Create job for manual annotation
+    const createManualJob = async () => {
+      try {
+        const res = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: projectId,
+            batch_id: sessionBatchId,
+            batch_name: sessionBatchName,
+            labeler_name: "Self (Manual)",
+            instructionsText: "Rapid upload manual annotation"
+          })
+        });
+        if (!res.ok) console.error("Failed to create manual job entry");
+      } catch (err) {
+        console.error("Error creating job:", err);
+      }
+    };
+    
+    createManualJob().then(() => {
+      openAnnotationPage();
+    });
   };
 
   const handleAutoLabelBatch = async () => {
@@ -326,14 +353,35 @@ export default function RapidUpload() {
     setLabelActionStatus(null);
 
     try {
+      // 1. Create the job record first with 'auto-labeling' state (implied by labeler_name)
+      const jobRes = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          batch_id: sessionBatchId,
+          batch_name: sessionBatchName,
+          labeler_name: "Rapid AI",
+          instructionsText: "Background auto-labeling from Rapid Upload"
+        })
+      });
+      
+      let jobId = null;
+      if (jobRes.ok) {
+        const jobData = await jobRes.json();
+        jobId = jobData.id;
+      }
+
       const totalImages = uploadedImageAssets.length;
       const res = await fetch("/api/infer/yolo-label", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          project_id: projectId,
           asset_ids: uploadedImageAssets.map((asset) => asset.id),
           model: "yolov8s.pt",
           conf: AUTO_LABEL_SCORE_THRESHOLD,
+          job_id: jobId
         })
       });
 
@@ -372,12 +420,19 @@ export default function RapidUpload() {
       }
 
       setLabelActionStatus(
-        `Summary: Total: ${totalImages} | Labeled: ${annotatedAssets} | Skipped: ${skippedFiles} | Failed: ${failedFiles}. YOLOv8s found ${count} object${count === 1 ? "" : "s"} at ${Math.round(AUTO_LABEL_SCORE_THRESHOLD * 100)}% confidence or higher.`
+        `Summary: Total: ${totalImages} | Labeled: ${annotatedAssets} | Failed: ${failedFiles}. Move to the Annotate page to review results.`
       );
 
       setTimeout(() => {
-        openAnnotationPage();
-      }, 2000);
+        navigate('/upload', {
+          state: {
+            projectId,
+            projectName,
+            visibility,
+            activeTab: 'annotate'
+          }
+        });
+      }, 1500);
     } catch (err) {
       console.error("Rapid auto label failed", err);
       setLabelActionError(err.message || "Auto label failed for the uploaded images.");
@@ -566,7 +621,7 @@ export default function RapidUpload() {
   
   if (step === 'upload' || step === 'prompt_gather') {
     return (
-      <div className="min-h-screen bg-white font-sans flex flex-col animate-page-enter">
+      <div className="h-screen overflow-y-auto bg-white font-sans flex flex-col animate-page-enter">
         <header className="flex justify-between items-center px-6 py-4 border-b border-gray-100 shadow-sm z-10 relative bg-white">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/')}>
              <span className="font-bold tracking-tight text-violet-700 text-lg">VisionFlow</span>
@@ -739,7 +794,7 @@ export default function RapidUpload() {
 
   // BUILD & REVIEW STEPS
   return (
-    <div className="min-h-screen font-sans flex flex-col bg-white overflow-hidden max-h-screen">
+    <div className="h-screen font-sans flex flex-col bg-white overflow-hidden">
       {/* Top Protocol Header */}
       <header className="flex justify-between items-center px-4 md:px-6 py-3 border-b border-gray-200 bg-white shrink-0 shadow-sm z-10 relative">
         <div className="flex items-center gap-6">

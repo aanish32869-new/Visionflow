@@ -3,75 +3,85 @@ import {
   AlertCircle,
   Boxes,
   CheckCircle2,
+  Cpu,
   Gauge,
   Layers,
   Loader2,
+  Monitor,
   RefreshCcw,
+  Server,
   Share2,
-  Sparkles,
   Target,
+  Trash2,
   Zap,
+  Activity,
+  Plus,
+  Lock,
+  ChevronRight,
+  Info
 } from "lucide-react";
-
 
 const ARCHITECTURES = [
   {
-    id: "rf-detr",
-    name: "RF-DETR",
+    id: "yolov8n",
+    name: "YOLOv8 Nano",
     accent: "text-emerald-700 bg-emerald-50 border-emerald-200",
-    summary: "Higher accuracy and a stronger choice when quality matters most.",
-    bullets: ["Best for accuracy-first training", "Great for hard detection cases", "Slightly slower inference"],
-    defaultSize: "medium",
+    summary: "Ultra-fast, perfect for real-time mobile and edge applications.",
+    bullets: ["Lightest weights (~6MB)", "Blazing fast inference", "Lower accuracy than larger models"],
+    type: "detection"
   },
   {
-    id: "yolo11",
-    name: "YOLOv11",
-    accent: "text-violet-700 bg-violet-50 border-violet-200",
-    summary: "Faster iteration loops and lighter deployment for real-time workflows.",
-    bullets: ["Best for speed and iteration", "Fast deploy and easy testing", "Strong default for most projects"],
-    defaultSize: "small",
+    id: "dinov3",
+    name: "DINOv3",
+    accent: "text-amber-700 bg-amber-50 border-amber-200",
+    summary: "Transformer-based, resolution-agnostic and ultra-fast for specific tasks.",
+    bullets: ["Trains very quickly", "Resolution-agnostic", "Inference speed comparable to ViT"],
+    type: "foundation",
+    upgrade: true
+  },
+  {
+    id: "vit",
+    name: "ViT (Vision Transformer)",
+    accent: "text-indigo-700 bg-indigo-50 border-indigo-200",
+    summary: "High accuracy foundation model for complex visual recognition.",
+    bullets: ["Higher Accuracy", "Slower Inference", "Slower Training"],
+    type: "classification"
+  },
+  {
+    id: "resnet18",
+    name: "ResNet18",
+    accent: "text-rose-700 bg-rose-50 border-rose-200",
+    summary: "Classic, reliable architecture with excellent inference speed.",
+    bullets: ["Lower Accuracy", "Faster Inference", "Faster Training"],
+    type: "classification"
+  },
+  {
+    id: "yolov8m",
+    name: "YOLOv8 Medium",
+    accent: "text-blue-700 bg-blue-50 border-blue-200",
+    summary: "Higher accuracy for complex scenes with moderate speed.",
+    bullets: ["Superior accuracy", "Great for hard detection cases", "Slower inference"],
+    type: "detection"
   },
 ];
 
-const MODEL_SIZE_OPTIONS = [
-  { value: "nano", label: "Nano" },
-  { value: "small", label: "Small" },
-  { value: "medium", label: "Medium" },
-  { value: "large", label: "Large" },
-  { value: "xlarge", label: "XLarge" },
+const DEVICE_OPTIONS = [
+  { value: "cpu", label: "CPU", icon: Cpu },
+  { value: "gpu", label: "GPU (NVIDIA)", icon: Monitor },
 ];
 
+const TRAINING_MODES = [
+  { id: "local", label: "Local Training", description: "Use your system GPU/CPU", icon: Monitor },
+  { id: "server", label: "Server Training", description: "Scale with Cloud GPU", icon: Server, disabled: true },
+];
 
 function formatDate(value) {
   if (!value) return "Just now";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
   });
-}
-
-async function readApiPayload(response, fallbackMessage) {
-  const contentType = response.headers.get("content-type") || "";
-
-  if (contentType.includes("application/json")) {
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || fallbackMessage);
-    }
-    return data;
-  }
-
-  const text = (await response.text()).trim();
-  if (!response.ok && text.startsWith("<!doctype")) {
-    throw new Error("The inference service returned an HTML error page. Restart the inference service on port 5006 and try Custom Train again.");
-  }
-
-  throw new Error(text || fallbackMessage);
 }
 
 function VersionOption({ version, selected, onClick }) {
@@ -79,65 +89,95 @@ function VersionOption({ version, selected, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`w-full rounded-3xl border p-4 text-left transition ${
+      className={`w-full rounded-3xl border p-4 text-left transition-all duration-300 ${
         selected
-          ? "border-violet-300 bg-violet-50/60 shadow-sm shadow-violet-100"
-          : "border-gray-200 bg-white hover:border-violet-200 hover:shadow-sm"
+          ? "border-violet-300 bg-violet-50 shadow-lg shadow-violet-100/50 scale-[1.01]"
+          : "border-gray-200 bg-white hover:border-violet-200 hover:shadow-md"
       }`}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="mb-2 inline-flex rounded-full bg-gray-950 px-2.5 py-1 text-[11px] font-black text-white">
-            {version.display_id}
+          <div className="mb-2 inline-flex rounded-full bg-gray-950 px-2.5 py-1 text-[10px] font-black text-white uppercase tracking-wider">
+            {version.display_id || "V1"}
           </div>
-          <h3 className="text-base font-black text-gray-950">{version.name}</h3>
-          <p className="mt-1 text-xs font-semibold text-violet-600">{version.canonical_id}</p>
+          <h3 className="text-[15px] font-black text-gray-950 truncate max-w-[180px]">{version.name}</h3>
+          <p className="mt-0.5 text-[10px] font-bold text-violet-600 tracking-tight">{version.canonical_id || version.version_id}</p>
         </div>
-        {selected && <CheckCircle2 size={18} className="text-violet-600" />}
+        {selected && <div className="p-1 bg-violet-600 rounded-full"><CheckCircle2 size={14} className="text-white" /></div>}
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
-        <div className="rounded-2xl bg-white/80 p-3">
-          <div className="font-black text-gray-950">{version.images_count || 0}</div>
-          <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-gray-400">Images</div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="bg-gray-50/80 rounded-xl p-2.5 text-center">
+          <div className="text-[14px] font-black text-gray-950">{version.images_count || 0}</div>
+          <div className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Images</div>
         </div>
-        <div className="rounded-2xl bg-white/80 p-3">
-          <div className="font-black text-gray-950">{version.annotations_count || 0}</div>
-          <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-gray-400">Labels</div>
+        <div className="bg-gray-50/80 rounded-xl p-2.5 text-center">
+          <div className="text-[14px] font-black text-gray-950">{version.annotations_count || 0}</div>
+          <div className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Labels</div>
         </div>
-        <div className="rounded-2xl bg-white/80 p-3">
-          <div className="font-black text-gray-950">{version.max_version_size || 1}x</div>
-          <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-gray-400">Version Size</div>
+        <div className="bg-gray-50/80 rounded-xl p-2.5 text-center">
+          <div className="text-[14px] font-black text-gray-950">{version.classes?.length || 0}</div>
+          <div className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Classes</div>
         </div>
       </div>
-      <p className="mt-4 text-xs font-semibold text-gray-500">{formatDate(version.created_at)}</p>
     </button>
   );
 }
 
 function ArchitectureCard({ architecture, selected, onSelect }) {
+  const Icon = architecture.type === 'detection' ? Boxes : 
+               architecture.type === 'classification' ? Layers : 
+               Zap;
+
   return (
     <button
       type="button"
       onClick={() => onSelect(architecture.id)}
-      className={`w-full rounded-3xl border p-5 text-left transition ${
+      className={`relative group w-full rounded-[24px] border p-5 text-left transition-all duration-500 ${
         selected
-          ? "border-violet-300 bg-violet-50/50 shadow-sm shadow-violet-100"
-          : "border-gray-200 bg-white hover:border-violet-200 hover:shadow-sm"
+          ? "border-violet-300 bg-violet-50 shadow-xl shadow-violet-100/50 scale-[1.02]"
+          : "border-gray-100 bg-white hover:border-violet-200 hover:shadow-lg"
       }`}
     >
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-black ${architecture.accent}`}>
-            {architecture.id === "rf-detr" ? <Target size={13} /> : <Gauge size={13} />}
-            {architecture.name}
-          </div>
-          <p className="mt-3 text-sm font-semibold leading-6 text-gray-600">{architecture.summary}</p>
+      {architecture.upgrade && (
+        <div className="absolute -top-2.5 right-4 px-2.5 py-1 bg-gradient-to-r from-amber-400 to-orange-500 text-white text-[9px] font-black uppercase tracking-widest rounded-full shadow-lg border border-white/20">
+          Upgrade
         </div>
-        {selected && <CheckCircle2 size={18} className="text-violet-600" />}
+      )}
+
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className={`p-2.5 rounded-xl ${
+            architecture.type === 'detection' ? 'bg-emerald-50 text-emerald-600' :
+            architecture.type === 'classification' ? 'bg-indigo-50 text-indigo-600' :
+            'bg-amber-50 text-amber-600'
+          }`}>
+            <Icon size={18} />
+          </div>
+          <div>
+            <h3 className="text-[14px] font-black text-gray-950 tracking-tight">{architecture.name}</h3>
+            <div className="flex items-center gap-1.5 mt-0.5">
+               <div className={`w-1 h-1 rounded-full ${
+                 architecture.type === 'detection' ? 'bg-emerald-500' :
+                 architecture.type === 'classification' ? 'bg-indigo-500' :
+                 'bg-amber-500'
+               }`} />
+               <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">{architecture.type}</span>
+            </div>
+          </div>
+        </div>
+        {selected && (
+          <div className="w-5 h-5 rounded-full bg-violet-600 flex items-center justify-center shadow-lg">
+            <CheckCircle2 size={12} className="text-white" />
+          </div>
+        )}
       </div>
-      <div className="space-y-2">
+
+      <p className="mb-4 text-[11px] font-medium leading-relaxed text-gray-500">{architecture.summary}</p>
+      
+      <div className="space-y-1.5">
         {architecture.bullets.map((bullet) => (
-          <div key={bullet} className="text-sm font-semibold text-gray-700">
+          <div key={bullet} className="flex items-center gap-2 text-[10px] font-bold text-gray-400">
+            <div className="w-1 h-1 rounded-full bg-gray-200" />
             {bullet}
           </div>
         ))}
@@ -146,107 +186,112 @@ function ArchitectureCard({ architecture, selected, onSelect }) {
   );
 }
 
-export default function TrainTab({ projectId, onOpenVersions, onOpenModels }) {
+export default function TrainTab({ projectId, onOpenVersions }) {
   const [versions, setVersions] = useState([]);
-  const [models, setModels] = useState([]);
+  const [jobs, setJobs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState(null);
   const [selectedVersionId, setSelectedVersionId] = useState("");
-  const [selectedArchitecture, setSelectedArchitecture] = useState("rf-detr");
-  const [modelSize, setModelSize] = useState("medium");
-  const [checkpointModelId, setCheckpointModelId] = useState("");
-  const [checkpointText, setCheckpointText] = useState("");
+  const [selectedArchitecture, setSelectedArchitecture] = useState("yolov8n");
+  
+  // Hyperparameters
+  const [epochs, setEpochs] = useState(25);
+  const [batchSize, setBatchSize] = useState(8);
+  const [imgSize, setImgSize] = useState(640);
+  const [workers, setWorkers] = useState(4);
+  const [device, setDevice] = useState("cpu");
+  const [trainingMode, setTrainingMode] = useState("local");
+  const [pipelineConfig, setPipelineConfig] = useState(null);
 
   const selectedVersion = useMemo(
-    () => versions.find((version) => String(version.id) === String(selectedVersionId)) || versions[0],
-    [versions, selectedVersionId],
+    () => versions.find((v) => String(v.version_id) === String(selectedVersionId)) || versions[0],
+    [versions, selectedVersionId]
   );
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
+  const loadData = useCallback(async (isBackground = false) => {
+    if (!isBackground) setIsLoading(true);
+    
+    // Ensure we have a string ID if projectId is an object
+    const pid = typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId;
+    
     try {
-      const [versionsRes, modelsRes] = await Promise.all([
-        fetch(`/api/projects/${projectId}/versions`),
-        fetch(`/api/projects/${projectId}/models`),
+      const [vRes, jRes, cRes] = await Promise.all([
+        fetch(`/api/projects/${pid}/versions`),
+        fetch(`/api/projects/${pid}/jobs`),
+        fetch(`/api/training/config`)
       ]);
 
-      const versionsData = versionsRes.ok ? await versionsRes.json() : [];
-      const modelsData = modelsRes.ok ? await readApiPayload(modelsRes, "Could not load saved models.") : [];
+      const results = await Promise.all([vRes, jRes, cRes].map(async res => {
+        if (!res.ok) throw new Error(`Service error: ${res.status} ${res.statusText}`);
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+          return res.json();
+        }
+        throw new Error("Invalid response from server (HTML instead of JSON). Check if backend services are running.");
+      }));
 
-      setVersions(Array.isArray(versionsData) ? versionsData : []);
-      setModels(Array.isArray(modelsData) ? modelsData : []);
-    } catch (error) {
-      console.error(error);
-      setFeedback({ type: "error", message: "Could not load the training configuration." });
+      const [versions, jobs, config] = results;
+      setVersions(versions);
+      setJobs(jobs);
+      
+      setTrainingMode(config.mode || "local");
+        setDevice(config.device || "cpu");
+        setPipelineConfig({
+          preprocessing: config.preprocessing,
+          augmentation: config.augmentation
+        });
+        if (config.local) {
+          setEpochs(config.local.epochs);
+          setBatchSize(config.local.batch_size);
+          setImgSize(config.local.img_size);
+          setWorkers(config.local.workers);
+        }
+    } catch (e) {
+      console.error("Failed to load training data:", e);
+      setFeedback({
+        type: 'error',
+        message: `Failed to load workspace data: ${e.message}. Please ensure all backend services are running.`
+      });
     } finally {
-      setIsLoading(false);
+      if (!isBackground) setIsLoading(false);
     }
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId) return;
     loadData();
-  }, [loadData, projectId]);
-
-  useEffect(() => {
-    if (!versions.length) return;
-    const storedVersion = JSON.parse(localStorage.getItem("visionflow_selected_version") || "null");
-    const storedId = storedVersion?.id;
-    const matchingVersion = versions.find((version) => String(version.id) === String(storedId));
-    const nextVersion = matchingVersion || versions[0];
-    setSelectedVersionId(nextVersion.id);
-  }, [versions]);
-
-  useEffect(() => {
-    const architecture = ARCHITECTURES.find((item) => item.id === selectedArchitecture);
-    if (architecture && !modelSize) {
-      setModelSize(architecture.defaultSize);
-    }
-  }, [modelSize, selectedArchitecture]);
-
-  const handleArchitectureSelect = (architectureId) => {
-    setSelectedArchitecture(architectureId);
-    const architecture = ARCHITECTURES.find((item) => item.id === architectureId);
-    if (architecture) {
-      setModelSize(architecture.defaultSize);
-    }
-  };
+    const interval = setInterval(() => loadData(true), 5000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
   const handleTrain = async () => {
     if (!selectedVersion) {
-      setFeedback({ type: "error", message: "Generate a dataset version before starting training." });
+      setFeedback({ type: "error", message: "Please select a dataset version." });
       return;
     }
 
     setIsSubmitting(true);
     setFeedback(null);
     try {
-      const response = await fetch(`/api/projects/${projectId}/models`, {
+      const response = await fetch(`/api/projects/${projectId}/train`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          version_id: selectedVersion.id,
+          version_id: selectedVersion.version_id,
           architecture: selectedArchitecture,
-          model_size: modelSize,
-          checkpoint_model_id: checkpointModelId || undefined,
-          checkpoint: checkpointText.trim() || undefined,
-          training_mode: "custom",
+          params: { epochs, batch_size: batchSize, img_size: imgSize, workers, device, training_mode: trainingMode }
         }),
       });
 
-      const data = await readApiPayload(response, "Training could not be started.");
-
-      localStorage.setItem("visionflow_selected_version", JSON.stringify(selectedVersion));
-      localStorage.setItem("visionflow_selected_model", JSON.stringify(data));
-      setFeedback({
-        type: "success",
-        message: `${data.name} is ready and linked to ${selectedVersion.canonical_id || selectedVersion.display_id}.`,
-      });
-      await loadData();
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to start training");
+      }
+      
+      setFeedback({ type: "success", message: "Training job successfully initiated." });
+      loadData();
     } catch (error) {
-      console.error(error);
-      setFeedback({ type: "error", message: error.message || "Training could not be started." });
+      setFeedback({ type: "error", message: error.message });
     } finally {
       setIsSubmitting(false);
     }
@@ -254,230 +299,404 @@ export default function TrainTab({ projectId, onOpenVersions, onOpenModels }) {
 
   if (isLoading) {
     return (
-      <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="h-[520px] animate-pulse rounded-[32px] border border-gray-200 bg-gray-50" />
-        <div className="h-[520px] animate-pulse rounded-[32px] border border-gray-200 bg-gray-50" />
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="animate-spin text-violet-600" size={40} />
       </div>
     );
   }
 
-  if (!versions.length) {
-    return (
-      <section className="flex min-h-[420px] flex-col items-center justify-center rounded-[32px] border border-dashed border-gray-300 bg-white p-10 text-center shadow-sm">
-        <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-violet-50 text-violet-700 ring-1 ring-violet-100">
-          <Layers size={28} />
-        </div>
-        <h2 className="text-2xl font-black text-gray-950">Generate a version before training</h2>
-        <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-gray-500">
-          Training is permanently linked to a frozen dataset version, so create a version first and then come back here for custom training.
-        </p>
-        <button
-          type="button"
-          onClick={onOpenVersions}
-          className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-violet-200 transition hover:bg-violet-700"
-        >
-          <Layers size={16} /> Open Versions
-        </button>
-      </section>
-    );
-  }
+  const pid = typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId;
 
   return (
-    <div className="w-full animate-page-enter space-y-6 pb-10">
-      <section className="overflow-hidden rounded-[32px] border border-gray-200 bg-gradient-to-br from-white via-white to-violet-50/70 p-6 shadow-sm">
-        <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-start">
-          <div className="max-w-3xl">
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-violet-100 bg-white px-3 py-1 text-xs font-black text-violet-700 shadow-sm">
-              <Share2 size={14} /> Custom Train
-            </div>
-            <h1 className="text-3xl font-black tracking-tight text-gray-950">Train on a frozen version</h1>
-            <p className="mt-2 text-base font-semibold text-gray-500">
-              Pick a version, choose the architecture and size you want, and optionally warm-start from a checkpoint for faster transfer learning.
-            </p>
-          </div>
-          <button
-            type="button"
+    <div className="w-full animate-page-enter space-y-8 pb-20">
+      {/* Header Section */}
+      <header className="flex justify-between items-center">
+        <div>
+          <h1 className="text-[26px] font-black text-gray-900 tracking-tight">Train Workspace</h1>
+          <p className="text-[13px] font-semibold text-gray-400 mt-1 uppercase tracking-widest flex items-center gap-2">
+            Model Pipeline Dashboard 
+            {pid && <span className="bg-gray-100 px-2 py-0.5 rounded text-[10px] font-mono text-gray-500 lowercase">ID: {String(pid)}</span>}
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <button className="px-5 py-2.5 bg-gray-50 border border-gray-200 text-gray-700 rounded-xl text-[13px] font-bold hover:bg-gray-100 transition shadow-sm">
+            Advanced Settings
+          </button>
+          <button 
             onClick={handleTrain}
-            disabled={isSubmitting || !selectedVersion}
-            className="inline-flex min-w-[170px] items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-violet-200 transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isSubmitting}
+            className="px-6 py-2.5 bg-violet-600 text-white rounded-xl text-[13px] font-bold shadow-lg shadow-violet-200 hover:bg-violet-700 transition flex items-center gap-2 disabled:opacity-50"
           >
             {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            {isSubmitting ? "Training..." : "Custom Train"}
+            Train Model
           </button>
         </div>
-
-        <div className="mt-6 grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="text-2xl font-black text-gray-950">{versions.length}</div>
-            <div className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-gray-400">Available Versions</div>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="text-2xl font-black text-gray-950">{models.length}</div>
-            <div className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-gray-400">Previous Models</div>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="text-2xl font-black text-gray-950">{selectedVersion?.display_id || "v1"}</div>
-            <div className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-gray-400">Active Training Version</div>
-          </div>
-        </div>
-      </section>
+      </header>
 
       {feedback && (
-        <div className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-bold ${
-          feedback.type === "success"
-            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-            : "border-red-200 bg-red-50 text-red-700"
-        }`}>
-          {feedback.type === "success" ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}
+        <div className={`p-4 rounded-2xl border font-bold flex items-center gap-3 animate-in slide-in-from-top-2 ${feedback.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-red-50 border-red-100 text-red-700'}`}>
+          {feedback.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
           {feedback.message}
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <section className="rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-start justify-between gap-4">
-            <div>
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-xs font-black text-violet-700 ring-1 ring-violet-100">
-                <Layers size={14} /> Version Selection
-              </div>
-              <h2 className="text-xl font-black text-gray-950">Choose the dataset version to train</h2>
-            </div>
-          </div>
-          <div className="space-y-4">
-            {versions.map((version) => (
-              <VersionOption
-                key={version.id}
-                version={version}
-                selected={String(version.id) === String(selectedVersion?.id)}
-                onClick={() => {
-                  setSelectedVersionId(version.id);
-                  localStorage.setItem("visionflow_selected_version", JSON.stringify(version));
-                }}
-              />
-            ))}
-          </div>
-        </section>
+      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
+        {/* Main Content Area */}
+        <div className="space-y-8">
+          
+          {/* 1. SELECT DATASET VERSION */}
+          <section className="bg-white rounded-[32px] border border-gray-100 p-8 shadow-sm">
+             <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center text-violet-600 shadow-sm border border-violet-100">
+                      <Layers size={20} />
+                   </div>
+                   <h2 className="text-[19px] font-black text-gray-950 tracking-tight">1. Select Dataset Version</h2>
+                </div>
+                <button 
+                  onClick={onOpenVersions}
+                  className="text-[11px] font-bold text-violet-600 uppercase tracking-widest hover:underline"
+                >
+                  Manage Versions
+                </button>
+             </div>
 
-        <aside className="space-y-6">
-          <section className="rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700 ring-1 ring-emerald-100">
-              <Sparkles size={14} /> Instant Training Logic
-            </div>
-            <p className="text-sm font-semibold leading-6 text-gray-600">
-              Roboflow-style instant training belongs in the background annotation flow. For now, this project uses a manual Custom Train step that still stays permanently tied to the selected version.
-            </p>
+             <div className="grid gap-4 md:grid-cols-2">
+                {versions.length > 0 ? (
+                  versions.map(v => (
+                    <VersionOption 
+                      key={v.version_id} 
+                      version={v} 
+                      selected={selectedVersion?.version_id === v.version_id}
+                      onClick={() => setSelectedVersionId(v.version_id)}
+                    />
+                  ))
+                ) : (
+                  <div className="col-span-full py-12 flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-[24px] bg-gray-50/50">
+                    <Layers size={32} className="text-gray-300 mb-3" />
+                    <p className="text-[13px] font-bold text-gray-400">No dataset versions found for this project.</p>
+                  </div>
+                )}
+             </div>
           </section>
 
-          <section className="rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-widest text-violet-600">
-              <Boxes size={14} /> Selected Version Summary
-            </div>
-            <div className="space-y-3 text-sm font-semibold text-gray-600">
-              <div className="rounded-2xl bg-gray-50 p-3">
-                <span className="block text-gray-500">Frozen ID</span>
-                <span className="mt-1 block font-black text-gray-950">{selectedVersion?.canonical_id}</span>
-              </div>
-              <div className="rounded-2xl bg-gray-50 p-3">
-                <span className="block text-gray-500">Preprocessing</span>
-                <span className="mt-1 block font-black text-gray-950">{selectedVersion?.preprocessing?.resize || "Original"}</span>
-              </div>
-              <div className="rounded-2xl bg-gray-50 p-3">
-                <span className="block text-gray-500">Created</span>
-                <span className="mt-1 block font-black text-gray-950">{formatDate(selectedVersion?.created_at)}</span>
-              </div>
-            </div>
+          {/* 2. MODEL ARCHITECTURE */}
+          <section className="bg-white rounded-[32px] border border-gray-100 p-8 shadow-sm">
+             <div className="flex items-center gap-3 mb-8">
+                <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 shadow-sm border border-emerald-100">
+                   <Target size={20} />
+                </div>
+                <h2 className="text-[19px] font-black text-gray-950 tracking-tight">2. Model Architecture</h2>
+             </div>
+
+             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {ARCHITECTURES.map(a => (
+                  <ArchitectureCard 
+                    key={a.id} 
+                    architecture={a} 
+                    selected={selectedArchitecture === a.id}
+                    onSelect={setSelectedArchitecture}
+                  />
+                ))}
+             </div>
           </section>
+
+          {/* 3. PREPROCESSING & AUGMENTATIONS */}
+          <section className="bg-white rounded-[32px] border border-gray-100 p-8 shadow-sm">
+             <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 shadow-sm border border-amber-100">
+                      <RefreshCcw size={20} />
+                   </div>
+                   <h2 className="text-[19px] font-black text-gray-950 tracking-tight">3. Preprocessing & Augmentations</h2>
+                </div>
+                <div className="px-3 py-1 bg-violet-50 rounded-full text-[9px] font-black text-violet-600 uppercase tracking-[0.2em] border border-violet-100">
+                  Version Controlled
+                </div>
+             </div>
+
+             <div className="grid md:grid-cols-2 gap-10">
+                <div className="space-y-4">
+                   <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                      <Info size={12} /> Preprocessing
+                   </h4>
+                   <div className="space-y-2">
+                      {selectedVersion?.options?.preprocessing && Object.entries(selectedVersion.options.preprocessing).map(([key, val]) => (
+                        <div key={key} className="flex items-center justify-between p-3.5 rounded-2xl bg-gray-50/80 border border-gray-100">
+                           <span className="text-[12px] font-bold text-gray-700 capitalize">{key.replace(/_/g, ' ')}</span>
+                           <CheckCircle2 size={16} className="text-emerald-500" />
+                        </div>
+                      ))}
+                      {!selectedVersion?.options?.preprocessing && (
+                        <p className="text-[12px] text-gray-400 font-medium italic italic">No preprocessing steps applied.</p>
+                      )}
+                   </div>
+                </div>
+
+                <div className="space-y-4">
+                   <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                      <Zap size={12} /> Augmentations
+                   </h4>
+                   <div className="space-y-2">
+                      {selectedVersion?.options?.augmentation && Object.entries(selectedVersion.options.augmentation).map(([key, val]) => (
+                        <div key={key} className="flex items-center justify-between p-3.5 rounded-2xl bg-gray-50/80 border border-gray-100">
+                           <span className="text-[12px] font-bold text-gray-700 capitalize">{key.replace(/_/g, ' ')}</span>
+                           <CheckCircle2 size={16} className="text-amber-500" />
+                        </div>
+                      ))}
+                      {!selectedVersion?.options?.augmentation && (
+                        <p className="text-[12px] text-gray-400 font-medium italic">No offline augmentations applied.</p>
+                      )}
+                   </div>
+                </div>
+             </div>
+          </section>
+
+          {/* 4. REVIEW TRAINING PIPELINE */}
+          <section className="bg-violet-900 rounded-[32px] p-8 shadow-2xl shadow-violet-200 overflow-hidden relative group">
+             <div className="absolute top-0 right-0 w-64 h-64 bg-violet-800 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:opacity-80 transition-opacity"></div>
+             
+             <div className="relative z-10">
+                <div className="flex items-center gap-3 mb-8">
+                   <div className="w-10 h-10 bg-violet-800 rounded-xl flex items-center justify-center text-violet-100 shadow-inner border border-violet-700">
+                      <Gauge size={20} />
+                   </div>
+                   <h2 className="text-[19px] font-black text-white tracking-tight">4. Review Training Pipeline</h2>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-8 mb-8">
+                   <div className="bg-violet-800/40 rounded-[24px] p-6 border border-violet-700/50 backdrop-blur-sm">
+                      <h4 className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <CheckCircle2 size={12} /> Standard Preprocessing (Deterministic)
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                         {pipelineConfig?.preprocessing && Object.entries(pipelineConfig.preprocessing).map(([key, val]) => (
+                           val && (
+                             <span key={key} className="px-3 py-1.5 bg-violet-950/50 text-violet-100 text-[11px] font-bold rounded-lg border border-violet-700/30 capitalize">
+                               {key.replace(/_/g, ' ')}
+                             </span>
+                           )
+                         ))}
+                      </div>
+                   </div>
+
+                   <div className="bg-violet-800/40 rounded-[24px] p-6 border border-violet-700/50 backdrop-blur-sm">
+                      <h4 className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <Activity size={12} /> Live Augmentations (Stochastic)
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                         {pipelineConfig?.augmentation && Object.entries(pipelineConfig.augmentation).map(([key, val]) => (
+                           val && (
+                             <span key={key} className="px-3 py-1.5 bg-violet-950/50 text-violet-100 text-[11px] font-bold rounded-lg border border-violet-700/30 capitalize">
+                               {key.replace(/_/g, ' ')}
+                             </span>
+                           )
+                         ))}
+                      </div>
+                   </div>
+                </div>
+
+                <div className="flex items-center justify-between p-6 bg-violet-950/40 rounded-[24px] border border-violet-700/50">
+                   <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-violet-500 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                         <Target size={24} />
+                      </div>
+                      <div>
+                         <div className="text-[11px] font-bold text-violet-300 uppercase tracking-widest">Ready to initiate</div>
+                         <div className="text-[15px] font-black text-white tracking-tight">{selectedArchitecture} on {selectedVersion?.name || 'V1'}</div>
+                      </div>
+                   </div>
+                   <button 
+                     onClick={handleTrain}
+                     disabled={isSubmitting || !selectedVersion}
+                     className="px-10 py-4 bg-white text-violet-900 rounded-[20px] text-[15px] font-black shadow-xl hover:bg-violet-50 transition-all flex items-center gap-3 active:scale-95 disabled:opacity-50"
+                   >
+                     {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} fill="currentColor" />}
+                     Start Training Run
+                   </button>
+                </div>
+             </div>
+          </section>
+        </div>
+
+        {/* Sidebar Configuration */}
+        <aside className="space-y-8">
+           {/* Hyperparameters */}
+           <section className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-sm">
+              <h2 className="text-[17px] font-black text-gray-950 mb-6 flex items-center gap-2">
+                 <RefreshCcw size={18} className="text-violet-600" /> Hyperparameters
+              </h2>
+              <div className="space-y-5">
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Epochs</label>
+                    <input 
+                      type="number" 
+                      value={epochs} 
+                      onChange={e => setEpochs(Number(e.target.value))} 
+                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
+                    />
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Batch Size</label>
+                    <input 
+                      type="number" 
+                      value={batchSize} 
+                      onChange={e => setBatchSize(Number(e.target.value))} 
+                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
+                    />
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Image Size</label>
+                    <input 
+                      type="number" 
+                      value={imgSize} 
+                      onChange={e => setImgSize(Number(e.target.value))} 
+                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
+                    />
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Workers</label>
+                    <input 
+                      type="number" 
+                      value={workers} 
+                      onChange={e => setWorkers(Number(e.target.value))} 
+                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
+                    />
+                 </div>
+              </div>
+           </section>
+
+           {/* Hardware & Mode */}
+           <section className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-sm">
+              <h2 className="text-[17px] font-black text-gray-950 mb-6 flex items-center gap-2">
+                 <Monitor size={18} className="text-violet-600" /> Hardware & Mode
+              </h2>
+              <div className="space-y-6">
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Training Mode</label>
+                    <div className="space-y-2">
+                       {TRAINING_MODES.map(m => (
+                         <button
+                           key={m.id}
+                           disabled={m.disabled}
+                           onClick={() => setTrainingMode(m.id)}
+                           className={`w-full flex items-center gap-3 p-4 rounded-[20px] border text-left transition-all ${
+                             trainingMode === m.id 
+                               ? 'bg-violet-600 border-violet-700 text-white shadow-lg shadow-violet-100' 
+                               : 'bg-gray-50 border-gray-100 text-gray-500 opacity-60 hover:opacity-100'
+                           }`}
+                         >
+                           <m.icon size={18} className={trainingMode === m.id ? 'text-white' : 'text-gray-400'} />
+                           <div>
+                             <div className="text-[12px] font-black">{m.label}</div>
+                             <div className={`text-[10px] font-bold ${trainingMode === m.id ? 'text-violet-100' : 'text-gray-400'}`}>{m.description}</div>
+                           </div>
+                           {m.disabled && <Lock size={12} className="ml-auto opacity-40" />}
+                         </button>
+                       ))}
+                    </div>
+                 </div>
+
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Compute Device</label>
+                    <div className="flex gap-2">
+                       {DEVICE_OPTIONS.map(d => (
+                         <button
+                           key={d.value}
+                           onClick={() => setDevice(d.value)}
+                           className={`flex-1 flex items-center justify-center gap-2 p-3.5 rounded-xl border transition-all font-black text-[11px] uppercase tracking-wider ${
+                             device === d.value 
+                               ? 'bg-violet-600 text-white border-violet-700 shadow-md' 
+                               : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-white hover:border-violet-200'
+                           }`}
+                         >
+                           <d.icon size={14} /> {d.label}
+                         </button>
+                       ))}
+                    </div>
+                 </div>
+              </div>
+           </section>
         </aside>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <section className="rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="mb-5">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-xs font-black text-violet-700 ring-1 ring-violet-100">
-              <Target size={14} /> Architecture
-            </div>
-            <h2 className="text-xl font-black text-gray-950">Select model architecture</h2>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {ARCHITECTURES.map((architecture) => (
-              <ArchitectureCard
-                key={architecture.id}
-                architecture={architecture}
-                selected={selectedArchitecture === architecture.id}
-                onSelect={handleArchitectureSelect}
-              />
-            ))}
-          </div>
+      {/* Recent Training Jobs */}
+      {jobs.length > 0 && (
+        <section className="bg-white rounded-[32px] border border-gray-100 p-8 shadow-sm">
+           <div className="flex items-center justify-between mb-8">
+              <h2 className="text-[20px] font-black text-gray-950 tracking-tight">Recent Training Jobs</h2>
+              <div className="flex items-center gap-2">
+                 <Activity size={16} className="text-violet-600" />
+                 <span className="text-[11px] font-bold text-gray-400 uppercase tracking-[0.2em]">Live Monitoring</span>
+              </div>
+           </div>
+           
+           <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                 <thead>
+                    <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                       <th className="pb-4 pl-2">Job ID / Status</th>
+                       <th className="pb-4">Architecture</th>
+                       <th className="pb-4">Version</th>
+                       <th className="pb-4">Progress</th>
+                       <th className="pb-4">Metrics (mAP)</th>
+                       <th className="pb-4 text-right pr-2">Date</th>
+                    </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-50">
+                    {jobs.map(job => (
+                      <tr key={job.id} className="group hover:bg-gray-50/50 transition-colors">
+                         <td className="py-5 pl-2">
+                            <div className="flex items-center gap-3">
+                               <div className={`w-2.5 h-2.5 rounded-full ${
+                                 job.status === 'Completed' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                                 job.status === 'Failed' ? 'bg-rose-500' :
+                                 'bg-violet-500 animate-pulse'
+                               }`} />
+                               <div>
+                                  <div className="text-[13px] font-black text-gray-900 leading-none mb-1">{job.status}</div>
+                                  <div className="text-[10px] font-bold text-gray-400 font-mono tracking-tighter uppercase">{job.job_id?.slice(0, 8)}</div>
+                               </div>
+                            </div>
+                         </td>
+                         <td className="py-5 font-black text-gray-950 text-[13px]">{job.architecture_label}</td>
+                         <td className="py-5">
+                            <span className="px-2 py-0.5 bg-violet-50 text-violet-600 text-[10px] font-black rounded-md border border-violet-100 uppercase tracking-wider">
+                               {job.version_id?.slice(0, 8)}
+                            </span>
+                         </td>
+                         <td className="py-5">
+                            <div className="flex items-center gap-3">
+                               <div className="w-32 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className={`h-full transition-all duration-1000 rounded-full ${job.status === 'Failed' ? 'bg-rose-400' : 'bg-violet-600'}`}
+                                    style={{ width: `${job.progress}%` }}
+                                  />
+                               </div>
+                               <span className="text-[11px] font-black text-gray-400">{job.progress}%</span>
+                            </div>
+                         </td>
+                         <td className="py-5">
+                            {job.metrics?.mAP ? (
+                              <div className="flex items-center gap-1.5">
+                                 <span className="text-[14px] font-black text-gray-950">{job.metrics.mAP.toFixed(3)}</span>
+                                 <ChevronRight size={14} className="text-gray-300" />
+                              </div>
+                            ) : (
+                              <span className="text-[11px] font-bold text-gray-300 uppercase tracking-widest">In Progress</span>
+                            )}
+                         </td>
+                         <td className="py-5 text-right pr-2">
+                            <div className="text-[12px] font-black text-gray-950">{formatDate(job.created_at).split(',')[0]}</div>
+                            <div className="text-[10px] font-bold text-gray-400 mt-0.5">{formatDate(job.created_at).split(',')[1]}</div>
+                         </td>
+                      </tr>
+                    ))}
+                 </tbody>
+              </table>
+           </div>
         </section>
-
-        <section className="rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="mb-5">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-xs font-black text-violet-700 ring-1 ring-violet-100">
-              <RefreshCcw size={14} /> Checkpoints
-            </div>
-            <h2 className="text-xl font-black text-gray-950">Warm-start this training run</h2>
-          </div>
-
-          <label className="mb-4 block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-widest text-gray-400">Model size</span>
-            <select
-              value={modelSize}
-              onChange={(event) => setModelSize(event.target.value)}
-              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-800 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
-            >
-              {MODEL_SIZE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="mb-4 block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-widest text-gray-400">Checkpoint from this project</span>
-            <select
-              value={checkpointModelId}
-              onChange={(event) => setCheckpointModelId(event.target.value)}
-              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-800 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
-            >
-              <option value="">Start from scratch</option>
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-widest text-gray-400">External checkpoint</span>
-            <input
-              value={checkpointText}
-              onChange={(event) => setCheckpointText(event.target.value)}
-              placeholder="Optional custom weights or Universe checkpoint name"
-              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-800 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={handleTrain}
-            disabled={isSubmitting || !selectedVersion}
-            className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-950 px-5 py-3 text-sm font-black text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            {isSubmitting ? "Training..." : "Start Custom Train"}
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenModels}
-            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-black text-gray-700 transition hover:border-violet-200 hover:text-violet-700"
-          >
-            <Boxes size={16} /> View Trained Models
-          </button>
-        </section>
-      </div>
+      )}
     </div>
   );
 }
