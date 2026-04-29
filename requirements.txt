@@ -1,0 +1,25 @@
+# VisionFlow Unified Python Requirements
+# Combined requirements for Dataset, Inference, and Training services.
+
+# Web Framework & API
+Flask==3.0.0
+Flask-CORS==4.0.0
+werkzeug==3.0.1
+
+# Database
+pymongo==4.6.1
+mongomock==4.1.2
+
+# Computer Vision & Machine Learning
+ultralytics==8.0.222
+torch==2.1.2
+torchvision==0.16.2
+opencv-python-headless==4.8.1.78
+Pillow==10.1.0
+numpy==1.26.2
+
+# Integrations & Utilities
+roboflow==1.1.12
+configparser==6.0.0
+requests==2.31.0
+python-dotenv==1.0.0

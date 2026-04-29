@@ -21,6 +21,31 @@ from pymongo import MongoClient
 # Import the new transforms module
 from transforms import get_yolo_hyp_params
 
+# ── Dependency Check ──────────────────────────────────────────────────────────
+def check_dependencies():
+    required = ["flask", "flask_cors", "pymongo", "ultralytics", "torch"]
+    missing = []
+    for pkg in required:
+        try:
+            __import__(pkg.replace("-", "_"))
+        except ImportError:
+            missing.append(pkg)
+    
+    if missing:
+        print("\n" + "="*60)
+        print(" [CRITICAL] MISSING SYSTEM REQUIREMENTS")
+        print("="*60)
+        print(f" The following packages are required but not installed:")
+        for pkg in missing:
+            print(f"  - {pkg}")
+        print("\n Please run: npm run install:all")
+        print("="*60 + "\n")
+        # We don't exit immediately to allow the health check to potentially report the issue
+        return False
+    return True
+
+DEPENDENCIES_OK = check_dependencies()
+
 # ── Configuration Loading ──────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 CONF_PATH = ROOT_DIR / "visionflow.conf"
@@ -123,11 +148,12 @@ def _get_hardware_status():
 def health():
     conf = _load_conf()
     return jsonify({
-        "status": "ok",
+        "status": "ok" if DEPENDENCIES_OK else "degraded",
         "service": "training-service",
         "mode": conf.get("training_mode", "local"),
         "device": conf.get("training_device", "cpu"),
-        "hardware": _get_hardware_status()
+        "hardware": _get_hardware_status(),
+        "dependencies": "ok" if DEPENDENCIES_OK else "missing"
     })
 
 
