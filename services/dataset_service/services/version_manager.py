@@ -181,37 +181,61 @@ class VersionManager:
                         "annotations": aug_anns
                     })
 
-        # 5. Split Logic (Apply to Originals first)
-        random.shuffle(snapshot_assets)
-        
+        # 5. Split Logic (Apply to Originals)
+        rebalance = options.get("rebalance", False)
         split = options.get("split", {"train": 70, "valid": 20, "test": 10})
-        total_originals = len(snapshot_assets)
-        train_end = int(total_originals * (split["train"] / 100))
-        valid_end = int(total_originals * ((split["train"] + split["valid"]) / 100))
         
         final_version_assets = []
         final_version_annotations = []
         split_counts = {"train": 0, "valid": 0, "test": 0}
-        
-        for i, asset in enumerate(snapshot_assets):
-            s_name = "train" if i < train_end else ("valid" if i < valid_end else "test")
-            asset["split"] = s_name
-            split_counts[s_name] += 1
+
+        def assign_splits(assets_to_split):
+            random.shuffle(assets_to_split)
+            total = len(assets_to_split)
+            t_end = int(total * (split["train"] / 100))
+            v_end = int(total * ((split["train"] + split["valid"]) / 100))
             
-            # Find its original annotations already in final_annotations
-            orig_id = asset["original_asset_id"]
-            final_version_assets.append(asset)
+            for idx, asset in enumerate(assets_to_split):
+                s_name = "train" if idx < t_end else ("valid" if idx < v_end else "test")
+                asset["split"] = s_name
+                split_counts[s_name] += 1
+                
+                final_version_assets.append(asset)
+                
+                # Add augmented copies ONLY for TRAIN split
+                if s_name == "train" and "augmentation_candidates" in asset:
+                    for cand in asset["augmentation_candidates"]:
+                        aug_asset = cand["asset"]
+                        aug_asset["split"] = "train"
+                        final_version_assets.append(aug_asset)
+                        final_version_annotations.extend(cand["annotations"])
+                        split_counts["train"] += 1
+                
+                if "augmentation_candidates" in asset: del asset["augmentation_candidates"]
+
+        if rebalance:
+            # Group by class (using the first annotation as the anchor)
+            class_groups = {}
+            for asset in snapshot_assets:
+                orig_id = asset["original_asset_id"]
+                # Find annotations for this specific original asset
+                # We can use the live_annotations we already have
+                asset_anns = [a for a in live_annotations if str(a.get("asset_id")) == orig_id]
+                
+                if asset_anns:
+                    label = asset_anns[0]["label"]
+                    if label not in class_groups: class_groups[label] = []
+                    class_groups[label].append(asset)
+                else:
+                    if "unlabeled" not in class_groups: class_groups["unlabeled"] = []
+                    class_groups["unlabeled"].append(asset)
             
-            # Add augmented copies ONLY for TRAIN split
-            if s_name == "train" and "augmentation_candidates" in asset:
-                for cand in asset["augmentation_candidates"]:
-                    aug_asset = cand["asset"]
-                    aug_asset["split"] = "train"
-                    final_version_assets.append(aug_asset)
-                    final_version_annotations.extend(cand["annotations"])
-                    split_counts["train"] += 1
-            
-            if "augmentation_candidates" in asset: del asset["augmentation_candidates"]
+            # Split each group independently
+            for label, group in class_groups.items():
+                assign_splits(group)
+        else:
+            # Standard shuffle split
+            assign_splits(snapshot_assets)
 
         # We need to filter final_annotations to only include those for assets in final_version_assets
         # but actually we can just re-collect them or use the ones we already added

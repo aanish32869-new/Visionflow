@@ -16,6 +16,11 @@ import {
   Loader2,
   Trash2,
   Eye,
+  Shuffle,
+  GitBranch,
+  Target,
+  Activity,
+  ArrowRight
 } from "lucide-react";
 
 const AUGMENTATION_OPTIONS = [
@@ -41,7 +46,8 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
     },
     augmentations: [],
     max_version_size: 1, // Multiplier
-    split: { train: 70, valid: 20, test: 10 }
+    split: { train: 70, valid: 20, test: 10 },
+    rebalance: true
   });
 
   const [previews, setPreviews] = useState([]);
@@ -236,6 +242,47 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
                   </div>
                 </div>
               </div>
+
+              {/* NEW: Train/Test Split Section */}
+              <div className="pt-6 border-t border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                      <BarChart2 size={20} className="text-amber-600" /> Train/Test Split
+                    </h3>
+                    <p className="text-sm font-semibold text-gray-500">Determine how your data is distributed for training and validation.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-black uppercase text-gray-400">Rebalance Classes</span>
+                    <div 
+                      onClick={() => setConfig({...config, rebalance: !config.rebalance})}
+                      className={`w-12 h-6 rounded-full relative transition-colors cursor-pointer ${config.rebalance ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${config.rebalance ? 'left-7' : 'left-1'}`} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                  <div className="space-y-6">
+                    <SplitInput label="Train" value={config.split.train} color="bg-violet-600" onChange={v => setConfig({...config, split: {...config.split, train: v}})} />
+                    <SplitInput label="Validation" value={config.split.valid} color="bg-amber-600" onChange={v => setConfig({...config, split: {...config.split, valid: v}})} />
+                    <SplitInput label="Test" value={config.split.test} color="bg-emerald-600" onChange={v => setConfig({...config, split: {...config.split, test: v}})} />
+                    
+                    <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between border border-gray-100">
+                      <span className="text-xs font-black text-gray-400 uppercase">Total Distribution</span>
+                      <span className={`text-sm font-black ${config.split.train + config.split.valid + config.split.test === 100 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {config.split.train + config.split.valid + config.split.test}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-violet-50/50 rounded-3xl p-6 border border-violet-100/50">
+                    <h4 className="text-[10px] font-black text-violet-600 uppercase tracking-widest mb-4">Splitting Workflow</h4>
+                    <SplittingWorkflowDiagram activeSplit={config.split} rebalance={config.rebalance} />
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -328,23 +375,11 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
 
           {step === 3 && (
             <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
-              <div>
-                <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
-                  <BarChart2 size={20} className="text-amber-600" /> Dataset Split
-                </h3>
-                <p className="text-sm font-semibold text-gray-500">Configure how images are distributed between Train, Validation, and Test sets.</p>
-              </div>
-
-              <div className="space-y-6">
-                <SplitInput label="Train" value={config.split.train} color="bg-violet-600" onChange={v => setConfig({...config, split: {...config.split, train: v}})} />
-                <SplitInput label="Validation" value={config.split.valid} color="bg-amber-600" onChange={v => setConfig({...config, split: {...config.split, valid: v}})} />
-                <SplitInput label="Test" value={config.split.test} color="bg-emerald-600" onChange={v => setConfig({...config, split: {...config.split, test: v}})} />
-                
-                <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl flex items-center justify-between">
-                  <span className="text-sm font-bold text-amber-700">Total</span>
-                  <span className={`text-sm font-black ${config.split.train + config.split.valid + config.split.test === 100 ? 'text-emerald-600' : 'text-red-600'}`}>
-                    {config.split.train + config.split.valid + config.split.test}%
-                  </span>
+              <div className="p-8 bg-violet-600 rounded-[40px] text-white text-center space-y-4">
+                <CheckCircle2 size={48} className="mx-auto text-violet-200" />
+                <div>
+                  <h3 className="text-2xl font-black">Ready to Generate</h3>
+                  <p className="text-violet-100 font-bold">Review your configuration and click the button below to start.</p>
                 </div>
               </div>
 
@@ -450,6 +485,83 @@ function SummaryItem({ label, value }) {
     <div className="flex items-center justify-between py-2 border-b border-gray-200 last:border-0">
       <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">{label}</span>
       <span className="text-sm font-black text-gray-900">{value}</span>
+    </div>
+  );
+}
+
+function SplittingWorkflowDiagram({ activeSplit, rebalance }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {/* 1. Input */}
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 rounded-lg bg-gray-900 flex items-center justify-center text-white shrink-0">
+          <ImageIcon size={14} />
+        </div>
+        <div className="flex-1 h-[2px] bg-gray-100 relative">
+          <div className="absolute -top-3 left-0 text-[8px] font-black text-gray-400 uppercase">Input Dataset</div>
+          <ArrowRight size={10} className="absolute -right-1 -top-1 text-gray-300" />
+        </div>
+      </div>
+
+      {/* 2. Split Process */}
+      <div className="flex gap-4">
+        <div className="w-8 flex flex-col items-center gap-1 shrink-0">
+          <div className="w-[2px] h-full bg-gray-100" />
+          <div className="w-2 h-2 rounded-full bg-gray-200" />
+        </div>
+        <div className="flex-1 space-y-3">
+          <div className="p-3 bg-white border border-violet-100 rounded-2xl shadow-sm">
+            <p className="text-[10px] font-black text-gray-900 flex items-center gap-2">
+              <GitBranch size={10} className="text-violet-600" /> Initial Split
+            </p>
+            <div className="flex gap-1 mt-2">
+              <div className="h-1.5 bg-violet-600 rounded-full" style={{ width: `${activeSplit.train}%` }} />
+              <div className="h-1.5 bg-amber-600 rounded-full" style={{ width: `${activeSplit.valid}%` }} />
+              <div className="h-1.5 bg-emerald-600 rounded-full" style={{ width: `${activeSplit.test}%` }} />
+            </div>
+          </div>
+
+          {/* 3. Rebalance Step */}
+          <div className={`p-3 border-2 rounded-2xl transition-all duration-500 ${rebalance ? 'bg-emerald-50 border-emerald-500 shadow-md shadow-emerald-100 scale-[1.02]' : 'bg-white border-gray-100 opacity-50'}`}>
+             <p className="text-[10px] font-black text-gray-900 flex items-center gap-2">
+              <Shuffle size={10} className={rebalance ? 'text-emerald-600' : 'text-gray-400'} /> Rebalance & Stratify
+            </p>
+            <p className="text-[8px] font-bold text-gray-500 mt-1">Ensures class consistency across sets.</p>
+          </div>
+
+          {/* 4. Outputs */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="p-2 bg-violet-50 rounded-xl border border-violet-100 text-center">
+               <p className="text-[8px] font-black text-violet-700">TRAIN</p>
+               <p className="text-[10px] font-black text-violet-900">{activeSplit.train}%</p>
+            </div>
+            <div className="p-2 bg-amber-50 rounded-xl border border-amber-100 text-center">
+               <p className="text-[8px] font-black text-amber-700">VALID</p>
+               <p className="text-[10px] font-black text-amber-900">{activeSplit.valid}%</p>
+            </div>
+            <div className="p-2 bg-emerald-50 rounded-xl border border-emerald-100 text-center">
+               <p className="text-[8px] font-black text-emerald-700">TEST</p>
+               <p className="text-[10px] font-black text-emerald-900">{activeSplit.test}%</p>
+            </div>
+          </div>
+
+          {/* 5. Training Flow */}
+          <div className="pt-2 flex items-center justify-between gap-2">
+             <div className="flex-1 flex flex-col items-center gap-1">
+                <div className="w-full h-1 bg-violet-200 rounded-full" />
+                <Target size={12} className="text-violet-400" />
+             </div>
+             <div className="flex-1 flex flex-col items-center gap-1">
+                <div className="w-full h-1 bg-amber-200 rounded-full" />
+                <Activity size={12} className="text-amber-400" />
+             </div>
+             <div className="flex-1 flex flex-col items-center gap-1">
+                <div className="w-full h-1 bg-emerald-200 rounded-full" />
+                <CheckCircle2 size={12} className="text-emerald-400" />
+             </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
