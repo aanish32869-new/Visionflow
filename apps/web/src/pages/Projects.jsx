@@ -253,13 +253,7 @@ export default function Projects() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="w-[34px] h-[34px] rounded-full bg-[#9c6644] text-white flex items-center justify-center font-bold text-[14px] shadow-sm select-none">
-              A
-            </div>
-            <button className="bg-white border text-gray-700 px-4 py-2 rounded-[6px] flex items-center font-semibold gap-2 hover:bg-gray-50 transition shadow-sm border-gray-300 text-[13px]">
-              <UserPlus size={16} className="text-gray-500 stroke-[2.5px]" /> Invite Team
-            </button>
+          <div>
           </div>
         </div>
 

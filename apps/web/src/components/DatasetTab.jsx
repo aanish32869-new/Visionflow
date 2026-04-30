@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import AnnotatedThumbnail from "./AnnotatedThumbnail";
 import DatasetOverview from "./DatasetOverview";
+import ExportModal from "./ExportModal";
 import logger from "../utils/logger";
 
 export default function DatasetTab({ projectId, onImageClick }) {
@@ -15,7 +16,7 @@ export default function DatasetTab({ projectId, onImageClick }) {
   const [classesData, setClassesData] = useState([]);
   const [imagesData, setImagesData] = useState({ items: [], total_items: 0, total_pages: 1, current_page: 1 });
   const [loading, setLoading] = useState(true);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   
   // -- Top Control Bar State --
   const [searchInput, setSearchInput] = useState("");
@@ -115,38 +116,8 @@ export default function DatasetTab({ projectId, onImageClick }) {
     setSelectedImages(newSelection);
   };
 
-  const handleExport = async () => {
-    setIsExporting(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/dataset/export`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          asset_ids: Array.from(selectedImages),
-          format: 'coco' // Defaulting to coco, can be made a dropdown later
-        })
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        if (data.download_url) {
-          const link = document.createElement('a');
-          link.href = data.download_url;
-          link.download = `dataset_export.zip`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        }
-      } else {
-        logger.error("Export failed:", await res.text());
-        alert("Failed to export dataset. Please try again.");
-      }
-    } catch (err) {
-      logger.error("Error exporting dataset:", err);
-      alert("An error occurred while exporting.");
-    } finally {
-      setIsExporting(false);
-    }
+  const handleExport = () => {
+    setIsExportModalOpen(true);
   };
 
   if (!summary) {
@@ -223,11 +194,10 @@ export default function DatasetTab({ projectId, onImageClick }) {
            </button>
            <button 
              onClick={handleExport}
-             disabled={isExporting}
-             className="px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-bold rounded-lg hover:bg-gray-50 shadow-sm transition flex items-center gap-2 disabled:opacity-50"
+             className="px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-bold rounded-lg hover:bg-gray-50 shadow-sm transition flex items-center gap-2"
            >
-             {isExporting ? <div className="w-4 h-4 border-2 border-gray-300 border-t-violet-600 rounded-full animate-spin"></div> : <Download size={16} />}
-             {isExporting ? "Exporting..." : "Export"}
+             <Download size={16} />
+             Export
            </button>
         </div>
 
@@ -481,6 +451,12 @@ export default function DatasetTab({ projectId, onImageClick }) {
         </>
         )}
 
+        <ExportModal 
+          isOpen={isExportModalOpen} 
+          onClose={() => setIsExportModalOpen(false)} 
+          projectId={projectId}
+          assetIds={Array.from(selectedImages)}
+        />
       </div>
     </div>
   );

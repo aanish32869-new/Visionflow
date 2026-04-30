@@ -3,7 +3,7 @@ from io import BytesIO
 
 import gridfs
 from bson.objectid import ObjectId
-from flask import Flask, Response, send_from_directory, jsonify
+from flask import Flask, Response, send_from_directory, jsonify, request
 from flask_cors import CORS
 from config import Config
 from models.db import db
@@ -25,6 +25,10 @@ def create_app():
     # Load configuration
     app.config.from_object(Config)
     
+    @app.before_request
+    def log_request_info():
+        logger.info(f"Incoming Request: {request.method} {request.path}")
+
     # Register blueprints
     app.register_blueprint(asset_bp)
     app.register_blueprint(project_bp)
@@ -77,6 +81,11 @@ def create_app():
     @app.route('/api/diag/version')
     def diag_version():
         return jsonify({"version": "2.0.1", "status": "deployed"})
+
+
+    # Start Background Workers
+    from services.export_manager import ExportManager
+    ExportManager.start_worker()
 
     logger.info("Initializing Dataset Service v2.0...")
     return app

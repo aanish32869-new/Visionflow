@@ -1,3 +1,4 @@
+import os
 import math
 from flask import Blueprint, request, jsonify
 from bson.objectid import ObjectId
@@ -142,34 +143,79 @@ def get_dataset_images(project_id):
 @dataset_bp.route("/api/projects/<project_id>/dataset/export", methods=["POST"])
 def export_dataset_selection(project_id):
     try:
-        from dataset_exporter import generate_dataset_archive
-        from config import Config
+        from dataset_exporter import validate_format_support
+        from services.export_manager import ExportManager
         
         data = request.json or {}
         asset_ids = data.get("asset_ids", [])
         export_format = data.get("format", "coco")
         
+        # Validation
+        is_supported, error_msg = validate_format_support(db, project_id, export_format, asset_ids)
+        if not is_supported:
+            return jsonify({"error": error_msg}), 400
+
         options = {
-            "state": "approved" # Ensures we only export finalized dataset images
+            "state": "approved",
+            "asset_ids": asset_ids,
+            "version_id": data.get("version_id"),
+            "tag_filter": data.get("tag_filter", {}),
+            "split": data.get("split")
         }
         
-        if asset_ids:
-            options["asset_ids"] = asset_ids
-            
-        archive_id, stats = generate_dataset_archive(
-            db, 
-            project_id, 
-            export_format, 
-            Config.UPLOAD_DIR, 
-            Config.DATASET_DIR, 
-            options
-        )
+        export_id = ExportManager.enqueue_export(project_id, export_format, options)
         
         return jsonify({
             "success": True, 
-            "download_url": f"/datasets/{archive_id}.zip",
-            "stats": stats
+            "export_id": export_id,
+            "status": "Queued"
         })
     except Exception as e:
-        logger.error(f"Error exporting dataset selection: {e}")
+        logger.error(f"Error initiating dataset export: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@dataset_bp.route("/api/projects/<project_id>/dataset/exports/<export_id>", methods=["GET"])
+def get_export_status(project_id, export_id):
+    try:
+        export = db.exports.find_one({"export_id": export_id})
+        if not export:
+            return jsonify({"error": "Export not found"}), 404
+            
+        return jsonify(serialize_doc(export))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@dataset_bp.route("/api/projects/<project_id>/dataset/exports/<export_id>/download", methods=["GET"])
+def download_export(project_id, export_id):
+    logger.info(f"Download export requested: {export_id} for project {project_id}")
+    try:
+        from flask import send_from_directory
+        from config import Config
+        from datetime import datetime
+        
+        logger.info(f"Searching for export_id: {export_id} in DB...")
+        export = db.exports.find_one({"export_id": export_id})
+        if not export:
+            logger.error(f"Export {export_id} not found in database!")
+            return jsonify({"error": "Export not found"}), 404
+        
+        logger.info(f"Export found. Status: {export.get('status')}")
+        if export["status"] != "Ready":
+            return jsonify({"error": f"Export is not ready (status: {export['status']})"}), 400
+            
+        now = datetime.utcnow().isoformat() + "Z"
+        if export.get("expires_at") and export["expires_at"] < now:
+            return jsonify({"error": "Export has expired"}), 410
+            
+        archive_id = export.get("archive_id")
+        filepath = os.path.join(Config.DATASET_DIR, f"{archive_id}.zip")
+        logger.info(f"Target file: {filepath} (Exists: {os.path.exists(filepath)})")
+        
+        if not os.path.exists(filepath):
+            logger.error(f"ZIP file missing on disk: {filepath}")
+            return jsonify({"error": "Export file missing on disk"}), 404
+            
+        return send_from_directory(Config.DATASET_DIR, f"{archive_id}.zip", as_attachment=True, download_name=f"visionflow_export_{export_id[:8]}.zip")
+    except Exception as e:
+        logger.error(f"Error downloading export: {e}")
         return jsonify({"error": str(e)}), 500

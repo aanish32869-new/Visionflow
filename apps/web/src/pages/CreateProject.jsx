@@ -130,20 +130,6 @@ export default function CreateProject() {
           </div>
 
           <div className="w-full lg:w-[55%] flex flex-col items-center justify-center p-8 bg-gray-50/50 rounded-xl relative overflow-hidden self-start sticky top-6">
-            {projectType === "Object Detection" && (
-              <div className="w-full max-w-[550px] aspect-[4/3] relative flex items-center justify-center rounded-[4px] overflow-hidden bg-gray-900 shadow-sm">
-                <img
-                  src="https://images.unsplash.com/photo-1546519638-68e109498ffc?q=80&w=1000&auto=format&fit=crop"
-                  alt="Basketball player"
-                  className="w-full h-full object-cover opacity-90"
-                />
-                <div className="absolute top-[25%] left-[30%] w-[40%] h-[40%] border-[2px] border-[#ff6600] bg-[#ff6600]/10 flex flex-col">
-                  <div className="bg-[#ff6600] text-white text-[11px] font-bold px-1.5 py-0.5 inline-block self-start absolute top-0 -translate-y-[100%] left-[-2px]">
-                    basketball <span className="font-normal opacity-70 ml-1">player</span>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </main>

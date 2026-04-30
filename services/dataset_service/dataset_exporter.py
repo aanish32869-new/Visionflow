@@ -10,7 +10,41 @@ import gridfs
 import cv2
 import numpy as np
 from bson.objectid import ObjectId
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw
+
+
+def validate_format_support(db, project_id, export_format, asset_ids=None):
+    """
+    Validates if the dataset selection supports the requested format.
+    Returns (bool, error_message).
+    """
+    format_lower = export_format.lower()
+    
+    query = {"project_id": project_id, "status": "dataset"}
+    if asset_ids:
+        query["_id"] = {"$in": [ObjectId(aid) if ObjectId.is_valid(aid) else aid for aid in asset_ids]}
+    
+    # For segmentation/mask formats, check if any assets have polygon annotations
+    if any(f in format_lower for f in ("mask", "segmentation", "polygon")):
+        # Get count of assets with at least one polygon annotation
+        assets = list(db.assets.find(query, {"_id": 1}))
+        asset_ids_list = [str(a["_id"]) for a in assets]
+        
+        polygon_count = db.annotations.count_documents({
+            "asset_id": {"$in": asset_ids_list},
+            "type": "polygon"
+        })
+        
+        if polygon_count == 0:
+            return False, "Selected format requires polygon/segmentation annotations, but none were found in this selection."
+
+    # For classification, we need at least one image
+    if format_lower == "classification":
+        total = db.assets.count_documents(query)
+        if total == 0:
+            return False, "No images found for classification export."
+
+    return True, None
 
 
 def get_image_dims(img_path):
@@ -450,6 +484,12 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
     preprocessing = _normalize_preprocessing(options)
     augmentation_config = _normalize_augmentation_config(options)
     tag_filter = _normalize_tag_filter(options)
+    progress_callback = options.get("progress_callback")
+    def update_progress(pct):
+        if progress_callback:
+            progress_callback(pct)
+
+    update_progress(5) # Started
     class_remap = options.get("class_remap", {})
 
     # Use version_id as the folder name if provided, otherwise fallback to archive_uuid
@@ -484,10 +524,14 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
         ]
         random.shuffle(assets)
 
+    update_progress(15) # Assets fetched
+
 
     annotations_by_asset = _collect_annotations(db, assets, version_id=version_id)
     classes_list = _collect_classes(annotations_by_asset)
     classes_map = {name: index for index, name in enumerate(classes_list)}
+
+    update_progress(25) # Annotations collected
 
     coco_data = {
         split_name: {
@@ -518,6 +562,8 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
         elif format_lower == "classification":
             for cls in classes_list:
                 os.makedirs(os.path.join(version_dir, split_name, cls), exist_ok=True)
+        elif format_lower == "csv":
+            os.makedirs(os.path.join(version_dir, split_name), exist_ok=True)
         else:
             os.makedirs(os.path.join(version_dir, split_name), exist_ok=True)
 
@@ -649,6 +695,12 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
             xml += "</annotation>"
             with open(xml_path, "w") as f: f.write(xml)
 
+        elif format_lower == "csv":
+            image_path = os.path.join(version_dir, split_name, image_name)
+            _write_image(processed_image, image_path)
+            label = annotations[0].get("label", "unknown") if annotations else "unknown"
+            classification_data[split_name].append(f"{image_name},{label}")
+
         else:
             image_path = os.path.join(version_dir, split_name, image_name)
             _write_image(processed_image, image_path)
@@ -670,6 +722,11 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
         if augmentation_name: augmentation_copies += 1
 
     for index, asset in enumerate(assets):
+        # Report progress during processing (25% to 85%)
+        if index % 10 == 0:
+            current_pct = 25 + int((index / total_assets) * 60)
+            update_progress(current_pct)
+
         split_name = asset.get("split") or ("train" if index < train_end else ("valid" if index < valid_end else "test"))
         source_image = _load_asset_image(db, asset, upload_folder)
         if source_image is None: continue
@@ -745,5 +802,14 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
             f.write(f"train: train/images\nval: valid/images\ntest: test/images\n")
             f.write(f"nc: {len(classes_list)}\nnames: {json.dumps(classes_list)}\n")
 
+    if format_lower == "csv":
+        for s in ("train", "valid", "test"):
+            if classification_data[s]:
+                with open(os.path.join(version_dir, s, "labels.csv"), "w") as f:
+                    f.write("filename,label\n")
+                    f.write("\n".join(classification_data[s]))
+
+    update_progress(90) # Starting zip
     shutil.make_archive(os.path.join(datasets_folder, archive_uuid), "zip", version_dir)
+    update_progress(100) # Done
     return archive_uuid, {"exported_images_count": exported_images_count, "classes": classes_list}

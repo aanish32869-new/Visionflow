@@ -110,7 +110,9 @@ def _normalize_version(version, index=0, total=0):
     
     # Download URL
     if doc.get("archive_id"):
-        doc["download_url"] = f"/datasets/{doc['archive_id']}.zip"
+        project_id = doc.get("project_id")
+        version_id = doc.get("version_id")
+        doc["download_url"] = f"/api/projects/{project_id}/versions/{version_id}/download"
     
     return doc
 
@@ -262,6 +264,25 @@ def delete_version(version_id):
         VersionManager.delete_version(version_id)
         return jsonify({"success": True})
     except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+@version_bp.route("/api/projects/<project_id>/versions/<version_id>/download", methods=["GET"])
+def download_version(project_id, version_id):
+    try:
+        version = db.versions.find_one({"version_id": version_id})
+        if not version:
+            return jsonify({"error": "Version not found"}), 404
+            
+        if version["status"] != "Ready":
+            return jsonify({"error": f"Version is not ready (status: {version['status']})"}), 400
+            
+        archive_id = version.get("archive_id")
+        if not archive_id:
+            return jsonify({"error": "Archive file not found"}), 404
+            
+        return send_from_directory(Config.DATASET_DIR, f"{archive_id}.zip", as_attachment=True, download_name=f"{version.get('project_slug', 'dataset')}_v{version.get('version_number', 0)}.zip")
+    except Exception as error:
+        logger.error(f"Error downloading version {version_id}: {error}")
         return jsonify({"error": str(error)}), 500
 
 @version_bp.route("/api/projects/<project_id>/augment/preview", methods=["POST"])

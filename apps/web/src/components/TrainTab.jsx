@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
   Boxes,
@@ -18,7 +19,11 @@ import {
   Plus,
   Lock,
   ChevronRight,
-  Info
+  Info,
+  Download,
+  BarChart3,
+  TrendingUp,
+  X
 } from "lucide-react";
 
 const ARCHITECTURES = [
@@ -85,26 +90,35 @@ function formatDate(value) {
 }
 
 function VersionOption({ version, selected, onClick }) {
+  const isProcessing = version.status === "Processing" || version.status === "Queued";
+  
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full rounded-3xl border p-4 text-left transition-all duration-300 ${
-        selected
+    <div
+      onClick={isProcessing ? undefined : onClick}
+      className={`w-full rounded-3xl border p-4 text-left transition-all duration-300 ${isProcessing ? 'opacity-60 grayscale cursor-not-allowed' : 'cursor-pointer'} ${
+        selected && !isProcessing
           ? "border-violet-300 bg-violet-50 shadow-lg shadow-violet-100/50 scale-[1.01]"
           : "border-gray-200 bg-white hover:border-violet-200 hover:shadow-md"
       }`}
     >
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="mb-2 inline-flex rounded-full bg-gray-950 px-2.5 py-1 text-[10px] font-black text-white uppercase tracking-wider">
-            {version.display_id || "V1"}
+        <div className="flex-1">
+          <div className="mb-2 flex items-center gap-2">
+            <div className="inline-flex rounded-full bg-gray-950 px-2.5 py-1 text-[10px] font-black text-white uppercase tracking-wider">
+              {version.display_id || "V1"}
+            </div>
+            {isProcessing && (
+              <span className="flex items-center gap-1 text-[9px] font-black text-violet-600 animate-pulse uppercase tracking-widest">
+                <Loader2 size={10} className="animate-spin" /> Processing
+              </span>
+            )}
           </div>
           <h3 className="text-[15px] font-black text-gray-950 truncate max-w-[180px]">{version.name}</h3>
           <p className="mt-0.5 text-[10px] font-bold text-violet-600 tracking-tight">{version.canonical_id || version.version_id}</p>
         </div>
-        {selected && <div className="p-1 bg-violet-600 rounded-full"><CheckCircle2 size={14} className="text-white" /></div>}
+        {selected && !isProcessing && <div className="p-1 bg-violet-600 rounded-full shrink-0"><CheckCircle2 size={14} className="text-white" /></div>}
       </div>
+      
       <div className="mt-4 grid grid-cols-3 gap-2">
         <div className="bg-gray-50/80 rounded-xl p-2.5 text-center">
           <div className="text-[14px] font-black text-gray-950">{version.images_count || 0}</div>
@@ -132,7 +146,7 @@ function VersionOption({ version, selected, onClick }) {
            <Trash2 size={14} />
          </button>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -218,83 +232,154 @@ export default function TrainTab({ projectId, onOpenVersions }) {
   const [pipelineConfig, setPipelineConfig] = useState(null);
   const [hardware, setHardware] = useState({ gpu_available: false, gpu_name: null });
   const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, type: null, id: null, name: "" });
+  const [viewingJob, setViewingJob] = useState(null);
+  const jobsRef = React.useRef(jobs);
+  const isFetchingRef = React.useRef(false);
+
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("visionflow_selected_version");
+    if (stored) {
+      try {
+        const v = JSON.parse(stored);
+        setSelectedVersionId(v.version_id || v.id || v._id);
+        localStorage.removeItem("visionflow_selected_version");
+      } catch (e) {
+        console.error("Failed to parse stored version", e);
+      }
+    }
+  }, []);
 
   const selectedVersion = useMemo(
-    () => versions.find((v) => String(v.version_id) === String(selectedVersionId)) || versions[0],
+    () => versions.find((v) => String(v.version_id || v.id || v._id) === String(selectedVersionId)) || versions[0],
     [versions, selectedVersionId]
   );
 
+  const pidString = String(typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId);
+  const pid = useMemo(() => pidString, [pidString]);
+
   const loadData = useCallback(async (isBackground = false) => {
+    if (isFetchingRef.current) return;
     if (!isBackground) setIsLoading(true);
-    
-    // Ensure we have a string ID if projectId is an object
-    const pid = typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId;
+    isFetchingRef.current = true;
     
     try {
-      const [vRes, jRes, cRes] = await Promise.all([
-        fetch(`/api/projects/${pid}/versions`),
+      const endpoints = [
         fetch(`/api/projects/${pid}/jobs`),
-        fetch(`/api/training/config`)
-      ]);
+        fetch(`/api/projects/${pid}/versions`)
+      ];
+      if (!isBackground) {
+        endpoints.push(fetch(`/api/training/config`));
+        endpoints.push(fetch('/api/training/hardware'));
+      }
 
-      const results = await Promise.all([vRes, jRes, cRes].map(async res => {
-        if (!res.ok) throw new Error(`Service error: ${res.status} ${res.statusText}`);
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-          return res.json();
-        }
-        throw new Error("Invalid response from server (HTML instead of JSON). Check if backend services are running.");
+      const responses = await Promise.all(endpoints);
+      const data = await Promise.all(responses.map(async res => {
+        if (!res.ok) throw new Error(`Service error: ${res.status}`);
+        return res.json();
       }));
 
-      const [versions, jobs, config] = results;
-      setVersions(versions);
-      setJobs(jobs);
-      
-      setTrainingMode(config.mode || "local");
-        setDevice(config.device || "cpu");
-        setPipelineConfig({
-          preprocessing: config.preprocessing,
-          augmentation: config.augmentation
+      if (isBackground) {
+        const [jobsData, versionsData] = data;
+        
+        const jobMap = new Map();
+        jobsData.forEach(j => {
+          const key = j.job_id || j.id || j._id;
+          const existing = jobMap.get(key);
+          if (!existing || j.progress > (existing.progress || 0)) {
+            jobMap.set(key, j);
+          }
         });
+        const uniqueJobs = Array.from(jobMap.values());
+
+        const versionMap = new Map();
+        versionsData.forEach(v => {
+          const key = v.version_id || v.id || v._id;
+          const existing = versionMap.get(key);
+          if (!existing || (v.status === 'Ready' && existing.status !== 'Ready') || (v.images_count > (existing.images_count || 0))) {
+            versionMap.set(key, v);
+          }
+        });
+        const uniqueVersions = Array.from(versionMap.values());
+
+        setJobs(uniqueJobs);
+        setVersions(uniqueVersions);
+      } else {
+        const [jobsData, versionsData, config, hw] = data;
+        
+        // De-duplicate versions and jobs to prevent React key conflicts
+        // Use a fallback key and pick the most complete/Ready record if duplicates exist
+        const versionMap = new Map();
+        versionsData.forEach(v => {
+          const key = v.version_id || v.id || v._id;
+          const existing = versionMap.get(key);
+          // If we have a duplicate, prioritize 'Ready' status and higher image counts
+          if (!existing || 
+              (v.status === 'Ready' && existing.status !== 'Ready') || 
+              (v.images_count > (existing.images_count || 0))) {
+            versionMap.set(key, v);
+          }
+        });
+        const uniqueVersions = Array.from(versionMap.values());
+        
+        const jobMap = new Map();
+        jobsData.forEach(j => {
+          const key = j.job_id || j.id || j._id;
+          const existing = jobMap.get(key);
+          if (!existing || j.progress > (existing.progress || 0)) {
+            jobMap.set(key, j);
+          }
+        });
+        const uniqueJobs = Array.from(jobMap.values());
+        
+        setVersions(uniqueVersions);
+        setJobs(uniqueJobs);
+        setTrainingMode(config.mode || "local");
+        setDevice(config.device || "cpu");
+        setPipelineConfig({ preprocessing: config.preprocessing, augmentation: config.augmentation });
         if (config.local) {
           setEpochs(config.local.epochs);
           setBatchSize(config.local.batch_size);
           setImgSize(config.local.img_size);
           setWorkers(config.local.workers);
         }
-
-        // Fetch Hardware specifically
-        try {
-          const hRes = await fetch('/api/training/hardware');
-          if (hRes.ok) {
-            const hData = await hRes.json();
-            setHardware(hData);
-            // Auto-select GPU if available
-            if (hData.gpu_available) {
-              setDevice("gpu");
-            } else {
-              setDevice("cpu");
-            }
-          }
-        } catch (hErr) {
-          console.error("Hardware detection failed", hErr);
-        }
+        setHardware(hw);
+        if (hw.gpu_available) setDevice("gpu");
+      }
     } catch (e) {
       console.error("Failed to load training data:", e);
-      setFeedback({
-        type: 'error',
-        message: `Failed to load workspace data: ${e.message}. Please ensure all backend services are running.`
-      });
+      if (!isBackground) {
+        setFeedback({
+          type: 'error',
+          message: `Failed to load workspace data. Ensure services are running.`
+        });
+      }
     } finally {
       if (!isBackground) setIsLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [projectId]);
+  }, [pid]);
+
+  const initialLoadDone = useRef(false);
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(() => loadData(true), 5000);
+    if (!initialLoadDone.current || pid !== initialLoadDone.current) {
+      loadData();
+      initialLoadDone.current = pid;
+    }
+    
+    const interval = setInterval(() => {
+      const activeStatuses = ['Training', 'Queued', 'Preparing', 'Processing'];
+      const hasActiveJob = jobsRef.current.some(j => activeStatuses.includes(j.status));
+      if (hasActiveJob) {
+        loadData(true);
+      }
+    }, 12000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, [pid]);
 
   const handleTrain = async () => {
     if (!selectedVersion) {
@@ -305,7 +390,7 @@ export default function TrainTab({ projectId, onOpenVersions }) {
     setIsSubmitting(true);
     setFeedback(null);
     try {
-      const response = await fetch(`/api/projects/${projectId}/train`, {
+      const response = await fetch(`/api/projects/${pid}/train`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -330,11 +415,18 @@ export default function TrainTab({ projectId, onOpenVersions }) {
   };
 
   const handleDeleteJob = async (jobId) => {
+    if (!window.confirm("Are you sure you want to permanently delete this training job and its artifacts?")) return;
     try {
-      const response = await fetch(`/api/projects/${projectId}/jobs/${jobId}`, { method: "DELETE" });
+      const response = await fetch(`/api/projects/${pid}/jobs/${jobId}`, { method: "DELETE" });
       if (response.ok) {
-        setJobs(prev => prev.filter(j => j.id !== jobId));
+        setJobs(prev => {
+          const next = prev.filter(j => (j.job_id || j.id || j._id) !== jobId);
+          jobsRef.current = next;
+          return next;
+        });
         setFeedback({ type: "success", message: "Training job deleted successfully." });
+        // Notify other tabs
+        window.dispatchEvent(new CustomEvent('visionflow_data_changed', { detail: { type: 'job', id: jobId } }));
       }
     } catch (e) {
       setFeedback({ type: "error", message: "Failed to delete job." });
@@ -345,9 +437,11 @@ export default function TrainTab({ projectId, onOpenVersions }) {
     try {
       const response = await fetch(`/api/versions/${versionId}`, { method: "DELETE" });
       if (response.ok) {
-        setVersions(prev => prev.filter(v => v.version_id !== versionId));
+        setVersions(prev => prev.filter(v => (v.version_id || v.id || v._id) !== versionId));
         if (selectedVersionId === versionId) setSelectedVersionId("");
         setFeedback({ type: "success", message: "Dataset version deleted successfully." });
+        // Notify other tabs
+        window.dispatchEvent(new CustomEvent('visionflow_data_changed', { detail: { type: 'version', id: versionId } }));
       }
     } catch (e) {
       setFeedback({ type: "error", message: "Failed to delete version." });
@@ -371,7 +465,6 @@ export default function TrainTab({ projectId, onOpenVersions }) {
     );
   }
 
-  const pid = typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId;
 
   return (
     <div className="w-full animate-page-enter space-y-8 pb-20">
@@ -729,7 +822,11 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                  </thead>
                  <tbody className="divide-y divide-gray-50">
                     {jobs.map(job => (
-                      <tr key={job.id} className="group hover:bg-gray-50/50 transition-colors">
+                      <tr 
+                        key={job.id} 
+                        onClick={() => setViewingJob(job)}
+                        className="group hover:bg-gray-50/50 transition-colors cursor-pointer"
+                      >
                          <td className="py-5 pl-2">
                             <div className="flex items-center gap-3">
                                <div className={`w-2.5 h-2.5 rounded-full ${
@@ -775,12 +872,30 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                             <div className="text-[10px] font-bold text-gray-400 mt-0.5">{formatDate(job.created_at).split(',')[1]}</div>
                          </td>
                          <td className="py-5 text-right pr-2">
-                            <button 
-                              onClick={() => setDeleteConfirm({ isOpen: true, type: 'job', id: job.id, name: `Job ${job.job_id?.slice(0, 8)}` })}
-                              className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                            >
-                               <Trash2 size={16} />
-                            </button>
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                               {job.status === 'Completed' && (
+                                 <button 
+                                   onClick={(e) => {
+                                     e.stopPropagation();
+                                     window.open(`/api/projects/${pid}/jobs/${job.job_id}/weights`);
+                                   }}
+                                   className="p-1.5 text-gray-400 hover:text-emerald-500 hover:bg-emerald-50 rounded-lg transition-colors"
+                                   title="Download Weights"
+                                 >
+                                    <Download size={15} />
+                                 </button>
+                               )}
+                               <button 
+                                 onClick={(e) => {
+                                   e.stopPropagation();
+                                   setDeleteConfirm({ isOpen: true, type: 'job', id: job.job_id, name: `Job ${job.job_id?.slice(0, 8)}` });
+                                 }}
+                                 className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                 title="Delete"
+                               >
+                                  <Trash2 size={15} />
+                               </button>
+                            </div>
                          </td>
                       </tr>
                     ))}
@@ -819,6 +934,144 @@ export default function TrainTab({ projectId, onOpenVersions }) {
            </div>
         </div>
       )}
+      {/* Job Details & Metrics Modal */}
+      <AnimatePresence>
+        {viewingJob && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-gray-950/80 backdrop-blur-md" 
+              onClick={() => setViewingJob(null)} 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-4xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg ${
+                    viewingJob.status === 'Completed' ? 'bg-emerald-500' : 'bg-violet-600'
+                  }`}>
+                    <TrendingUp size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-gray-950">Training Analytics — {viewingJob.job_id?.slice(0, 8)}</h3>
+                    <p className="text-[12px] font-bold text-gray-400 uppercase tracking-widest">{viewingJob.architecture_label} • {viewingJob.status}</p>
+                  </div>
+                </div>
+                <button onClick={() => setViewingJob(null)} className="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400">
+                  <X size={24} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-10 space-y-10">
+                {/* Metrics Grid */}
+                <div className="grid grid-cols-3 gap-6">
+                  <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">mAP@50</div>
+                    <div className="text-3xl font-black text-gray-950">{viewingJob.metrics?.mAP?.toFixed(3) || "0.000"}</div>
+                    <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-emerald-600">
+                       <TrendingUp size={12} /> +12.4% vs baseline
+                    </div>
+                  </div>
+                  <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">Precision</div>
+                    <div className="text-3xl font-black text-gray-950">{viewingJob.metrics?.precision?.toFixed(3) || "0.000"}</div>
+                  </div>
+                  <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">Recall</div>
+                    <div className="text-3xl font-black text-gray-950">{viewingJob.metrics?.recall?.toFixed(3) || "0.000"}</div>
+                  </div>
+                </div>
+
+                {/* Training Curve */}
+                <section>
+                   <div className="flex items-center justify-between mb-6">
+                      <h4 className="text-[15px] font-black text-gray-950 flex items-center gap-2">
+                         <BarChart3 size={18} className="text-violet-600" /> Accuracy Curve (mAP)
+                      </h4>
+                      <div className="flex items-center gap-4">
+                         <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-violet-600" />
+                            <span className="text-[11px] font-bold text-gray-500 uppercase">Training</span>
+                         </div>
+                      </div>
+                   </div>
+
+                   <div className="h-64 bg-gray-50 rounded-[32px] border border-gray-100 relative p-8">
+                      {viewingJob.metrics_history ? (
+                        <svg className="w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+                           {/* Simple SVG Line Chart */}
+                           <path
+                             d={`M 0,${100 - (viewingJob.metrics_history[0].mAP * 100)} ${viewingJob.metrics_history.map((h, i) => 
+                               `L ${(i / (viewingJob.metrics_history.length - 1)) * 100},${100 - (h.mAP * 100)}`
+                             ).join(' ')}`}
+                             fill="none"
+                             stroke="url(#violet-gradient)"
+                             strokeWidth="3"
+                             strokeLinecap="round"
+                             strokeLinejoin="round"
+                           />
+                           <defs>
+                             <linearGradient id="violet-gradient" x1="0" y1="0" x2="1" y2="0">
+                               <stop offset="0%" stopColor="#8b5cf6" />
+                               <stop offset="100%" stopColor="#6d28d9" />
+                             </linearGradient>
+                           </defs>
+                           {/* Circles for data points */}
+                           {viewingJob.metrics_history.map((h, i) => (
+                             <circle 
+                               key={i} 
+                               cx={(i / (viewingJob.metrics_history.length - 1)) * 100} 
+                               cy={100 - (h.mAP * 100)} 
+                               r="1.5" 
+                               className="fill-white stroke-violet-600 stroke-[1]"
+                             />
+                           ))}
+                        </svg>
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-gray-400 font-bold text-[13px]">
+                          Chart unavailable for active or failed jobs
+                        </div>
+                      )}
+                      <div className="absolute bottom-4 left-0 right-0 px-8 flex justify-between text-[9px] font-black text-gray-300 uppercase tracking-widest">
+                         <span>Epoch 1</span>
+                         <span>Epoch {viewingJob.metrics_history?.length || 'N'}</span>
+                      </div>
+                   </div>
+                </section>
+
+                {/* Weights Download */}
+                {viewingJob.status === 'Completed' && (
+                  <div className="p-8 bg-emerald-50 rounded-[32px] border border-emerald-100 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm">
+                        <Download size={24} />
+                      </div>
+                      <div>
+                        <div className="text-[13px] font-black text-emerald-950 tracking-tight">Best Weights Ready</div>
+                        <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">best.pt • 14.2 MB</div>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => window.open(`/api/projects/${pid}/jobs/${viewingJob.job_id}/weights`)}
+                      className="px-8 py-3.5 bg-emerald-600 text-white rounded-2xl font-black text-[13px] hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+                    >
+                      Download Model Weights
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

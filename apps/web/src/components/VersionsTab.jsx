@@ -45,6 +45,18 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
     fetchVersions();
   }, [fetchVersions]);
 
+  useEffect(() => {
+    const handleDataChanged = (e) => {
+      if (e.detail?.type === 'version') {
+        setVersions(prev => prev.filter(v => (v.version_id || v.id || v._id) !== e.detail.id));
+      } else {
+        fetchVersions();
+      }
+    };
+    window.addEventListener('visionflow_data_changed', handleDataChanged);
+    return () => window.removeEventListener('visionflow_data_changed', handleDataChanged);
+  }, [fetchVersions]);
+
   // Polling for processing versions
   useEffect(() => {
     const hasProcessing = versions.some(v => v.status === "Processing" || v.status === "Queued");
@@ -61,7 +73,9 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
         method: 'DELETE'
       });
       if (response.ok) {
-        setVersions(versions.filter(v => v.version_id !== versionId));
+        setVersions(prev => prev.filter(v => (v.version_id || v.id || v._id) !== versionId));
+        // Notify other tabs (like Train Workspace)
+        window.dispatchEvent(new CustomEvent('visionflow_data_changed', { detail: { type: 'version', id: versionId } }));
       }
     } catch (err) {
       console.error("Delete failed", err);

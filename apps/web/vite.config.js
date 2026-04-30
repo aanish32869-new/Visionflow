@@ -81,6 +81,7 @@ export default defineConfig({
       '^/api/annotations(?:$|[/?])': createProxy(datasetTarget),
       '^/api/batches/[^/]+/export(?:$|[/?])': createProxy(datasetTarget),
       '^/api/projects/[^/]+/dataset/export(?:$|[/?])': createProxy(datasetTarget),
+      '^/api/dataset/exports(?:$|[/?])': createProxy(datasetTarget),
       
       // Project Service (Node)
       '^/api/(projects|assets|folders|workspace-overview|jobs|batches)(?:$|[/?])': createProxy(projectTarget),

@@ -629,10 +629,6 @@ export default function RapidUpload() {
              <HelpCircle size={13} className="text-violet-400 ml-1 hover:text-violet-600 transition" />
           </div>
           <div className="flex items-center gap-5">
-            <button className="flex items-center gap-1.5 border border-gray-200 rounded-md px-3 py-1.5 text-[12px] font-bold text-gray-600 hover:bg-gray-50 transition shadow-sm bg-white tracking-wide">
-              {visibility === "Public" ? <Globe size={14} /> : <Lock size={14} />} {visibility}
-            </button>
-            <div className="w-8 h-8 rounded-full bg-[#8A5A44] text-white flex items-center justify-center font-bold text-[13px] cursor-pointer shadow-sm">A</div>
           </div>
         </header>
 
@@ -660,7 +656,7 @@ export default function RapidUpload() {
                          <ArrowUp className="text-violet-600" strokeWidth={2.5} size={22} />
                       </div>
                       <h3 className="text-[#8b5cf6] font-bold text-[18px] mb-2 tracking-tight">
-                        {isUploading ? "Uploading Data to VisionFlow Engine..." : isDragging ? "Drop Files Here" : "Upload an image or a short video"}
+                        {isUploading ? "Uploading Data to VisionFlow Engine..." : isDragging ? "Drop Files Here" : "Upload Images"}
                       </h3>
                     </div>
                  </div>

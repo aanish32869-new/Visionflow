@@ -12,8 +12,10 @@ if os.path.exists(config_path):
 
 class Config:
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    UPLOAD_DIR = os.getenv("UPLOAD_DIR", "storage/uploads")
-    DATASET_DIR = os.getenv("DATASET_DIR", "storage/datasets")
+    # Base directory is the project root (2 levels up from services/dataset_service)
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    UPLOAD_DIR = os.path.abspath(os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "storage", "uploads")))
+    DATASET_DIR = os.path.abspath(os.getenv("DATASET_DIR", os.path.join(BASE_DIR, "storage", "datasets")))
     PORT = int(os.getenv("PORT_DATASET_SERVICE", 5003))
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-123")
     MAX_CONTENT_LENGTH = 500 * 1024 * 1024 * 1024  # 500GB max payload for massive batches
