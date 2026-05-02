@@ -1,15 +1,83 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Heart, RefreshCw, Info, Download, Scale, ChevronDown, CheckSquare, Square, ZoomIn, Search } from 'lucide-react';
+import RebalanceModal from './RebalanceModal';
 
-export default function AnalyticsTab({ assets }) {
-  const imagesCount = assets?.length || 23;
+export default function AnalyticsTab({ projectId, assets }) {
+  const [isRebalanceOpen, setIsRebalanceOpen] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const imagesCount = assets?.length || 0;
   
+  // Calculate counts for the UI labels
+  const trainCount = assets?.filter(a => a.state === 'train' || a.split === 'train').length || 0;
+  const validCount = assets?.filter(a => a.state === 'valid' || a.split === 'valid' || a.state === 'val').length || 0;
+  const testCount = assets?.filter(a => a.state === 'test' || a.split === 'test').length || 0;
+  
+  // Calculate current splits for the modal (memoized)
+  const currentSplits = React.useMemo(() => {
+    if (imagesCount === 0) return { train: 70, valid: 20, test: 10 };
+    
+    return {
+      train: Math.round((trainCount / imagesCount) * 100),
+      valid: Math.round((validCount / imagesCount) * 100),
+      test: Math.round((testCount / imagesCount) * 100)
+    };
+  }, [trainCount, validCount, testCount, imagesCount]);
+
+  const handleRebalance = async (newSplits) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/dataset/rebalance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          train: newSplits.train / 100,
+          valid: newSplits.valid / 100,
+          test: newSplits.test / 100,
+          confirm: true
+        })
+      });
+      
+      if (res.ok) {
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 5000);
+        // Trigger a refresh of the app data
+        window.dispatchEvent(new CustomEvent('visionflow_data_changed', { detail: { type: 'dataset' } }));
+      } else {
+        const error = await res.json();
+        alert(error.error || "Failed to rebalance dataset");
+      }
+    } catch (err) {
+      console.error("Rebalance request failed", err);
+      alert("An error occurred while connecting to the server.");
+    }
+  };
+
+  const handleDownloadCSV = () => {
+    window.location.href = `/api/projects/${projectId}/analytics/export`;
+  };
+
   return (
     <div className="w-full animate-fade-in pb-16">
       <div className="flex items-center gap-3 mb-6">
          <Heart className="text-gray-700" size={24} />
          <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">Dataset Analytics</h2>
       </div>
+
+      {showSuccess && (
+        <div className="mb-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center justify-between animate-in slide-in-from-top duration-500">
+          <div className="flex items-center gap-3">
+             <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white">
+                <CheckSquare size={16} />
+             </div>
+             <div>
+                <p className="text-sm font-black text-emerald-900">Rebalance Successful</p>
+                <p className="text-[12px] font-medium text-emerald-700">The dataset splits have been updated across all versions.</p>
+             </div>
+          </div>
+          <button onClick={() => setShowSuccess(false)} className="text-emerald-500 hover:text-emerald-700 font-bold text-xs uppercase tracking-widest">
+            Dismiss
+          </button>
+        </div>
+      )}
       
       <div className="flex items-center gap-4 text-[13px] text-gray-500 font-medium mb-8">
          <span>Generated on {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric'})} at {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit'})}</span>
@@ -69,10 +137,16 @@ export default function AnalyticsTab({ assets }) {
                <button className="px-4 py-2 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition">
                   Tags <ChevronDown size={14} className="text-gray-400" />
                </button>
-               <button className="px-4 py-2 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition">
+               <button 
+                 onClick={() => setIsRebalanceOpen(true)}
+                 className="px-4 py-2 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition"
+               >
                   <Scale size={14} className="text-gray-500" /> Rebalance Splits
                </button>
-               <button className="px-4 py-2 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition">
+               <button 
+                 onClick={handleDownloadCSV}
+                 className="px-4 py-2 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50 transition"
+               >
                   <Download size={14} className="text-gray-500" /> Download CSV
                </button>
             </div>
@@ -90,13 +164,13 @@ export default function AnalyticsTab({ assets }) {
                         <div className="w-3 h-3 rounded-full border-[3px] border-violet-600"></div> All Splits
                      </label>
                      <label className="flex items-center gap-2 text-[13px] font-medium text-gray-600 cursor-pointer">
-                        <div className="w-3 h-3 rounded-full border border-violet-200"></div> Train
+                        <div className="w-3 h-3 rounded-full border border-violet-200"></div> Train ({trainCount})
                      </label>
                      <label className="flex items-center gap-2 text-[13px] font-medium text-gray-600 cursor-pointer">
-                        <div className="w-3 h-3 rounded-full border border-cyan-200"></div> Valid
+                        <div className="w-3 h-3 rounded-full border border-cyan-200"></div> Valid ({validCount})
                      </label>
                      <label className="flex items-center gap-2 text-[13px] font-medium text-gray-600 cursor-pointer">
-                        <div className="w-3 h-3 rounded-full border border-amber-200"></div> Test
+                        <div className="w-3 h-3 rounded-full border border-amber-200"></div> Test ({testCount})
                      </label>
                   </div>
                   <button className="px-3 py-1.5 border border-gray-200 rounded-[8px] text-[13px] font-bold text-gray-700 bg-white shadow-sm flex items-center gap-2 hover:bg-gray-50">
@@ -127,6 +201,13 @@ export default function AnalyticsTab({ assets }) {
             <span className="text-gray-400 font-medium text-[14px]">Dimension scatter plot mapping</span>
          </div>
       </div>
+
+      <RebalanceModal 
+        isOpen={isRebalanceOpen}
+        onClose={() => setIsRebalanceOpen(false)}
+        onRebalance={handleRebalance}
+        currentSplits={currentSplits}
+      />
     </div>
   );
 }

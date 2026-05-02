@@ -53,7 +53,7 @@ def get_target_port(path):
     if path.startswith('api/auto-label') or path.startswith('api/classify') or path.startswith('api/infer'):
         return INFERENCE_PORT
     # Dataset service
-    if path.startswith('api/projects') and ('/versions' in path or '/annotation-status' in path or '/dataset' in path):
+    if path.startswith('api/projects') and ('/versions' in path or '/annotation-status' in path or '/dataset' in path or '/analytics' in path):
         return DATASET_PORT
     if path.startswith('api/batches'):
         return DATASET_PORT

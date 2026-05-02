@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from io import BytesIO
 
+from pymongo import UpdateOne
 from models.db import db
 from utils.logger import logger
 from dataset_exporter import generate_dataset_archive, _transform_annotation
@@ -298,24 +299,25 @@ class VersionManager:
         valid_end = int(total * ((new_split["train"] + new_split["valid"]) / 100))
         
         split_counts = {"train": 0, "valid": 0, "test": 0}
+        updates = []
         
         for i, asset in enumerate(assets):
             s_name = "train" if i < train_end else ("valid" if i < valid_end else "test")
-            orig_id = str(asset["_id"])
-            db.version_assets.update_one({"_id": asset["_id"]}, {"$set": {"split": s_name}})
+            updates.append(UpdateOne({"_id": asset["_id"]}, {"$set": {"split": s_name}}))
             split_counts[s_name] += 1
             
             # Update augmented copies
             if s_name == "train":
                 parent_id = asset["original_asset_id"]
+                # We can't easily bulk update with $regex in a list of UpdateOne for different assets
+                # so we'll do a separate update_many for each parent_id. 
+                # This is still better than individual updates per augmented asset.
                 res = db.version_assets.update_many(
                     {"version_id": version_id, "is_augmented": True, "original_asset_id": {"$regex": f"^{parent_id}_aug_"}},
                     {"$set": {"split": "train"}}
                 )
                 split_counts["train"] += res.modified_count
             else:
-                # If moving out of train, delete augmented copies or move them too?
-                # Requirement says augmentations ONLY on train set.
                 parent_id = asset["original_asset_id"]
                 db.version_assets.delete_many(
                     {"version_id": version_id, "is_augmented": True, "original_asset_id": {"$regex": f"^{parent_id}_aug_"}}
@@ -323,6 +325,9 @@ class VersionManager:
                 db.version_annotations.delete_many(
                     {"version_id": version_id, "asset_id": {"$regex": f"^{parent_id}_aug_"}}
                 )
+
+        if updates:
+            db.version_assets.bulk_write(updates)
 
         db.versions.update_one(
             {"version_id": version_id},

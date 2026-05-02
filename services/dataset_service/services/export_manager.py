@@ -33,6 +33,25 @@ class ExportManager:
 
     @classmethod
     def enqueue_export(cls, project_id, export_format, options):
+        # 1. Check for cached version exports
+        version_id = options.get("version_id")
+        if version_id:
+            cached = db.exports.find_one({
+                "project_id": project_id,
+                "format": export_format,
+                "options.version_id": version_id,
+                "status": "Ready"
+            }, sort=[("created_at", -1)])
+            
+            if cached:
+                archive_id = cached.get("archive_id")
+                # Verify file still exists on disk
+                from config import Config
+                if archive_id and os.path.exists(os.path.join(Config.DATASET_DIR, f"{archive_id}.zip")):
+                    logger.info(f"Using cached export {cached['export_id']} for version {version_id}")
+                    return cached["export_id"]
+
+        # 2. If no cache, enqueue new job
         export_id = uuid.uuid4().hex
         expires_at = datetime.utcnow() + timedelta(hours=24)
         

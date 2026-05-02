@@ -11,7 +11,8 @@ import {
   AlertCircle,
   X,
   ChevronDown,
-  Maximize2
+  Maximize2,
+  Activity
 } from 'lucide-react';
 
 export default function VisualizeTab({ projectId, onTrainModel }) {

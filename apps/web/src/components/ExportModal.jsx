@@ -89,7 +89,7 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          format: selectedFormat,
+          format: "yolov8", // Force YOLOv8 format
           asset_ids: assetIds
         })
       });
@@ -117,56 +117,16 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row h-[600px] border border-white/20">
+      <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[450px] border border-white/20">
         
-        {/* Left Sidebar - Categories */}
-        <div className="w-full md:w-72 bg-gray-50 border-r border-gray-100 flex flex-col">
-          <div className="p-6 border-b border-gray-100">
-            <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
-              <Download className="text-violet-600" size={24} /> Export
-            </h2>
-            <p className="text-xs font-bold text-gray-400 mt-1 uppercase tracking-wider">Standardized Formats</p>
-          </div>
-          
-          <div className="flex-1 p-3 space-y-1">
-            {CATEGORIES.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => setActiveCategory(cat.id)}
-                className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-all duration-200 ${
-                  activeCategory === cat.id 
-                    ? "bg-white shadow-sm border border-gray-100 text-violet-600" 
-                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-                }`}
-              >
-                <div className={`p-2 rounded-xl ${activeCategory === cat.id ? "bg-violet-50" : "bg-gray-100"}`}>
-                  {cat.icon}
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-black">{cat.name}</p>
-                </div>
-                {activeCategory === cat.id && <ChevronRight size={16} className="ml-auto" />}
-              </button>
-            ))}
-          </div>
-
-          <div className="p-6 bg-violet-600 text-white">
-             <div className="flex items-center gap-2 mb-2">
-               <Zap size={16} className="fill-white" />
-               <span className="text-xs font-black uppercase">Pro Tip</span>
-             </div>
-             <p className="text-[10px] font-bold opacity-80 leading-relaxed">
-               Use YOLOv8 for modern computer vision tasks. It's optimized for both speed and accuracy.
-             </p>
-          </div>
-        </div>
 
         {/* Right Content - Formats & Progress */}
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
           <div className="flex items-center justify-between p-6 border-b border-gray-100 shrink-0">
              <div>
-                <h3 className="text-lg font-black text-gray-900">{CATEGORIES.find(c => c.id === activeCategory)?.name}</h3>
-                <p className="text-xs font-bold text-gray-400 mt-0.5">{CATEGORIES.find(c => c.id === activeCategory)?.description}</p>
+                <h2 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                  <Download className="text-violet-600" size={24} /> Export Dataset
+                </h2>
              </div>
              <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-400">
                <X size={20} />
@@ -175,33 +135,14 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {status === "idle" && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {CATEGORIES.find(c => c.id === activeCategory)?.formats.map(format => (
-                  <button
-                    key={format.id}
-                    onClick={() => setSelectedFormat(format.id)}
-                    className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all duration-200 text-left ${
-                      selectedFormat === format.id 
-                        ? "border-violet-600 bg-violet-50/50 shadow-sm" 
-                        : "border-gray-100 hover:border-gray-200 bg-white"
-                    }`}
-                  >
-                    <div className="text-2xl mt-1">{format.icon}</div>
-                    <div className="flex-1 min-w-0">
-                       <p className={`text-sm font-black ${selectedFormat === format.id ? "text-violet-600" : "text-gray-900"}`}>
-                         {format.name}
-                       </p>
-                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mt-0.5">
-                         {format.framework} Compatible
-                       </p>
-                    </div>
-                    {selectedFormat === format.id && (
-                      <div className="w-5 h-5 bg-violet-600 rounded-full flex items-center justify-center">
-                        <CheckCircle size={12} className="text-white" />
-                      </div>
-                    )}
-                  </button>
-                ))}
+              <div className="flex flex-col items-center justify-center h-full py-10 text-center">
+                <div className="w-20 h-20 bg-violet-50 rounded-full flex items-center justify-center mb-6">
+                  <Box size={40} className="text-violet-600" />
+                </div>
+                <h3 className="text-xl font-black text-gray-900 mb-2">Ready to Export?</h3>
+                <p className="text-sm font-bold text-gray-400 max-w-xs">
+                  Your current dataset will be processed, structured, and packaged into a <span className="text-violet-600">.zip</span> file for download.
+                </p>
               </div>
             )}
 
@@ -257,15 +198,7 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
             )}
           </div>
 
-          <div className="p-6 border-t border-gray-100 bg-gray-50/50 shrink-0 flex items-center justify-between">
-             <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1.5 text-xs font-black text-gray-400">
-                   <Clock size={14} /> Link expires in 24h
-                </div>
-                <div className="flex items-center gap-1.5 text-xs font-black text-gray-400">
-                   <Settings size={14} /> {assetIds.length || "All"} images selected
-                </div>
-             </div>
+          <div className="p-6 border-t border-gray-100 bg-gray-50/50 shrink-0 flex items-center justify-end">
              
              {status === "idle" && (
                <div className="flex gap-3">

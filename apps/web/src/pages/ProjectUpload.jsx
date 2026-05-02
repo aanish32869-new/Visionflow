@@ -172,12 +172,20 @@ export default function ProjectUpload() {
       setIsGenerateVersionModalOpen(true);
     };
 
+    const handleDataChanged = (e) => {
+      if (e.detail?.type === 'dataset') {
+         fetchAssets();
+      }
+    };
+
     window.addEventListener('visionflow_switch_tab', handleSwitchTab);
     window.addEventListener('visionflow_open_generate_modal', handleOpenGenerate);
+    window.addEventListener('visionflow_data_changed', handleDataChanged);
 
     return () => {
       window.removeEventListener('visionflow_switch_tab', handleSwitchTab);
       window.removeEventListener('visionflow_open_generate_modal', handleOpenGenerate);
+      window.removeEventListener('visionflow_data_changed', handleDataChanged);
     };
   }, []);
 
@@ -1912,7 +1920,10 @@ export default function ProjectUpload() {
           {/* ANALYTICS TAB */}
           {activeTab === 'analytics' && (
               <div className="flex-1 w-full flex flex-col min-w-0">
-                 <AnalyticsTab assets={activeAnnotationBatchId ? assets.filter(a => a.batch_id === activeAnnotationBatchId) : assets} />
+                 <AnalyticsTab 
+                   projectId={projectId}
+                   assets={activeAnnotationBatchId ? assets.filter(a => a.batch_id === activeAnnotationBatchId) : assets} 
+                 />
               </div>
           )}
 

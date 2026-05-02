@@ -104,6 +104,13 @@ export default function Deployments() {
     setIsLoading(true);
     try {
       const res = await fetch("/api/deployments/summary");
+      if (!res.ok) {
+        throw new Error(`HTTP Error: ${res.status} - Route might not be implemented`);
+      }
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Expected JSON, got HTML or other format");
+      }
       const data = await res.json();
       setSummary(data);
       if (data?.projects?.[0] || data?.workflows?.[0]) {

@@ -28,6 +28,8 @@ def create_app():
     @app.before_request
     def log_request_info():
         logger.info(f"Incoming Request: {request.method} {request.path}")
+        rules = [str(rule) for rule in app.url_map.iter_rules() if 'analytics' in str(rule)]
+        logger.info(f"Analytics Rules: {rules}")
 
     # Register blueprints
     app.register_blueprint(asset_bp)

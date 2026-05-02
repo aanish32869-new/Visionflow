@@ -32,41 +32,41 @@ const ARCHITECTURES = [
     name: "YOLOv8 Nano",
     accent: "text-emerald-700 bg-emerald-50 border-emerald-200",
     summary: "Ultra-fast, perfect for real-time mobile and edge applications.",
-    bullets: ["Lightest weights (~6MB)", "Blazing fast inference", "Lower accuracy than larger models"],
+    bullets: ["Lightest weights (~6MB)", "Blazing fast inference", "Optimal for mobile"],
     type: "detection"
   },
   {
-    id: "dinov3",
-    name: "DINOv3",
-    accent: "text-amber-700 bg-amber-50 border-amber-200",
-    summary: "Transformer-based, resolution-agnostic and ultra-fast for specific tasks.",
-    bullets: ["Trains very quickly", "Resolution-agnostic", "Inference speed comparable to ViT"],
-    type: "foundation",
-    upgrade: true
-  },
-  {
-    id: "vit",
-    name: "ViT (Vision Transformer)",
-    accent: "text-indigo-700 bg-indigo-50 border-indigo-200",
-    summary: "High accuracy foundation model for complex visual recognition.",
-    bullets: ["Higher Accuracy", "Slower Inference", "Slower Training"],
-    type: "classification"
+    id: "yolov8m",
+    name: "YOLOv8 Medium",
+    accent: "text-blue-700 bg-blue-50 border-blue-200",
+    summary: "Superior accuracy for complex scenes with moderate speed.",
+    bullets: ["High precision", "Great for hard cases", "Balanced performance"],
+    type: "detection"
   },
   {
     id: "resnet18",
     name: "ResNet18",
     accent: "text-rose-700 bg-rose-50 border-rose-200",
     summary: "Classic, reliable architecture with excellent inference speed.",
-    bullets: ["Lower Accuracy", "Faster Inference", "Faster Training"],
+    bullets: ["Reliable baseline", "Fast training", "Proven results"],
     type: "classification"
   },
   {
-    id: "yolov8m",
-    name: "YOLOv8 Medium",
-    accent: "text-blue-700 bg-blue-50 border-blue-200",
-    summary: "Higher accuracy for complex scenes with moderate speed.",
-    bullets: ["Superior accuracy", "Great for hard detection cases", "Slower inference"],
-    type: "detection"
+    id: "vit",
+    name: "ViT (Vision Transformer)",
+    accent: "text-indigo-700 bg-indigo-50 border-indigo-200",
+    summary: "High accuracy foundation model for complex visual recognition.",
+    bullets: ["State-of-the-art", "Self-attention layers", "High accuracy"],
+    type: "classification"
+  },
+  {
+    id: "dinov3",
+    name: "DINOv3",
+    accent: "text-amber-700 bg-amber-50 border-amber-200",
+    summary: "Self-supervised foundation model, resolution-agnostic and ultra-fast.",
+    bullets: ["Foundation model", "Zero-shot capabilities", "Resolution agnostic"],
+    type: "foundation",
+    upgrade: false
   },
 ];
 
@@ -222,12 +222,12 @@ export default function TrainTab({ projectId, onOpenVersions }) {
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [selectedArchitecture, setSelectedArchitecture] = useState("yolov8n");
   
-  // Hyperparameters
-  const [epochs, setEpochs] = useState(25);
-  const [batchSize, setBatchSize] = useState(8);
-  const [imgSize, setImgSize] = useState(640);
-  const [workers, setWorkers] = useState(4);
-  const [device, setDevice] = useState("cpu");
+  // Hyperparameters (Default to "auto")
+  const [epochs, setEpochs] = useState("auto");
+  const [batchSize, setBatchSize] = useState("auto");
+  const [imgSize, setImgSize] = useState("auto");
+  const [workers, setWorkers] = useState("auto");
+  const [device, setDevice] = useState("auto");
   const [trainingMode, setTrainingMode] = useState("local");
   const [pipelineConfig, setPipelineConfig] = useState(null);
   const [hardware, setHardware] = useState({ gpu_available: false, gpu_name: null });
@@ -347,7 +347,13 @@ export default function TrainTab({ projectId, onOpenVersions }) {
           setWorkers(config.local.workers);
         }
         setHardware(hw);
-        if (hw.gpu_available) setDevice("gpu");
+        // We still fetch these but they might be overridden by "auto" in the UI
+        if (config.local && epochs === "auto") {
+           // Keep "auto" as default in UI, but we can pre-populate if needed
+        }
+        if (hw.gpu_available && device === "auto") {
+           // Keep "auto"
+        }
       }
     } catch (e) {
       console.error("Failed to load training data:", e);
@@ -617,178 +623,60 @@ export default function TrainTab({ projectId, onOpenVersions }) {
              </div>
           </section>
 
-          {/* 4. REVIEW TRAINING PIPELINE */}
-          <section className="bg-violet-900 rounded-[32px] p-8 shadow-2xl shadow-violet-200 overflow-hidden relative group">
-             <div className="absolute top-0 right-0 w-64 h-64 bg-violet-800 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/2 opacity-50 group-hover:opacity-80 transition-opacity"></div>
-             
-             <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-8">
-                   <div className="w-10 h-10 bg-violet-800 rounded-xl flex items-center justify-center text-violet-100 shadow-inner border border-violet-700">
-                      <Gauge size={20} />
-                   </div>
-                   <h2 className="text-[19px] font-black text-white tracking-tight">4. Review Training Pipeline</h2>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-8 mb-8">
-                   <div className="bg-violet-800/40 rounded-[24px] p-6 border border-violet-700/50 backdrop-blur-sm">
-                      <h4 className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <CheckCircle2 size={12} /> Standard Preprocessing (Deterministic)
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                         {pipelineConfig?.preprocessing && Object.entries(pipelineConfig.preprocessing).map(([key, val]) => (
-                           val && (
-                             <span key={key} className="px-3 py-1.5 bg-violet-950/50 text-violet-100 text-[11px] font-bold rounded-lg border border-violet-700/30 capitalize">
-                               {key.replace(/_/g, ' ')}
-                             </span>
-                           )
-                         ))}
-                      </div>
-                   </div>
-
-                   <div className="bg-violet-800/40 rounded-[24px] p-6 border border-violet-700/50 backdrop-blur-sm">
-                      <h4 className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <Activity size={12} /> Live Augmentations (Stochastic)
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                         {pipelineConfig?.augmentation && Object.entries(pipelineConfig.augmentation).map(([key, val]) => (
-                           val && (
-                             <span key={key} className="px-3 py-1.5 bg-violet-950/50 text-violet-100 text-[11px] font-bold rounded-lg border border-violet-700/30 capitalize">
-                               {key.replace(/_/g, ' ')}
-                             </span>
-                           )
-                         ))}
-                      </div>
-                   </div>
-                </div>
-
-                <div className="flex items-center justify-between p-6 bg-violet-950/40 rounded-[24px] border border-violet-700/50">
-                   <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-violet-500 rounded-2xl flex items-center justify-center text-white shadow-lg">
-                         <Target size={24} />
-                      </div>
-                      <div>
-                         <div className="text-[11px] font-bold text-violet-300 uppercase tracking-widest">Ready to initiate</div>
-                         <div className="text-[15px] font-black text-white tracking-tight">{selectedArchitecture} on {selectedVersion?.name || 'V1'}</div>
-                      </div>
-                   </div>
-                   <button 
-                     onClick={handleTrain}
-                     disabled={isSubmitting || !selectedVersion}
-                     className="px-10 py-4 bg-white text-violet-900 rounded-[20px] text-[15px] font-black shadow-xl hover:bg-violet-50 transition-all flex items-center gap-3 active:scale-95 disabled:opacity-50"
-                   >
-                     {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} fill="currentColor" />}
-                     Start Training Run
-                   </button>
-                </div>
-             </div>
-          </section>
         </div>
 
         {/* Sidebar Configuration */}
         <aside className="space-y-8">
-           {/* Hyperparameters */}
+
+
+           {/* Hyperparameters Override */}
            <section className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-sm">
               <h2 className="text-[17px] font-black text-gray-950 mb-6 flex items-center gap-2">
-                 <RefreshCcw size={18} className="text-violet-600" /> Hyperparameters
+                 <RefreshCcw size={18} className="text-violet-600" /> Configuration
               </h2>
               <div className="space-y-5">
                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Epochs</label>
-                    <input 
-                      type="number" 
-                      value={epochs} 
-                      onChange={e => setEpochs(Number(e.target.value))} 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Batch Size</label>
-                    <input 
-                      type="number" 
-                      value={batchSize} 
-                      onChange={e => setBatchSize(Number(e.target.value))} 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Image Size</label>
-                    <input 
-                      type="number" 
-                      value={imgSize} 
-                      onChange={e => setImgSize(Number(e.target.value))} 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Workers</label>
-                    <input 
-                      type="number" 
-                      value={workers} 
-                      onChange={e => setWorkers(Number(e.target.value))} 
-                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3.5 text-[14px] font-black focus:ring-4 focus:ring-violet-100 focus:border-violet-400 outline-none transition" 
-                    />
-                 </div>
-              </div>
-           </section>
-
-           {/* Hardware & Mode */}
-           <section className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-[17px] font-black text-gray-950 flex items-center gap-2">
-                   <Monitor size={18} className="text-violet-600" /> Hardware & Mode
-                </h2>
-                {hardware.gpu_available ? (
-                  <div className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase rounded-md border border-emerald-100 flex items-center gap-1">
-                    <Zap size={8} fill="currentColor" /> GPU Detected
-                  </div>
-                ) : (
-                  <div className="px-2 py-0.5 bg-gray-50 text-gray-400 text-[8px] font-black uppercase rounded-md border border-gray-100">
-                    CPU Only
-                  </div>
-                )}
-              </div>
-              <div className="space-y-6">
-                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Training Mode</label>
-                    <div className="space-y-2">
-                       {TRAINING_MODES.map(m => (
-                         <button
-                           key={m.id}
-                           disabled={m.disabled}
-                           onClick={() => setTrainingMode(m.id)}
-                           className={`w-full flex items-center gap-3 p-4 rounded-[20px] border text-left transition-all ${
-                             trainingMode === m.id 
-                               ? 'bg-violet-600 border-violet-700 text-white shadow-lg shadow-violet-100' 
-                               : 'bg-gray-50 border-gray-100 text-gray-500 opacity-60 hover:opacity-100'
-                           }`}
-                         >
-                           <m.icon size={18} className={trainingMode === m.id ? 'text-white' : 'text-gray-400'} />
-                           <div>
-                             <div className="text-[12px] font-black">{m.label}</div>
-                             <div className={`text-[10px] font-bold ${trainingMode === m.id ? 'text-violet-100' : 'text-gray-400'}`}>{m.description}</div>
-                           </div>
-                           {m.disabled && <Lock size={12} className="ml-auto opacity-40" />}
-                         </button>
-                       ))}
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between">
+                       Epochs <span>{epochs === 'auto' ? '(Auto)' : ''}</span>
+                    </label>
+                    <div className="flex gap-2">
+                       <input 
+                         type="text" 
+                         value={epochs} 
+                         onChange={e => setEpochs(e.target.value)} 
+                         className="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-[13px] font-black focus:ring-4 focus:ring-violet-100 outline-none transition" 
+                       />
+                       <button onClick={() => setEpochs("auto")} className="px-3 bg-violet-50 text-violet-600 rounded-xl text-[10px] font-black uppercase border border-violet-100">Auto</button>
                     </div>
                  </div>
-
                  <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Compute Device</label>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between">
+                       Batch Size <span>{batchSize === 'auto' ? '(Auto)' : ''}</span>
+                    </label>
                     <div className="flex gap-2">
-                       {DEVICE_OPTIONS.map(d => (
-                         <button
-                           key={d.value}
-                           onClick={() => setDevice(d.value)}
-                           className={`flex-1 flex items-center justify-center gap-2 p-3.5 rounded-xl border transition-all font-black text-[11px] uppercase tracking-wider ${
-                             device === d.value 
-                               ? 'bg-violet-600 text-white border-violet-700 shadow-md' 
-                               : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-white hover:border-violet-200'
-                           }`}
-                         >
-                           <d.icon size={14} /> {d.label}
-                         </button>
-                       ))}
+                       <input 
+                         type="text" 
+                         value={batchSize} 
+                         onChange={e => setBatchSize(e.target.value)} 
+                         className="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-[13px] font-black focus:ring-4 focus:ring-violet-100 outline-none transition" 
+                       />
+                       <button onClick={() => setBatchSize("auto")} className="px-3 bg-violet-50 text-violet-600 rounded-xl text-[10px] font-black uppercase border border-violet-100">Auto</button>
+                    </div>
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between">
+                       Hardware <span>{device === 'auto' ? '(Auto Detect)' : ''}</span>
+                    </label>
+                    <div className="flex gap-2">
+                       <select 
+                         value={device} 
+                         onChange={e => setDevice(e.target.value)}
+                         className="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-[13px] font-black focus:ring-4 focus:ring-violet-100 outline-none transition appearance-none"
+                       >
+                          <option value="auto">Auto Detect</option>
+                          <option value="cpu">Force CPU</option>
+                          <option value="gpu">Force GPU</option>
+                       </select>
                     </div>
                  </div>
               </div>
@@ -814,7 +702,7 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                        <th className="pb-4 pl-2">Job ID / Status</th>
                        <th className="pb-4">Architecture</th>
                        <th className="pb-4">Version</th>
-                       <th className="pb-4">Progress</th>
+                       <th className="pb-4">Progress / Est. Time</th>
                        <th className="pb-4">Metrics (mAP)</th>
                        <th className="pb-4 text-right">Date</th>
                        <th className="pb-4 text-right pr-2">Actions</th>
@@ -837,6 +725,11 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                                <div>
                                   <div className="text-[13px] font-black text-gray-900 leading-none mb-1">{job.status}</div>
                                   <div className="text-[10px] font-bold text-gray-400 font-mono tracking-tighter uppercase">{job.job_id?.slice(0, 8)}</div>
+                                  {job.status === 'Failed' && job.error && (
+                                    <div className="mt-2 p-2 bg-rose-50 border border-rose-100 rounded-lg text-[9px] font-bold text-rose-600 max-w-[200px] break-words">
+                                      {job.error.slice(-120)}
+                                    </div>
+                                  )}
                                </div>
                             </div>
                          </td>
@@ -847,14 +740,21 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                             </span>
                          </td>
                          <td className="py-5">
-                            <div className="flex items-center gap-3">
-                               <div className="w-32 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                  <div 
-                                    className={`h-full transition-all duration-1000 rounded-full ${job.status === 'Failed' ? 'bg-rose-400' : 'bg-violet-600'}`}
-                                    style={{ width: `${job.progress}%` }}
-                                  />
+                            <div className="flex flex-col gap-1.5">
+                               <div className="flex items-center gap-3">
+                                  <div className="w-32 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                     <div 
+                                       className={`h-full transition-all duration-1000 rounded-full ${job.status === 'Failed' ? 'bg-rose-400' : 'bg-violet-600'}`}
+                                       style={{ width: `${job.progress}%` }}
+                                     />
+                                  </div>
+                                  <span className="text-[11px] font-black text-gray-400">{job.progress}%</span>
                                </div>
-                               <span className="text-[11px] font-black text-gray-400">{job.progress}%</span>
+                               {(job.status === 'Training' || job.status === 'Preparing') && (
+                                  <div className="text-[9px] font-bold text-violet-500 uppercase tracking-widest flex items-center gap-1">
+                                     <Loader2 size={8} className="animate-spin" /> Est: {job.estimated_time_remaining || 'Calculating...'}
+                                  </div>
+                               )}
                             </div>
                          </td>
                          <td className="py-5">

@@ -198,6 +198,62 @@ def _get_hardware_status():
     """Return cached hardware details."""
     return _hardware_cache
 
+def _calculate_auto_params(project_id, version_id, architecture):
+    """
+    Intelligent Auto Hyperparameter Engine.
+    Determines optimal values based on dataset size, class count, image resolution, and hardware.
+    """
+    db = _get_db()
+    version = db.versions.find_one({"version_id": version_id}) or {}
+    hw = _get_hardware_status()
+    
+    img_count = version.get("images_count", 0)
+    class_count = len(version.get("classes", []))
+    
+    # 1. Epochs Logic
+    # Small (<500): 100-200, Medium (500-2000): 50-100, Large (>2000): 25-50
+    if img_count < 500:
+        epochs = 100
+    elif img_count < 2000:
+        epochs = 50
+    else:
+        epochs = 25
+        
+    # 2. Batch Size Logic
+    # Based on available VRAM/RAM.
+    if hw["gpu_available"]:
+        # Simple heuristic: YOLOv8 on 8GB GPU can handle ~16-32 batch size at 640
+        batch_size = 16
+    elif hw["mps_available"]:
+        batch_size = 8
+    else:
+        batch_size = 4 # CPU is slow, keep batch small to manage memory
+        
+    # 3. Image Size Logic
+    # Use median or standard resolution
+    img_size = 640 # Default for YOLOv8
+    
+    # 4. Workers Logic
+    # Based on CPU cores
+    import multiprocessing
+    cpu_cores = multiprocessing.cpu_count()
+    workers = min(cpu_cores, 8)
+    
+    # 5. Device Logic (MANDATORY fallback)
+    device = "cpu"
+    if hw["gpu_available"]:
+        device = "gpu"
+    elif hw["mps_available"]:
+        device = "mps"
+        
+    return {
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "img_size": img_size,
+        "workers": workers,
+        "device": device
+    }
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/api/training/health")
@@ -266,21 +322,57 @@ def list_jobs(project_id):
 @app.route("/api/projects/<project_id>/train", methods=["POST"])
 def start_training(project_id):
     data = request.json or {}
+    return _dispatch_training(project_id, data)
+
+@app.route("/api/train", methods=["POST"])
+def start_training_alias():
+    """Alias for /api/train as per requested API structure."""
+    data = request.json or {}
+    project_id = data.get("project_id") or data.get("projectId")
+    if not project_id:
+        # Try to find a project if none provided (demo fallback)
+        try:
+            db = _get_db()
+            p = db.projects.find_one()
+            if p: project_id = str(p["_id"])
+        except: pass
+    return _dispatch_training(project_id, data)
+
+def _dispatch_training(project_id, data):
     conf = _load_conf()
-
-    version_id = data.get("version_id")
-    architecture = data.get("architecture", conf.get("model_architecture", "yolov8n"))
+    version_id = data.get("version_id") or data.get("dataset_version")
+    architecture = data.get("architecture") or data.get("model") or conf.get("model_architecture", "yolov8n")
     params = data.get("params", {})
-
-    epochs     = int(params.get("epochs",     conf.get("local_epochs",     25)))
-    batch_size = int(params.get("batch_size", conf.get("local_batch_size",  8)))
-    img_size   = int(params.get("img_size",   conf.get("local_img_size",  640)))
-    workers    = int(params.get("workers",    conf.get("local_workers",     4)))
-    device     = params.get("device", conf.get("training_device", "cpu"))
-    mode       = params.get("training_mode", conf.get("training_mode", "local"))
+    
+    # If using the direct /api/train payload format
+    if "epochs" in data and "params" not in data:
+        params = {
+            "epochs": data.get("epochs"),
+            "batch_size": data.get("batch_size"),
+            "img_size": data.get("img_size") or data.get("image_size"),
+            "workers": data.get("workers"),
+            "device": data.get("device")
+        }
 
     if not version_id:
         return jsonify({"error": "version_id is required"}), 400
+    if not project_id:
+        return jsonify({"error": "project_id is required"}), 400
+
+    # Handle "auto" parameters
+    auto_params = _calculate_auto_params(project_id, version_id, architecture)
+    
+    def _resolve(val, key):
+        if val is None or str(val).lower() == "auto":
+            return auto_params[key]
+        return val
+
+    epochs     = int(_resolve(params.get("epochs"), "epochs"))
+    batch_size = int(_resolve(params.get("batch_size"), "batch_size"))
+    img_size   = int(_resolve(params.get("img_size"), "img_size"))
+    workers    = int(_resolve(params.get("workers"), "workers"))
+    device     = _resolve(params.get("device"), "device")
+    mode       = params.get("training_mode", conf.get("training_mode", "local"))
 
     job_id = uuid.uuid4().hex
     arch_info = ARCH_MAP.get(architecture, {"label": architecture, "weights": f"{architecture}.pt", "task": "detect"})
@@ -302,6 +394,7 @@ def start_training(project_id):
         },
         "status":    "Preparing",
         "progress":  0,
+        "estimated_time_remaining": "Calculating...",
         "output_dir": str(output_dir),
         "created_at": _utc_now(),
         "updated_at": _utc_now(),
@@ -318,7 +411,7 @@ def start_training(project_id):
     # Fire background thread
     thread = threading.Thread(
         target=_run_training,
-        args=(job_id, project_id, version_id, architecture, arch_info, params, mode, output_dir, conf),
+        args=(job_id, project_id, version_id, architecture, arch_info, job_doc["params"], mode, output_dir, conf),
         daemon=True,
     )
     thread.start()
@@ -361,32 +454,45 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
     weights    = arch_info.get("weights", "yolov8n.pt")
     task       = arch_info.get("task", "detect")
 
-    # Try to find the dataset YAML
+    # ── Resolve Dataset Directory ─────────────────────────────────────────────
     dataset_dir = ROOT_DIR / conf.get("local_dataset_dir", conf.get("dataset_dir", "storage/datasets"))
-    data_yaml = dataset_dir / version_id / "data.yaml"
+    actual_version_dir = dataset_dir / version_id
     
-    # Check if the folder is complete (should have a 'train' directory or similar)
-    is_complete = data_yaml.exists() and (dataset_dir / version_id / "train").exists()
+    # If not found directly, try to find by prefix (handle truncated IDs)
+    if not actual_version_dir.exists():
+        matching = [d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith(version_id)]
+        if matching:
+            actual_version_dir = matching[0]
+            print(f"[TRAIN] Resolved truncated version {version_id} -> {actual_version_dir.name}")
+            # Update version_id for consistency
+            version_id = actual_version_dir.name
+
+    data_yaml = actual_version_dir / "data.yaml"
+    is_complete = data_yaml.exists() and (actual_version_dir / "train").exists()
     
     if not is_complete:
         # Try fallback: maybe it's stored under archive_id (old naming convention)
         try:
             db = _get_db()
             version_doc = db.versions.find_one({"version_id": version_id})
+            if not version_doc:
+                # Try prefix search in DB
+                version_doc = db.versions.find_one({"version_id": {"$regex": f"^{version_id}"}})
+                
             if version_doc and version_doc.get("archive_id"):
                 alt_dir = dataset_dir / version_doc["archive_id"]
                 alt_yaml = alt_dir / "data.yaml"
                 if alt_yaml.exists() and (alt_dir / "train").exists():
                     data_yaml = alt_yaml
+                    actual_version_dir = alt_dir
                     is_complete = True
         except Exception as db_err:
             print(f"[TRAIN] DB fallback check failed: {db_err}")
 
     if not is_complete:
-        # Final fallback: generate a minimal data.yaml for demo purposes
-        print(f"[TRAIN] Version {version_id} incomplete. Using demo fallback.")
-        data_yaml.parent.mkdir(parents=True, exist_ok=True)
-        _generate_demo_yaml(data_yaml, version_id, project_id, conf)
+        msg = f"Dataset version {version_id} is incomplete or missing. Ensure you have generated the version and exported it to YOLO format."
+        print(f"[TRAIN] {msg}")
+        raise ValueError(msg)
 
     data_yaml_abs = str(data_yaml.resolve())
     
@@ -464,6 +570,7 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
         _active_processes[job_id] = proc
 
         log_lines = []
+        start_time = time.time()
         for line in proc.stdout:
             line = line.rstrip()
             log_lines.append(line)
@@ -473,8 +580,26 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
                     parts = line.split()
                     ep_str = [p for p in parts if "/" in p][0]
                     cur, total = ep_str.split("/")
-                    progress = min(95, int(int(cur) / int(total) * 85) + 10)
-                    _update({"progress": progress})
+                    cur_ep = int(cur)
+                    total_eps = int(total)
+                    
+                    progress = min(95, int(cur_ep / total_eps * 85) + 10)
+                    
+                    # Calculate estimated time
+                    elapsed = time.time() - start_time
+                    if cur_ep > 0:
+                        time_per_epoch = elapsed / cur_ep
+                        remaining_eps = total_eps - cur_ep
+                        est_seconds = int(time_per_epoch * remaining_eps)
+                        
+                        if est_seconds > 60:
+                            est_str = f"{est_seconds // 60}m {est_seconds % 60}s"
+                        else:
+                            est_str = f"{est_seconds}s"
+                            
+                        _update({"progress": progress, "estimated_time_remaining": est_str})
+                    else:
+                        _update({"progress": progress})
                 except Exception:
                     pass
 

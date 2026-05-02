@@ -18,6 +18,7 @@ import {
   AlertCircle
 } from "lucide-react";
 import VersionDetailsModal from "./VersionDetailsModal";
+import VersionDownloadModal from "./VersionDownloadModal";
 
 export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate }) {
   const [versions, setVersions] = useState([]);
@@ -25,6 +26,7 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
   const [search, setSearch] = useState("");
   const [error, setError] = useState(null);
   const [selectedVersion, setSelectedVersion] = useState(null);
+  const [downloadingVersion, setDownloadingVersion] = useState(null);
 
   const fetchVersions = useCallback(async () => {
     setIsLoading(true);
@@ -167,6 +169,7 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
               onTrain={() => onTrainModel(version)}
               onDelete={() => handleDelete(version.version_id)}
               onViewDetails={() => setSelectedVersion(version)}
+              onDownload={() => setDownloadingVersion(version)}
             />
           ))}
         </div>
@@ -181,11 +184,18 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
           onTrainModel(v);
         }}
       />
+
+      <VersionDownloadModal
+        isOpen={!!downloadingVersion}
+        onClose={() => setDownloadingVersion(null)}
+        projectId={projectId}
+        version={downloadingVersion || {}}
+      />
     </div>
   );
 }
 
-function VersionCard({ version, onTrain, onDelete, onViewDetails }) {
+function VersionCard({ version, onTrain, onDelete, onViewDetails, onDownload }) {
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
@@ -288,13 +298,12 @@ function VersionCard({ version, onTrain, onDelete, onViewDetails }) {
           >
             <Zap size={16} /> Train Model
           </button>
-          <a 
-            href={version.download_url}
-            download
-            className={`px-4 py-3 bg-white border border-gray-200 text-gray-700 rounded-2xl font-black text-sm flex items-center gap-2 hover:border-violet-300 hover:text-violet-600 transition ${!version.download_url ? 'pointer-events-none opacity-50' : ''}`}
+          <button 
+            onClick={onDownload}
+            className={`px-4 py-3 bg-white border border-gray-200 text-gray-700 rounded-2xl font-black text-sm flex items-center gap-2 hover:border-violet-300 hover:text-violet-600 transition ${version.status !== 'Ready' ? 'pointer-events-none opacity-50' : ''}`}
           >
             <Download size={16} /> Download
-          </a>
+          </button>
           <button 
             onClick={onViewDetails}
             className="p-3 bg-white border border-gray-200 text-gray-400 rounded-2xl hover:border-violet-300 hover:text-violet-600 transition"

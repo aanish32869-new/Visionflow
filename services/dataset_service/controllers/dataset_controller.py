@@ -7,7 +7,151 @@ from models.db import db, serialize_doc
 from services.analytics_service import AnalyticsService
 from utils.logger import logger
 
+import random
+from datetime import datetime
+from pymongo import UpdateOne
+
 dataset_bp = Blueprint('dataset_bp', __name__)
+
+@dataset_bp.route("/api/projects/<project_id>/dataset/rebalance", methods=["POST"])
+def rebalance_dataset(project_id):
+    try:
+        data = request.json
+        train_ratio = data.get("train", 0.7)
+        valid_ratio = data.get("valid", 0.2)
+        test_ratio = data.get("test", 0.1)
+        confirm = data.get("confirm", False)
+        
+        if not confirm:
+            return jsonify({"error": "Confirmation required"}), 400
+            
+        if abs((train_ratio + valid_ratio + test_ratio) - 1.0) > 0.01:
+            return jsonify({"error": "Ratios must sum to 100%"}), 400
+            
+        # 1. Fetch all assets
+        assets = list(db.assets.find({"project_id": project_id}))
+        if not assets:
+            return jsonify({"error": "No images found in dataset"}), 404
+            
+        # 2. Group assets by their primary class (for balance)
+        # If an image has multiple classes, we use the first one found.
+        class_groups = {}
+        unlabeled_assets = []
+        
+        for asset in assets:
+            # Check for annotations
+            annotations = asset.get("annotations", [])
+            if annotations:
+                primary_class = annotations[0].get("label") or "unlabeled"
+                if primary_class not in class_groups:
+                    class_groups[primary_class] = []
+                class_groups[primary_class].append(asset)
+            else:
+                unlabeled_assets.append(asset)
+                
+        # 3. Redistribute each group
+        asset_updates = []
+        
+        def redistribute(group_assets, t_rat, v_rat):
+            random.shuffle(group_assets)
+            g_total = len(group_assets)
+            g_train_end = int(g_total * t_rat)
+            g_valid_end = g_train_end + int(g_total * v_rat)
+            
+            for idx, g_asset in enumerate(group_assets):
+                s = "train" if idx < g_train_end else ("valid" if idx < g_valid_end else "test")
+                    
+                asset_updates.append(
+                    UpdateOne(
+                        {"_id": g_asset["_id"]},
+                        {"$set": {
+                            "state": s,
+                            "split": s,
+                            "dataset_split": s,
+                            "updated_at": datetime.utcnow().isoformat() + "Z"
+                        }}
+                    )
+                )
+            return g_train_end, (g_valid_end - g_train_end), (g_total - g_valid_end)
+
+        final_counts = {"train": 0, "valid": 0, "test": 0}
+        
+        # Process labeled groups
+        for c_name, c_assets in class_groups.items():
+            tr, va, te = redistribute(c_assets, train_ratio, valid_ratio)
+            final_counts["train"] += tr
+            final_counts["valid"] += va
+            final_counts["test"] += te
+            
+        # Process unlabeled assets
+        if unlabeled_assets:
+            tr, va, te = redistribute(unlabeled_assets, train_ratio, valid_ratio)
+            final_counts["train"] += tr
+            final_counts["valid"] += va
+            final_counts["test"] += te
+            
+        # Perform Bulk Update for Assets
+        if asset_updates:
+            db.assets.bulk_write(asset_updates)
+            
+        # 4. Update Project Configuration (Default Split)
+        db.projects.update_one(
+            {"_id": ObjectId(project_id)} if ObjectId.is_valid(project_id) else {"id": project_id},
+            {"$set": {
+                "default_split": {
+                    "train": train_ratio,
+                    "valid": valid_ratio,
+                    "test": test_ratio
+                }
+            }}
+        )
+
+        # 5. Update All Existing Versions
+        version_asset_updates = []
+        versions = list(db.versions.find({"project_id": project_id}))
+        for version in versions:
+            v_id = version.get("version_id")
+            v_assets = list(db.version_assets.find({"version_id": v_id}))
+            random.shuffle(v_assets)
+            
+            v_total = len(v_assets)
+            v_train_end = int(v_total * train_ratio)
+            v_valid_end = v_train_end + int(v_total * valid_ratio)
+            
+            v_v_counts = {"train": 0, "valid": 0, "test": 0}
+            for idx, v_asset in enumerate(v_assets):
+                v_split = "train" if idx < v_train_end else ("valid" if idx < v_valid_end else "test")
+                v_v_counts[v_split] += 1
+                version_asset_updates.append(
+                    UpdateOne(
+                        {"_id": v_asset["_id"]},
+                        {"$set": {
+                            "state": v_split,
+                            "split": v_split,
+                            "dataset_split": v_split
+                        }}
+                    )
+                )
+            
+            # Update version metadata counts
+            db.versions.update_one(
+                {"version_id": v_id},
+                {"$set": {"split_counts": v_v_counts}}
+            )
+
+        # Perform Bulk Update for Version Assets
+        if version_asset_updates:
+            db.version_assets.bulk_write(version_asset_updates)
+
+        return jsonify({
+            "success": True,
+            "message": f"Successfully rebalanced {len(assets)} images across live dataset and {len(versions)} versions.",
+            "counts": final_counts
+        })
+        
+    except Exception as e:
+        logger.error(f"Error rebalancing dataset: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @dataset_bp.route("/api/projects/<project_id>/dataset/summary", methods=["GET"])
 def get_dataset_summary(project_id):
@@ -215,7 +359,16 @@ def download_export(project_id, export_id):
             logger.error(f"ZIP file missing on disk: {filepath}")
             return jsonify({"error": "Export file missing on disk"}), 404
             
-        return send_from_directory(Config.DATASET_DIR, f"{archive_id}.zip", as_attachment=True, download_name=f"visionflow_export_{export_id[:8]}.zip")
+        from flask import send_file
+        response = send_file(
+            filepath,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"visionflow_v{export.get('options', {}).get('version_id', 'export')}.zip"
+        )
+        # Explicitly set the Content-Disposition header to be sure
+        response.headers["Content-Disposition"] = f"attachment; filename=visionflow_v{export.get('options', {}).get('version_id', 'export')}.zip"
+        return response
     except Exception as e:
         logger.error(f"Error downloading export: {e}")
         return jsonify({"error": str(e)}), 500

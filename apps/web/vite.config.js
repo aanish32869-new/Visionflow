@@ -77,7 +77,7 @@ export default defineConfig({
       '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
       
       // Dataset Service
-      '^/api/projects/[^/]+/(versions|annotation-status|dataset)(?:$|[/?])': createProxy(datasetTarget),
+      '^/api/projects/[^/]+/(versions|annotation-status|dataset|analytics)(?:$|[/?])': createProxy(datasetTarget),
       '^/api/annotations(?:$|[/?])': createProxy(datasetTarget),
       '^/api/batches/[^/]+/export(?:$|[/?])': createProxy(datasetTarget),
       '^/api/projects/[^/]+/dataset/export(?:$|[/?])': createProxy(datasetTarget),
