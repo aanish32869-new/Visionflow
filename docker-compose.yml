@@ -7,24 +7,53 @@ services:
       - "5000:80"
     depends_on:
       - auth-service
+      - project-service
       - dataset-service
+      - training-service
       - inference-service
   auth-service:
-    build: ./services/auth-service
+    build: ./services/auth_service
     environment:
       - MONGO_URI=mongodb://mongo:27017/
+    depends_on:
+      - mongo
+  project-service:
+    build:
+      context: ./services
+      dockerfile: project_service_node/Dockerfile
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+      - MONGO_DB_NAME=visionflow
+      - PORT_PROJECT_SERVICE=5004
+    depends_on:
+      - mongo
   dataset-service:
-    build: ./services/dataset-service
+    build: ./services/dataset_service
     environment:
       - MONGO_URI=mongodb://mongo:27017/
+      - PORT_DATASET_SERVICE=5003
+    depends_on:
+      - mongo
+  training-service:
+    build: ./services/training-service
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+      - PORT_TRAINING_SERVICE=5005
+    depends_on:
+      - mongo
   inference-service:
-    build: ./services/inference-service
+    build: ./services/inference_service
     environment:
       - MONGO_URI=mongodb://mongo:27017/
+      - PORT_INFERENCE_SERVICE=5006
+    depends_on:
+      - mongo
   web:
     build: ./apps/web
     ports:
       - "3000:3000"
+    depends_on:
+      - api-gateway
   mongo:
     image: mongo:latest
     ports:

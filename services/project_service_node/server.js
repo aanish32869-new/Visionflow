@@ -1,4 +1,5 @@
 const fs = require("fs");
+fs.mkdirSync("logs", { recursive: true });
 fs.writeFileSync("logs/project_service_heartbeat.txt", "Project service started at " + new Date().toISOString());
 const path = require("path");
 const crypto = require("crypto");
@@ -54,6 +55,62 @@ const JOB_STATE = {
   REVIEW: "review",
   COMPLETED: "completed",
 };
+
+const DEPLOYMENT_TEMPLATES = [
+  {
+    deployment_key: "hosted_api",
+    name: "Hosted Workflow API",
+    description: "Serve a project workflow through a managed HTTP endpoint for product and internal tool integrations.",
+    environment: "cloud",
+    mode: "Hosted API",
+    runtime: "VisionFlow Runtime",
+    version: "v1",
+    default_config: {
+      min_replicas: 1,
+      max_replicas: 2,
+      cpu: "shared",
+    },
+  },
+  {
+    deployment_key: "dedicated_runtime",
+    name: "Dedicated Runtime",
+    description: "Reserve a private runtime for higher-throughput model inference and controlled production rollouts.",
+    environment: "cloud",
+    mode: "Dedicated",
+    runtime: "Private Runtime",
+    version: "v1",
+    default_config: {
+      min_replicas: 1,
+      max_replicas: 1,
+      accelerator: "optional",
+    },
+  },
+  {
+    deployment_key: "batch_processing",
+    name: "Batch Processing",
+    description: "Run large image batches asynchronously and collect structured prediction output after completion.",
+    environment: "cloud",
+    mode: "Batch",
+    runtime: "Batch Worker",
+    version: "v1",
+    default_config: {
+      queue: "default",
+      concurrency: 1,
+    },
+  },
+  {
+    deployment_key: "local_edge",
+    name: "Local Edge Runtime",
+    description: "Package a workflow for local or private-network inference without sending images to a hosted service.",
+    environment: "edge",
+    mode: "Local",
+    runtime: "Docker/ONNX",
+    version: "v1",
+    default_config: {
+      target: "docker",
+    },
+  },
+];
 
 const app = express();
 app.use(cors());
@@ -171,6 +228,131 @@ app.get("/api/workspace-overview", async (_req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch workspace overview" });
+  }
+});
+
+app.get("/api/deployments/summary", async (_req, res) => {
+  try {
+    const [projects, workflows, deployments] = await Promise.all([
+      getProjects(),
+      getWorkflows(),
+      db.collection("deployments").find().sort({ updated_at: -1, created_at: -1 }).toArray(),
+    ]);
+
+    res.json({
+      templates: DEPLOYMENT_TEMPLATES,
+      deployments: deployments.map(serializeDeployment),
+      projects,
+      workflows,
+      stats: {
+        templates: DEPLOYMENT_TEMPLATES.length,
+        deployments: deployments.length,
+        running: deployments.filter((item) => item.status === "Running").length,
+      },
+    });
+  } catch (error) {
+    logger.error("Failed to fetch deployment summary", error);
+    res.status(500).json({ error: "Failed to fetch deployment summary" });
+  }
+});
+
+app.get("/api/workflows", async (_req, res) => {
+  try {
+    res.json(await getWorkflows());
+  } catch (error) {
+    logger.error("Failed to fetch workflows", error);
+    res.status(500).json({ error: "Failed to fetch workflows" });
+  }
+});
+
+app.post("/api/deployments", async (req, res) => {
+  try {
+    const template = getDeploymentTemplate(req.body?.deployment_key);
+    if (!template) {
+      return res.status(400).json({ error: "Unknown deployment template." });
+    }
+
+    const now = nowIso();
+    const deploymentId = crypto.randomUUID();
+    const workflowId = String(req.body?.workflow_id || "").trim();
+    const projectId = String(req.body?.project_id || "").trim();
+    const endpointPath = `/api/deployments/${deploymentId}/infer`;
+    const endpointUrl = `http://localhost:${config.port}${endpointPath}`;
+
+    const deploymentDoc = {
+      deployment_id: deploymentId,
+      deployment_key: template.deployment_key,
+      name: String(req.body?.name || template.name).trim() || template.name,
+      description: template.description,
+      environment: req.body?.environment || template.environment,
+      mode: template.mode,
+      runtime: template.runtime,
+      version: template.version,
+      project_id: projectId || null,
+      project_name: String(req.body?.project_name || "").trim() || "Unassigned Project",
+      workflow_id: workflowId || null,
+      workflow_name: String(req.body?.workflow_name || "").trim() || "Default Workflow",
+      config: {
+        ...(template.default_config || {}),
+        ...(req.body?.config || {}),
+      },
+      status: "Provisioning",
+      endpoint_path: endpointPath,
+      endpoint_url: endpointUrl,
+      cli_command: buildDeploymentCli(endpointUrl),
+      sdk_snippet: buildDeploymentSdk(endpointUrl),
+      created_at: now,
+      updated_at: now,
+      activated_at: null,
+    };
+
+    await db.collection("deployments").insertOne(deploymentDoc);
+    res.status(201).json(serializeDeployment(deploymentDoc));
+  } catch (error) {
+    logger.error("Failed to create deployment", error);
+    res.status(500).json({ error: "Failed to create deployment" });
+  }
+});
+
+app.post("/api/deployments/:deploymentId/activate", async (req, res) => {
+  try {
+    const deployment = await findDeployment(req.params.deploymentId);
+    if (!deployment) {
+      return res.status(404).json({ error: "Deployment not found" });
+    }
+
+    const now = nowIso();
+    await db.collection("deployments").updateOne(
+      { _id: deployment._id },
+      {
+        $set: {
+          status: "Running",
+          activated_at: now,
+          updated_at: now,
+        },
+      }
+    );
+
+    const refreshed = await findDeployment(req.params.deploymentId);
+    res.json(serializeDeployment(refreshed));
+  } catch (error) {
+    logger.error(`Failed to activate deployment ${req.params.deploymentId}`, error);
+    res.status(500).json({ error: "Failed to activate deployment" });
+  }
+});
+
+app.delete("/api/deployments/:deploymentId", async (req, res) => {
+  try {
+    const deployment = await findDeployment(req.params.deploymentId);
+    if (!deployment) {
+      return res.status(404).json({ error: "Deployment not found" });
+    }
+
+    await db.collection("deployments").deleteOne({ _id: deployment._id });
+    res.json({ success: true, deleted_deployment_id: req.params.deploymentId });
+  } catch (error) {
+    logger.error(`Failed to delete deployment ${req.params.deploymentId}`, error);
+    res.status(500).json({ error: "Failed to delete deployment" });
   }
 });
 
@@ -891,6 +1073,7 @@ app.post("/api/assets/:assetId/annotations", async (req, res) => {
           status: annotations.length > 0 ? "annotated" : "unassigned",
           is_annotated: annotations.length > 0,
           annotation_count: annotations.length,
+          detected_classes: labels,
           updated_at: nowIso(),
         },
       }
@@ -1134,6 +1317,8 @@ async function ensureIndexes() {
   await db.collection("annotation_sessions").createIndex({ project_id: 1, updated_at: -1 });
   await db.collection("folders").createIndex({ name: 1 });
   await db.collection("jobs").createIndex({ project_id: 1, updated_at: -1 });
+  await db.collection("deployments").createIndex({ deployment_id: 1 }, { unique: true, sparse: true });
+  await db.collection("deployments").createIndex({ updated_at: -1 });
   await db.collection("assets").createIndex({ batch_id: 1 });
   await db.collection("assets").createIndex({ job_id: 1 });
 }
@@ -1491,6 +1676,79 @@ async function getProjects() {
   }
 
   return results;
+}
+
+async function getWorkflows() {
+  const projects = await getProjects();
+  const projectMap = new Map(projects.map((project) => [String(project.id), project]));
+  const models = await db.collection("models").find().sort({ created_at: -1 }).toArray();
+
+  const modelWorkflows = models.map((model) => {
+    const projectId = String(model.project_id || "");
+    const project = projectMap.get(projectId);
+    const modelId = model.model_id || String(model._id);
+    return {
+      id: `model-${modelId}`,
+      name: `${model.name || "Model"} Inference`,
+      type: "model_inference",
+      project_id: projectId || null,
+      project_name: project?.name || "Unknown Project",
+      model_id: modelId,
+      model_name: model.name || null,
+      version_id: model.version_id || null,
+      version_display_id: model.version_display_id || null,
+      runtime: model.runtime_model || model.architecture_label || model.architecture || "VisionFlow Runtime",
+      updated_at: model.updated_at || model.created_at || null,
+    };
+  });
+
+  if (modelWorkflows.length) {
+    return modelWorkflows;
+  }
+
+  return projects.map((project) => ({
+    id: `project-${project.id}-default`,
+    name: `${project.name} Default Workflow`,
+    type: "project_inference",
+    project_id: project.id,
+    project_name: project.name,
+    model_id: null,
+    model_name: null,
+    version_id: null,
+    version_display_id: null,
+    runtime: "VisionFlow Runtime",
+    updated_at: project.updated_at || project.updated || null,
+  }));
+}
+
+function getDeploymentTemplate(deploymentKey) {
+  const key = String(deploymentKey || "hosted_api").trim();
+  return DEPLOYMENT_TEMPLATES.find((template) => template.deployment_key === key) || null;
+}
+
+async function findDeployment(deploymentId) {
+  const idText = String(deploymentId || "").trim();
+  if (!idText) return null;
+
+  if (ObjectId.isValid(idText)) {
+    const byObjectId = await db.collection("deployments").findOne({ _id: new ObjectId(idText) });
+    if (byObjectId) return byObjectId;
+  }
+
+  return db.collection("deployments").findOne({ deployment_id: idText });
+}
+
+function buildDeploymentCli(endpointUrl) {
+  return `curl -X POST "${endpointUrl}" -F "file=@image.jpg"`;
+}
+
+function buildDeploymentSdk(endpointUrl) {
+  return [
+    "import requests",
+    "",
+    `response = requests.post("${endpointUrl}", files={"file": open("image.jpg", "rb")})`,
+    "print(response.json())",
+  ].join("\n");
 }
 
 async function collectProjectClassCounts(projectId) {
@@ -1905,6 +2163,38 @@ function serializeJob(job) {
     unassigned_count: job.unassigned_count || 0,
     created_at: job.created_at,
     updated_at: job.updated_at,
+  };
+}
+
+function serializeDeployment(deployment) {
+  const id = deployment.deployment_id || deployment._id?.toString();
+  const endpointUrl =
+    deployment.endpoint_url ||
+    (id ? `http://localhost:${config.port}/api/deployments/${id}/infer` : "");
+
+  return {
+    id,
+    deployment_id: deployment.deployment_id || id,
+    deployment_key: deployment.deployment_key,
+    name: deployment.name,
+    description: deployment.description,
+    environment: deployment.environment || "cloud",
+    mode: deployment.mode || "Hosted API",
+    runtime: deployment.runtime || "VisionFlow Runtime",
+    version: deployment.version || "v1",
+    project_id: deployment.project_id || null,
+    project_name: deployment.project_name || "Unassigned Project",
+    workflow_id: deployment.workflow_id || null,
+    workflow_name: deployment.workflow_name || "Default Workflow",
+    config: deployment.config || {},
+    status: deployment.status || "Provisioning",
+    endpoint_path: deployment.endpoint_path || `/api/deployments/${id}/infer`,
+    endpoint_url: endpointUrl,
+    cli_command: deployment.cli_command || buildDeploymentCli(endpointUrl),
+    sdk_snippet: deployment.sdk_snippet || buildDeploymentSdk(endpointUrl),
+    created_at: deployment.created_at || null,
+    updated_at: deployment.updated_at || null,
+    activated_at: deployment.activated_at || null,
   };
 }
 

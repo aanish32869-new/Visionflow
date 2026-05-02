@@ -40,19 +40,26 @@ def get_health(project_id):
 @analytics_bp.route("/api/projects/<project_id>/analytics-csv", methods=["GET"])
 def export_analytics_csv(project_id):
     try:
-        # 1. Fetch data
         assets = list(db.assets.find({"project_id": project_id}))
+        asset_ids = [str(asset.get("_id")) for asset in assets]
+        annotations = list(db.annotations.find({
+            "project_id": project_id,
+            "asset_id": {"$in": asset_ids}
+        })) if asset_ids else []
+
+        annotations_by_asset = {}
+        for annotation in annotations:
+            annotations_by_asset.setdefault(str(annotation.get("asset_id")), []).append(annotation)
         
-        # 2. Aggregate stats per class
-        stats = {} # { "class_name": { "total": 0, "train": 0, "valid": 0, "test": 0 } }
+        stats = {}
         
         for asset in assets:
             split = asset.get("dataset_split") or asset.get("state") or asset.get("split") or "unassigned"
-            # Normalize split name
-            if split == "val": split = "valid"
+            if split == "val":
+                split = "valid"
             
-            for anno in asset.get("annotations", []):
-                cls = anno.get("label") or "unlabeled"
+            for annotation in annotations_by_asset.get(str(asset.get("_id")), []):
+                cls = annotation.get("label") or "unlabeled"
                 if cls not in stats:
                     stats[cls] = {"total": 0, "train": 0, "valid": 0, "test": 0}
                 

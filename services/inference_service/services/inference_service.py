@@ -234,6 +234,7 @@ class InferenceLogic:
             {
                 "project_id": str(project_id),
                 "$or": [
+                    {"model_id": model_text},
                     {"name": model_text},
                     {"checkpoint": model_text},
                 ],

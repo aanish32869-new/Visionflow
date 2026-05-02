@@ -37,6 +37,12 @@ def get_target_port(path):
     # Auth
     if path.startswith('api/signup') or path.startswith('api/login'):
         return AUTH_PORT
+
+    # Inference routes must be checked before generic project model routes.
+    if path.startswith('api/projects') and '/models/' in path and path.endswith('/infer'):
+        return INFERENCE_PORT
+    if path.startswith('api/auto-label') or path.startswith('api/classify') or path.startswith('api/infer'):
+        return INFERENCE_PORT
     # Training service — dedicated routes
     if path.startswith('api/training/'):
         return TRAINING_PORT
@@ -49,13 +55,10 @@ def get_target_port(path):
     # Projects endpoint with /models → inference (model registry query from inference)
     if path.startswith('api/projects') and '/models' in path:
         return TRAINING_PORT
-    # Inference
-    if path.startswith('api/auto-label') or path.startswith('api/classify') or path.startswith('api/infer'):
-        return INFERENCE_PORT
     # Dataset service
     if path.startswith('api/projects') and ('/versions' in path or '/annotation-status' in path or '/dataset' in path or '/analytics' in path):
         return DATASET_PORT
-    if path.startswith('api/batches'):
+    if path.startswith('api/batches') and path.endswith('/export'):
         return DATASET_PORT
     # Project service (Node)
     if (
@@ -64,7 +67,10 @@ def get_target_port(path):
         or path.startswith('api/folders')
         or path.startswith('api/workspace-overview')
         or path.startswith('api/jobs')
+        or path.startswith('api/batches')
         or path.startswith('api/logs')
+        or path.startswith('api/deployments')
+        or path.startswith('api/workflows')
         or path.startswith('uploads/')
     ):
         return PROJECT_PORT

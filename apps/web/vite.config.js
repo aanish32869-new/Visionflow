@@ -66,15 +66,16 @@ export default defineConfig({
       // works even when the optional local gateway on port 5000 is not running.
       '^/api/(signup|login)(?:$|[/?])': createProxy(authTarget),
       
+      // Inference Service. Keep the concrete infer route before the generic
+      // project model registry route below.
+      '^/api/projects/[^/]+/models/[^/]+/infer(?:$|[/?])': createProxy(inferenceTarget),
+      '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
+
       // Training Service (Registry, Jobs, Config)
       '^/api/training(?:$|[/?])': createProxy(trainingTarget),
       '^/api/models(?:$|[/?])': createProxy(trainingTarget),
       '^/api/projects/[^/]+/(train|jobs)(?:$|[/?])': createProxy(trainingTarget),
       '^/api/projects/[^/]+/models(?:$|[/?])': createProxy(trainingTarget),
-
-      // Inference Service
-      '^/api/projects/[^/]+/models/[^/]+/infer(?:$|[/?])': createProxy(inferenceTarget),
-      '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
       
       // Dataset Service
       '^/api/projects/[^/]+/(versions|annotation-status|dataset|analytics)(?:$|[/?])': createProxy(datasetTarget),
@@ -84,7 +85,7 @@ export default defineConfig({
       '^/api/dataset/exports(?:$|[/?])': createProxy(datasetTarget),
       
       // Project Service (Node)
-      '^/api/(projects|assets|folders|workspace-overview|jobs|batches)(?:$|[/?])': createProxy(projectTarget),
+      '^/api/(projects|assets|folders|workspace-overview|jobs|batches|deployments|workflows)(?:$|[/?])': createProxy(projectTarget),
       '/uploads': createProxy(projectTarget),
       '/datasets': createProxy(datasetTarget),
     },

@@ -64,37 +64,41 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
 
     setIsInferring(true);
     const formData = new FormData();
-    formData.append('image', image);
-    formData.append('model_id', selectedModelId);
-    formData.append('threshold', threshold);
+    formData.append('file', image);
 
     try {
-      // Assuming an endpoint like /api/infer exists or using a mock for now
-      // Since inference service might not be fully ready, we'll simulate if fetch fails
-      const response = await fetch(`/api/infer`, {
+      const response = await fetch(`/api/projects/${projectId}/models/${selectedModelId}/infer?conf=${threshold}`, {
         method: 'POST',
         body: formData,
       });
 
       if (response.ok) {
         const data = await response.json();
-        setResults(data.predictions);
+        const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+        setResults(predictions.map((prediction) => {
+          const x = Number(prediction.x ?? prediction.x_center ?? 0.5);
+          const y = Number(prediction.y ?? prediction.y_center ?? 0.5);
+          const width = Number(prediction.width ?? 0);
+          const height = Number(prediction.height ?? 0);
+          return {
+            box: [
+              Math.max(0, x - width / 2),
+              Math.max(0, y - height / 2),
+              Math.min(1, x + width / 2),
+              Math.min(1, y + height / 2),
+            ],
+            label: prediction.label || prediction.class || "Object",
+            confidence: Number(prediction.confidence || 0),
+            normalized: true,
+          };
+        }));
       } else {
-        // Simulation for demo
-        await new Promise(r => setTimeout(r, 1500));
-        setResults([
-          { box: [100, 150, 300, 450], label: "Object", confidence: 0.89 },
-          { box: [400, 200, 550, 400], label: "Object", confidence: 0.72 }
-        ]);
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.error || "Inference failed");
       }
     } catch (error) {
       console.error("Inference failed:", error);
-      // Simulation for demo
-      await new Promise(r => setTimeout(r, 1500));
-      setResults([
-        { box: [0.2, 0.2, 0.5, 0.6], label: "Object", confidence: 0.92, normalized: true },
-        { box: [0.6, 0.4, 0.8, 0.8], label: "Object", confidence: 0.85, normalized: true }
-      ]);
+      setResults([]);
     } finally {
       setIsInferring(false);
     }
