@@ -229,6 +229,8 @@ export default function TrainTab({ projectId, onOpenVersions }) {
   const [workers, setWorkers] = useState("auto");
   const [device, setDevice] = useState("auto");
   const [trainingMode, setTrainingMode] = useState("local");
+  const [etaPreview, setEtaPreview] = useState(null);
+  const [etaLoading, setEtaLoading] = useState(false);
   const [pipelineConfig, setPipelineConfig] = useState(null);
   const [hardware, setHardware] = useState({ gpu_available: false, gpu_name: null });
   const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, type: null, id: null, name: "" });
@@ -387,9 +389,19 @@ export default function TrainTab({ projectId, onOpenVersions }) {
     return () => clearInterval(interval);
   }, [pid]);
 
+  const isPositiveIntegerOrAuto = (value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (normalized === "auto") return true;
+    return /^[1-9]\d*$/.test(normalized);
+  };
+
   const handleTrain = async () => {
     if (!selectedVersion) {
       setFeedback({ type: "error", message: "Please select a dataset version." });
+      return;
+    }
+    if (!isPositiveIntegerOrAuto(workers)) {
+      setFeedback({ type: "error", message: "Workers must be 'auto' or a positive integer (1, 2, 3...)." });
       return;
     }
 
@@ -402,7 +414,7 @@ export default function TrainTab({ projectId, onOpenVersions }) {
         body: JSON.stringify({
           version_id: selectedVersion.version_id,
           architecture: selectedArchitecture,
-          params: { epochs, batch_size: batchSize, img_size: imgSize, workers, device, training_mode: trainingMode }
+          params: { epochs, batch_size: batchSize, img_size: imgSize, workers, device, training_mode: "local" }
         }),
       });
 
@@ -419,6 +431,42 @@ export default function TrainTab({ projectId, onOpenVersions }) {
       setIsSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    if (!selectedVersion?.version_id) return;
+    if (!isPositiveIntegerOrAuto(workers)) {
+      setEtaPreview(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setEtaLoading(true);
+        const response = await fetch("/api/training/estimate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: pid,
+            version_id: selectedVersion.version_id,
+            architecture: selectedArchitecture,
+            params: { epochs, batch_size: batchSize, img_size: imgSize, workers, device, training_mode: "local" },
+          }),
+        });
+        if (!response.ok) {
+          setEtaPreview(null);
+          return;
+        }
+        const data = await response.json();
+        setEtaPreview(data);
+      } catch {
+        setEtaPreview(null);
+      } finally {
+        setEtaLoading(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [pid, selectedVersion?.version_id, selectedArchitecture, epochs, batchSize, imgSize, workers, device]);
 
   const handleDeleteJob = async (jobId) => {
     if (!window.confirm("Are you sure you want to permanently delete this training job and its artifacts?")) return;
@@ -634,6 +682,13 @@ export default function TrainTab({ projectId, onOpenVersions }) {
               <h2 className="text-[17px] font-black text-gray-950 mb-6 flex items-center gap-2">
                  <RefreshCcw size={18} className="text-violet-600" /> Configuration
               </h2>
+              <div className="mb-5 rounded-2xl border border-violet-100 bg-violet-50/70 px-4 py-3">
+                 <div className="text-[10px] font-black uppercase tracking-widest text-violet-700">Execution Target</div>
+                 <div className="mt-1 text-[12px] font-bold text-violet-900">Local only (this computer's CPU/GPU/RAM)</div>
+                 <div className="mt-2 text-[11px] font-bold text-violet-700">
+                   {etaLoading ? "Estimating training time..." : `Estimated completion time: ${etaPreview?.estimated_time || "Calculating..."}`}
+                 </div>
+              </div>
               <div className="space-y-5">
                  <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between">
@@ -661,6 +716,20 @@ export default function TrainTab({ projectId, onOpenVersions }) {
                          className="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-[13px] font-black focus:ring-4 focus:ring-violet-100 outline-none transition" 
                        />
                        <button onClick={() => setBatchSize("auto")} className="px-3 bg-violet-50 text-violet-600 rounded-xl text-[10px] font-black uppercase border border-violet-100">Auto</button>
+                    </div>
+                 </div>
+                 <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex justify-between">
+                       Workers <span>{workers === 'auto' ? '(Auto)' : ''}</span>
+                    </label>
+                    <div className="flex gap-2">
+                       <input
+                         type="text"
+                         value={workers}
+                         onChange={e => setWorkers(e.target.value)}
+                         className="flex-1 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-[13px] font-black focus:ring-4 focus:ring-violet-100 outline-none transition"
+                       />
+                       <button onClick={() => setWorkers("auto")} className="px-3 bg-violet-50 text-violet-600 rounded-xl text-[10px] font-black uppercase border border-violet-100">Auto</button>
                     </div>
                  </div>
                  <div>

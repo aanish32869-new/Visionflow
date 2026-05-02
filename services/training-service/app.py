@@ -254,6 +254,58 @@ def _calculate_auto_params(project_id, version_id, architecture):
         "device": device
     }
 
+def _format_duration(seconds):
+    seconds = max(0, int(seconds))
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    if hours > 0:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+def _estimate_training_seconds(version_doc, architecture, epochs, batch_size, workers, device):
+    """
+    Estimate local training duration in seconds using dataset size + model + hardware heuristics.
+    This is an estimate and is continuously refined while training runs.
+    """
+    img_count = max(1, int(version_doc.get("images_count", 1) or 1))
+    classes = max(1, len(version_doc.get("classes", []) or []))
+
+    # Relative architecture factors (YOLOv8n baseline)
+    arch_factor = {
+        "yolov8n": 1.0,
+        "yolov8s": 1.35,
+        "yolov8m": 1.8,
+        "yolov8l": 2.4,
+        "yolov8x": 3.0,
+        "resnet18": 0.9,
+        "vit": 1.8,
+        "dinov3": 2.2,
+        "simplecnn": 0.7,
+    }.get(str(architecture).lower(), 1.6)
+
+    # Base image throughput per second by device (rough local baseline)
+    device_key = str(device).lower()
+    if device_key == "gpu":
+        base_ips = 32.0
+    elif device_key == "mps":
+        base_ips = 18.0
+    else:
+        base_ips = 8.0
+
+    # More workers usually helps data loading up to a point
+    worker_boost = min(1.35, 0.8 + (max(1, int(workers)) * 0.07))
+    effective_ips = max(1.0, (base_ips * worker_boost) / max(0.5, arch_factor))
+
+    # Classes mildly increases training complexity.
+    class_factor = 1.0 + min(0.35, classes / 200.0)
+
+    total_images_processed = img_count * max(1, int(epochs))
+    seconds = int((total_images_processed / max(1.0, (effective_ips * max(1, int(batch_size)) / 8.0))) * class_factor)
+    return max(20, seconds)
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/api/training/health")
@@ -278,7 +330,7 @@ def get_hardware():
 def get_config():
     conf = _load_conf()
     return jsonify({
-        "mode": conf.get("training_mode", "local"),
+        "mode": "local",
         "device": conf.get("training_device", "cpu"),
         "local": {
             "epochs":     int(conf.get("local_epochs", 25)),
@@ -305,6 +357,49 @@ def get_config():
             "blur":       conf.get("augmentation_blur", "False") == "True",
             "zoom":       conf.get("augmentation_zoom", "True") == "True",
             "shear":      conf.get("augmentation_shear", "False") == "True",
+        }
+    })
+
+@app.route("/api/training/estimate", methods=["POST"])
+def estimate_training():
+    """
+    Return a local-only ETA estimate before job creation.
+    """
+    data = request.json or {}
+    project_id = data.get("project_id")
+    version_id = data.get("version_id")
+    architecture = data.get("architecture", "yolov8n")
+    params = data.get("params", {})
+
+    if not project_id or not version_id:
+        return jsonify({"error": "project_id and version_id are required"}), 400
+
+    auto_params = _calculate_auto_params(project_id, version_id, architecture)
+    def _resolve(val, key):
+        if val is None or str(val).lower() == "auto":
+            return auto_params[key]
+        return val
+
+    try:
+        epochs = int(_resolve(params.get("epochs"), "epochs"))
+        batch_size = int(_resolve(params.get("batch_size"), "batch_size"))
+        workers = int(_resolve(params.get("workers"), "workers"))
+        device = str(_resolve(params.get("device"), "device")).lower()
+    except Exception as e:
+        return jsonify({"error": f"Invalid params: {e}"}), 400
+
+    db = _get_db()
+    version = db.versions.find_one({"version_id": version_id}) or {}
+    estimated_seconds = _estimate_training_seconds(version, architecture, epochs, batch_size, workers, device)
+    return jsonify({
+        "mode": "local",
+        "estimated_seconds": estimated_seconds,
+        "estimated_time": _format_duration(estimated_seconds),
+        "resolved_params": {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "workers": workers,
+            "device": device,
         }
     })
 
@@ -372,7 +467,8 @@ def _dispatch_training(project_id, data):
     img_size   = int(_resolve(params.get("img_size"), "img_size"))
     workers    = int(_resolve(params.get("workers"), "workers"))
     device     = _resolve(params.get("device"), "device")
-    mode       = params.get("training_mode", conf.get("training_mode", "local"))
+    # Local-only enforcement: training always runs on the user's current machine.
+    mode       = "local"
 
     job_id = uuid.uuid4().hex
     arch_info = ARCH_MAP.get(architecture, {"label": architecture, "weights": f"{architecture}.pt", "task": "detect"})
@@ -404,6 +500,12 @@ def _dispatch_training(project_id, data):
 
     try:
         db = _get_db()
+        version = db.versions.find_one({"version_id": version_id}) or {}
+        estimated_total_seconds = _estimate_training_seconds(
+            version, architecture, epochs, batch_size, workers, device
+        )
+        job_doc["estimated_total_seconds"] = estimated_total_seconds
+        job_doc["estimated_time_remaining"] = _format_duration(estimated_total_seconds)
         db.training_jobs.insert_one(job_doc)
     except Exception as e:
         return jsonify({"error": f"DB error: {e}"}), 500
@@ -434,10 +536,8 @@ def _run_training(job_id, project_id, version_id, architecture, arch_info, param
     try:
         _update({"status": "Training", "progress": 5})
 
-        if mode == "server":
-            _run_server_training(job_id, project_id, version_id, architecture, params, conf, _update, output_dir)
-        else:
-            _run_local_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir)
+        # Enforced local execution path.
+        _run_local_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir)
 
     except Exception as e:
         print(f"[TRAIN] Error in job {job_id}: {e}")
@@ -565,6 +665,8 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(ROOT_DIR),
         )
         _active_processes[job_id] = proc
@@ -613,6 +715,7 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
             _update({
                 "status":       "Completed",
                 "progress":     100,
+                "estimated_time_remaining": "0s",
                 "metrics":      metrics,
                 "weights_path": str(weights_path) if weights_path.exists() else None,
             })
@@ -676,7 +779,14 @@ def _run_pytorch_training(job_id, project_id, version_id, architecture, arch_inf
             
             progress = int(((epoch + 1) / epochs) * 75) + 20
             history.append({"epoch": epoch + 1, "loss": loss, "accuracy": acc})
-            _update({"progress": progress, "metrics": {"loss": loss, "accuracy": acc}})
+            elapsed = time.time() - start_time
+            remaining_epochs = max(0, epochs - (epoch + 1))
+            eta_seconds = int(elapsed * remaining_epochs)
+            _update({
+                "progress": progress,
+                "estimated_time_remaining": _format_duration(eta_seconds),
+                "metrics": {"loss": loss, "accuracy": acc}
+            })
 
         # 4. Save & Register
         weights_path = output_dir / "model.pt"
@@ -686,6 +796,7 @@ def _run_pytorch_training(job_id, project_id, version_id, architecture, arch_inf
         _update({
             "status": "Completed",
             "progress": 100,
+            "estimated_time_remaining": "0s",
             "metrics": metrics,
             "metrics_history": history,
             "weights_path": str(weights_path)
@@ -734,7 +845,12 @@ def _simulate_training(job_id, project_id, version_id, architecture, arch_info, 
     for epoch in range(1, min(epochs, 10) + 1):
         time.sleep(0.8)
         progress = int(epoch / min(epochs, 10) * 90) + 5
-        _update({"status": "Training", "progress": progress})
+        remaining = max(0, min(epochs, 10) - epoch)
+        _update({
+            "status": "Training",
+            "progress": progress,
+            "estimated_time_remaining": _format_duration(int(remaining * 0.8))
+        })
 
     metrics = {
         "mAP":       round(0.55 + (hash(architecture) % 30) / 100, 3),
@@ -758,6 +874,7 @@ def _simulate_training(job_id, project_id, version_id, architecture, arch_info, 
     _update({
         "status": "Completed", 
         "progress": 100, 
+        "estimated_time_remaining": "0s",
         "metrics": metrics,
         "metrics_history": history,
         "weights_path": str(weights_path)

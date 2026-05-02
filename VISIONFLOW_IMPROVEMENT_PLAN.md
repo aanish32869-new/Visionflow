@@ -337,3 +337,233 @@ VisionFlow should become:
 
 That identity is stronger than copying Roboflow directly.
 
+## 13. Execution Roadmap (90 Days)
+
+### Phase 1 (Weeks 1-3): Stabilize Core Platform
+
+- Fix inference proxy routing and route ownership.
+- Fix Docker Compose paths and service startup consistency.
+- Remove test-only UI and mock-only flows from production.
+- Replace forced layout overrides with responsive defaults.
+- Add basic global error handling patterns for API calls.
+
+Exit criteria:
+
+- Upload, annotate, version, train, and infer all work end-to-end locally.
+- No production screens depend on hardcoded demo data.
+- All core tabs load without console errors.
+
+### Phase 2 (Weeks 4-7): Trustworthy Dataset System
+
+- Add immutable dataset version manifests.
+- Add dataset diff view between any two versions.
+- Add broken data checks and duplicate detection.
+- Add dataset lineage metadata.
+
+Exit criteria:
+
+- Every version has a frozen manifest with hashes.
+- Users can explain exactly what changed between versions.
+- Dataset quality problems are visible before training starts.
+
+### Phase 3 (Weeks 8-10): Training and Deployment Depth
+
+- Add training presets and real-time training logs.
+- Add model comparison across runs.
+- Implement deployment routes and local deployment targets.
+- Add deployment health checks and endpoint test UI.
+
+Exit criteria:
+
+- Users can compare at least two training runs by metrics and speed.
+- Users can deploy at least one model locally and test predictions.
+- Deployment status is accurate and actionable.
+
+### Phase 4 (Weeks 11-13): Differentiation Features
+
+- Add Dataset Doctor quality dashboard.
+- Add model error mining loop back to annotation.
+- Add experiment notebook timeline.
+- Add one-click local deploy flow.
+
+Exit criteria:
+
+- The product has at least 2 clearly differentiated workflows versus Roboflow.
+- Users can improve model quality through an integrated review loop.
+
+## 14. Priority Levels
+
+### P0 (Must Have)
+
+- Inference routing fix
+- Docker/service path fix
+- Remove production mocks and test overlays
+- Real error handling and auth basics
+- Immutable dataset versions
+
+### P1 (Should Have)
+
+- Dataset diff and lineage
+- Training logs and model comparison
+- Deployments API and local targets
+- Upload validation and audit logs
+
+### P2 (Nice to Have)
+
+- Auto-label model comparison
+- Active learning loop automation
+- Experiment notebook polish
+- Advanced near-duplicate detection
+
+## 15. Success Metrics
+
+- Time from upload to first trained model.
+- Annotation throughput per hour.
+- Dataset version reproducibility rate.
+- Training failure rate.
+- Deployment success rate.
+- Median local inference latency.
+- Percentage of low-quality data caught before training.
+
+## 16. Engineering Ownership Suggestion
+
+- Frontend team:
+  - annotation UX
+  - versions UI
+  - training and deployment dashboards
+
+- Platform/API team:
+  - routing fixes
+  - service boundaries
+  - shared schemas
+  - auth, ownership, and audit logs
+
+- ML team:
+  - auto-labeling integrations
+  - active learning loop
+  - training preset quality
+  - model error mining
+
+## 17. Risks And Mitigation
+
+- Risk: Scope grows too fast.
+  - Mitigation: Enforce P0/P1/P2 priorities each sprint.
+
+- Risk: Duplicate logic across services.
+  - Mitigation: Assign single-route ownership and remove duplicates.
+
+- Risk: Product feels unstable during migration from mock to real data.
+  - Mitigation: Hide unfinished tabs behind feature flags.
+
+- Risk: Local performance issues on CPU-only machines.
+  - Mitigation: Add CPU-safe presets and lightweight model defaults.
+
+## 18. Final Direction
+
+The product should not chase feature parity first.
+
+It should win on:
+
+- trust (reproducible datasets),
+- speed (local workflows),
+- privacy (no cloud requirement),
+- and iteration quality (error mining + active learning).
+
+If we execute in this order, VisionFlow becomes a reliable local CV platform with a clear identity instead of a clone.
+
+## 19. Sprint-By-Sprint Checklist (Execution Board)
+
+### Sprint 1: Platform Stability (Week 1)
+
+- [ ] Fix inference route mapping to inference service only.
+- [ ] Fix Docker Compose folder/service path mismatches.
+- [ ] Remove test-host badge and test-only app entry from production.
+- [ ] Remove forced 1920x1080 class overrides and restore responsive behavior.
+- [ ] Add global API error surface for upload/train/export/deploy flows.
+
+Definition of done:
+
+- [ ] Full local app boot works with one command.
+- [ ] No production tab depends on test scaffold.
+- [ ] Core navigation works on laptop resolution without layout clipping.
+
+### Sprint 2: Real Data Flows (Week 2)
+
+- [ ] Replace Visualize mock output with real inference calls.
+- [ ] Connect Analytics tab to backend dataset stats.
+- [ ] Restore real export format selection logic.
+- [ ] Add loading/error/empty states for all major train and version endpoints.
+
+Definition of done:
+
+- [ ] Visualize predicts from selected model.
+- [ ] Analytics numbers match backend records.
+- [ ] Export output matches selected format.
+
+### Sprint 3: Dataset Reproducibility (Week 3)
+
+- [ ] Generate immutable `manifest.json` for every dataset version.
+- [ ] Add version lock checks so ready versions cannot mutate.
+- [ ] Add dataset diff API + UI (images, annotations, classes, splits).
+- [ ] Add lineage metadata capture at generation time.
+
+Definition of done:
+
+- [ ] Any model links to an immutable dataset manifest.
+- [ ] Version-to-version changes are inspectable in UI.
+
+### Sprint 4: Data Quality Guardrails (Week 4)
+
+- [ ] Add broken data checks (missing file, invalid bbox, empty labels, class mismatch).
+- [ ] Add exact duplicate detection by hash.
+- [ ] Add upload validation (type, size, dimensions).
+- [ ] Add quality summary surface in dataset/version views.
+
+Definition of done:
+
+- [ ] Quality issues are visible before training can start.
+- [ ] Duplicate and invalid assets are flagged with actionable messages.
+
+### Sprint 5: Train Workspace Upgrade (Week 5)
+
+- [ ] Add user-controlled `workers` in `MODELS > Train > Configuration`.
+- [ ] Validate train hyperparameter fields (`epochs`, `batch_size`, `img_size`, `workers`).
+- [ ] Show resolved runtime params (auto-calculated values) before launch.
+- [ ] Improve training failure diagnostics in UI.
+
+Definition of done:
+
+- [ ] User can choose worker count (or auto) before training starts.
+- [ ] Invalid hyperparameters are blocked client-side with clear feedback.
+
+### Sprint 6: Deployment Basics (Week 6)
+
+- [ ] Implement `/api/deployments` CRUD + activate routes.
+- [ ] Add deployment status pipeline (Draft/Building/Running/Failed/Stopped).
+- [ ] Add endpoint smoke test UI with latency and model version.
+- [ ] Add Python/JS/cURL code snippets for active endpoint.
+
+Definition of done:
+
+- [ ] A trained model can be deployed locally and tested in-app.
+
+### Sprint 7: Differentiation Layer (Week 7)
+
+- [ ] Build Dataset Doctor MVP.
+- [ ] Build model error mining loop to send bad samples back to annotation.
+- [ ] Add experiment timeline view linking version -> job -> model -> deployment.
+
+Definition of done:
+
+- [ ] At least two differentiator workflows are demoable end-to-end.
+
+### Sprint 8: Reliability and Security (Week 8)
+
+- [ ] Implement password hashing and token auth.
+- [ ] Add workspace/user ownership checks to project resources.
+- [ ] Add audit log events for high-value actions.
+- [ ] Add API tests and frontend smoke tests for core workflows.
+
+Definition of done:
+
+- [ ] Security baseline and regression suite are in place for releases.
