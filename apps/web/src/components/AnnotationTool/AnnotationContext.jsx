@@ -9,7 +9,7 @@ export const COLORS = ['#8b5cf6', '#ef4444', '#10b981', '#f59e0b', '#3b82f6', '#
 export function AnnotationProvider({ assets, initialAssetId, projectId, projectType, classificationType, updateAsset, onBack, onBatchComplete, children }) {
   const [currentAssetIndex, setCurrentAssetIndex] = useState(0);
   const [annotations, setAnnotations] = useState([]);
-  const [autoLabelModel, setAutoLabelModel] = useState("yolov8x.pt");
+  const [autoLabelModel, setAutoLabelModel] = useState("yolo26s.pt");
   
   const isClassification = projectType === "Classification";
   const isSegmentation = projectType.includes("Segmentation");
@@ -266,3 +266,4 @@ export function useAnnotation() {
   }
   return context;
 }
+

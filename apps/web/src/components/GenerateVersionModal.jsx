@@ -71,16 +71,17 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
         body: JSON.stringify(config)
       });
       
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Failed to generate version");
+        throw new Error(payload.error || "Failed to generate version");
       }
       
-      const data = await response.json();
+      const data = payload;
       onGenerated(data);
       onClose();
     } catch (err) {
       setError(err.message);
+    } finally {
       setIsSubmitting(false);
     }
   };

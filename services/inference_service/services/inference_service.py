@@ -89,7 +89,13 @@ class InferenceLogic:
     def resolve_model_name(model_name=None):
         candidate = str(model_name or Config.YOLO_AUTO_LABEL_MODEL or Config.YOLO_MODEL_PATH).strip()
         if not candidate:
-            candidate = "yolov8s.pt"
+            candidate = "yolo26s.pt"
+
+        # Backward-compatible aliases for local model names.
+        aliases = {
+            "yolov26s.pt": "yolo26s.pt",
+        }
+        candidate = aliases.get(candidate, candidate)
 
         candidate_path = Path(candidate)
         if candidate_path.is_file() or candidate_path.exists():
@@ -377,8 +383,13 @@ class InferenceLogic:
 
     @staticmethod
     def _resolve_source_input(source):
+        if isinstance(source, Image.Image):
+            return source
+
         text = str(source or "").strip()
         if not text:
+            return None
+        if text.startswith("<PIL.Image.Image"):
             return None
 
         direct_candidate = Path(text)
@@ -525,7 +536,7 @@ class InferenceLogic:
     def classify_image(source, model_name=None, confidence=None):
         resolved_source = InferenceLogic._resolve_source_input(source)
         if not resolved_source:
-            return {"success": False, "error": "Missing image source", "labels": []}
+            return {"success": False, "error": "Missing or invalid image source", "labels": []}
 
         threshold = InferenceLogic._parse_confidence(confidence)
         resolved_model_name = InferenceLogic.resolve_model_name(model_name)
@@ -534,6 +545,9 @@ class InferenceLogic:
 
         labels = []
         seen_labels = set()
+
+        fallback_label = None
+        fallback_score = -1.0
 
         for result in results:
             names = getattr(result, "names", None) or getattr(model, "names", {})
@@ -554,9 +568,13 @@ class InferenceLogic:
                     top_scores = [float(top1_score.item() if hasattr(top1_score, "item") else top1_score)]
 
                 for class_id, score in zip(top_classes, top_scores):
+                    score_value = float(score)
+                    label = InferenceLogic._label_from_names(names, int(class_id))
+                    if score_value > fallback_score:
+                        fallback_score = score_value
+                        fallback_label = label
                     if float(score) < threshold:
                         continue
-                    label = InferenceLogic._label_from_names(names, int(class_id))
                     lowered = label.lower()
                     if lowered not in seen_labels:
                         seen_labels.add(lowered)
@@ -568,15 +586,22 @@ class InferenceLogic:
 
             for box in result.boxes:
                 score = float(box.conf[0].item())
-                if score < threshold:
-                    continue
-
                 class_id = int(box.cls[0].item())
                 label = InferenceLogic._label_from_names(names, class_id)
+                if score > fallback_score:
+                    fallback_score = score
+                    fallback_label = label
+                if score < threshold:
+                    continue
                 lowered = label.lower()
                 if lowered not in seen_labels:
                     seen_labels.add(lowered)
                     labels.append(label)
+
+        # Ensure classification auto-label can still produce a usable tag when
+        # detections/probabilities are below the configured threshold.
+        if not labels and fallback_label:
+            labels.append(fallback_label)
 
         return {
             "success": True,
@@ -710,29 +735,56 @@ class InferenceLogic:
         # Resolve the model name/path
         runtime_model = model_doc.get("weights_path") or model_doc.get("runtime_model") or Config.YOLO_AUTO_LABEL_MODEL
         
-        result = InferenceLogic.run_auto_label(
-            source,
-            model_name=runtime_model,
-            confidence=threshold,
-        )
-        if not result.get("success"):
-            return {
-                "success": False,
-                "error": result.get("error") or "Inference failed",
-                "predictions": [],
-            }
+        architecture = str(model_doc.get("architecture") or "").lower()
+        classification_arches = {"resnet18", "vit", "dinov3", "simplecnn"}
 
-        predictions = [
-            {
-                "class": detection.get("label"),
-                "confidence": detection.get("confidence"),
-                "x": detection.get("x_center"),
-                "y": detection.get("y_center"),
-                "width": detection.get("width"),
-                "height": detection.get("height"),
-            }
-            for detection in result.get("detections", [])
-        ]
+        if architecture in classification_arches:
+            result = InferenceLogic.classify_image(
+                source,
+                model_name=runtime_model,
+                confidence=threshold,
+            )
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": result.get("error") or "Classification inference failed",
+                    "predictions": [],
+                }
+            labels = result.get("labels", []) or []
+            predictions = [
+                {
+                    "type": "classification",
+                    "class": label,
+                    "label": label,
+                    "confidence": 1.0,
+                }
+                for label in labels
+            ]
+        else:
+            result = InferenceLogic.run_auto_label(
+                source,
+                model_name=runtime_model,
+                confidence=threshold,
+            )
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": result.get("error") or "Inference failed",
+                    "predictions": [],
+                }
+
+            predictions = [
+                {
+                    "type": "detection",
+                    "class": detection.get("label"),
+                    "confidence": detection.get("confidence"),
+                    "x": detection.get("x_center"),
+                    "y": detection.get("y_center"),
+                    "width": detection.get("width"),
+                    "height": detection.get("height"),
+                }
+                for detection in result.get("detections", [])
+            ]
 
         # Log inference for analytics
         inference_log = {
@@ -956,12 +1008,197 @@ class InferenceLogic:
         }
 
     @staticmethod
-    def run_project_yolo_labeling(project_id, model_name=None, confidence=None):
-        assets = list(db.assets.find({"project_id": str(project_id)}))
+    def run_project_yolo_labeling(project_id, model_name=None, confidence=None, batch_id=None):
+        query = {"project_id": str(project_id)}
+        if batch_id:
+            query["batch_id"] = str(batch_id)
+        assets = list(db.assets.find(query))
         result = InferenceLogic.run_assets_yolo_labeling(
             [str(asset["_id"]) for asset in assets],
             model_name=model_name,
             confidence=confidence,
         )
         result["project_id"] = str(project_id)
+        if batch_id:
+            result["batch_id"] = str(batch_id)
+        return result
+
+    @staticmethod
+    def run_classification_labeling(asset_id, model_name=None, confidence=None, job_id=None):
+        asset_oid = to_object_id(asset_id)
+        if not asset_oid:
+            return {"success": False, "error": f"Invalid asset id: {asset_id}", "annotated_assets": 0}
+
+        asset = db.assets.find_one({"_id": asset_oid})
+        if not asset:
+            return {"success": False, "error": f"Asset {asset_id} not found", "annotated_assets": 0}
+
+        project_id = asset.get("project_id")
+        project = db.projects.find_one({"_id": to_object_id(project_id)}) if to_object_id(project_id) else None
+        source_input = InferenceLogic._resolve_asset_source(asset)
+        if source_input is None:
+            return {"success": False, "error": f"File not found for asset {asset_id}", "annotated_assets": 0}
+
+        timestamp = InferenceLogic.get_timestamp()
+
+        try:
+            threshold = InferenceLogic._parse_confidence(confidence, default=0.5)
+            classification_result = InferenceLogic.classify_image(
+                source_input,
+                model_name=model_name,
+                confidence=threshold,
+            )
+            if not classification_result.get("success"):
+                return {
+                    "success": False,
+                    "error": classification_result.get("error") or "Classification failed for this image",
+                    "annotated_assets": 0,
+                }
+            labels = classification_result.get("labels", []) if classification_result.get("success") else []
+            label = labels[0] if labels else None
+
+            asset_id_str = str(asset_oid)
+            annotations = []
+            detected_classes = set()
+            if label:
+                detected_classes.add(str(label))
+                annotations.append(
+                    {
+                        "asset_id": asset_id_str,
+                        "project_id": project_id,
+                        "label": str(label),
+                        "class_id": None,
+                        "confidence": None,
+                        "type": "classification",
+                        "x_center": 0.5,
+                        "y_center": 0.5,
+                        "width": 1.0,
+                        "height": 1.0,
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    }
+                )
+
+            desired_state = "annotated" if annotations else "unannotated"
+            next_url = asset.get("url") or InferenceLogic._build_asset_url(
+                asset_id_str,
+                asset.get("unique_filename") or asset.get("filename") or "asset",
+            )
+            InferenceLogic._write_session_file(None, asset_id_str, project_id, annotations, timestamp, model_name)
+
+            db.annotations.delete_many({"asset_id": asset_id_str})
+            if annotations:
+                db.annotations.insert_many([dict(annotation) for annotation in annotations])
+
+            db.assets.update_one(
+                {"_id": asset_oid},
+                {
+                    "$set": {
+                        "url": next_url,
+                        "upload_state": desired_state,
+                        "is_annotated": bool(annotations),
+                        "annotation_count": len(annotations),
+                        "detected_classes": sorted(detected_classes),
+                        "annotated_at": timestamp if annotations else None,
+                        "updated_at": timestamp,
+                        "status": "annotated" if annotations else "unassigned",
+                        "auto_labeled": True,
+                        "auto_label_model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+                        "auto_label_confidence_threshold": threshold,
+                    }
+                },
+            )
+
+            if project:
+                project_update = {"$set": {"updated_at": timestamp}}
+                if detected_classes:
+                    project_update["$addToSet"] = {
+                        "detected_classes": {"$each": sorted(detected_classes)}
+                    }
+                db.projects.update_one({"_id": project["_id"]}, project_update)
+
+            return {
+                "success": True,
+                "count": len(annotations),
+                "classes": sorted(detected_classes),
+                "annotations": annotations,
+                "annotated_assets": 1 if annotations else 0,
+                "asset": InferenceLogic._serialize_auto_label_asset(
+                    asset_id_str,
+                    next_url,
+                    len(annotations),
+                    detected_classes,
+                ),
+                "model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+                "confidence_threshold": threshold,
+            }
+        except Exception as error:
+            db.assets.update_one(
+                {"_id": asset_oid},
+                {"$set": {"status": "failed", "updated_at": timestamp}},
+            )
+            return {"success": False, "error": str(error), "annotated_assets": 0}
+
+    @staticmethod
+    def run_assets_classification_labeling(asset_ids, model_name=None, confidence=None, job_id=None):
+        unique_asset_ids = []
+        seen = set()
+        for asset_id in asset_ids or []:
+            asset_id_str = str(asset_id).strip()
+            if asset_id_str and asset_id_str not in seen:
+                seen.add(asset_id_str)
+                unique_asset_ids.append(asset_id_str)
+
+        total_annotations = 0
+        annotated_assets = 0
+        detected_classes = set()
+        results = []
+        threshold = InferenceLogic._parse_confidence(confidence, default=0.5)
+
+        for asset_id in unique_asset_ids:
+            result = InferenceLogic.run_classification_labeling(
+                asset_id,
+                model_name=model_name,
+                confidence=threshold,
+                job_id=job_id,
+            )
+            total_annotations += int(result.get("count", 0) or 0)
+            annotated_assets += int(result.get("annotated_assets", 0) or 0)
+            detected_classes.update(result.get("classes", []))
+            results.append(
+                {
+                    "asset_id": asset_id,
+                    "success": bool(result.get("success")),
+                    "count": int(result.get("count", 0) or 0),
+                    "classes": result.get("classes", []),
+                    "asset": result.get("asset"),
+                    "error": result.get("error"),
+                }
+            )
+
+        return {
+            "success": True,
+            "asset_count": len(unique_asset_ids),
+            "annotated_assets": annotated_assets,
+            "count": total_annotations,
+            "classes": sorted(detected_classes),
+            "results": results,
+            "model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+            "confidence_threshold": threshold,
+        }
+
+    @staticmethod
+    def run_project_classification_labeling(project_id, model_name=None, confidence=None, batch_id=None):
+        query = {"project_id": str(project_id)}
+        if batch_id:
+            query["batch_id"] = str(batch_id)
+        assets = list(db.assets.find(query))
+        result = InferenceLogic.run_assets_classification_labeling(
+            [str(asset["_id"]) for asset in assets],
+            model_name=model_name,
+            confidence=confidence,
+        )
+        result["project_id"] = str(project_id)
+        if batch_id:
+            result["batch_id"] = str(batch_id)
         return result

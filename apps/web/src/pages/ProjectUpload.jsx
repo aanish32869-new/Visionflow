@@ -77,6 +77,8 @@ export default function ProjectUpload() {
   const [renameValue, setRenameValue] = useState("");
   const [deleteActionType, setDeleteActionType] = useState("all"); // all | annotations
   const [isBatchActionLoading, setIsBatchActionLoading] = useState(false);
+  const [downloadDialog, setDownloadDialog] = useState({ open: false, batch: null, source: "unassigned" });
+  const [downloadFormat, setDownloadFormat] = useState("yolo");
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
@@ -465,19 +467,20 @@ export default function ProjectUpload() {
   const getAutoLabelQueries = () =>
     autoLabelClasses.map((item) => item.name.trim()).filter(Boolean);
 
-  const runYoloLabeling = async (asset = null) => {
+  const runAutoLabeling = async (asset = null) => {
     setIsApplyingAutoLabel(true);
     setAutoLabelError("");
     setAutoLabelStatus("");
-    const batchConfidenceThreshold = 0.75;
+    const isClassificationProject = projectType === "Classification";
+    const batchConfidenceThreshold = isClassificationProject ? 0.5 : 0.75;
     
     try {
-      const endpoint = "/api/infer/yolo-label";
+      const endpoint = isClassificationProject ? "/api/infer/classification-label" : "/api/infer/yolo-label";
       const payload = asset
-        ? { asset_id: asset.id, model: "yolov8s.pt", conf: batchConfidenceThreshold }
+        ? { asset_id: asset.id, model: isClassificationProject ? "yolov8n-cls.pt" : "yolo26s.pt", conf: batchConfidenceThreshold }
         : activeAnnotationBatchId
-          ? { project_id: projectId, batch_id: activeAnnotationBatchId, model: "yolov8s.pt", conf: batchConfidenceThreshold }
-          : { project_id: projectId, model: "yolov8s.pt", conf: batchConfidenceThreshold };
+          ? { project_id: projectId, batch_id: activeAnnotationBatchId, model: isClassificationProject ? "yolov8n-cls.pt" : "yolo26s.pt", conf: batchConfidenceThreshold }
+          : { project_id: projectId, model: isClassificationProject ? "yolov8n-cls.pt" : "yolo26s.pt", conf: batchConfidenceThreshold };
       
       const res = await fetch(endpoint, {
         method: "POST",
@@ -490,20 +493,21 @@ export default function ProjectUpload() {
       const data = await res.json();
       const annotatedAssets = data.annotated_assets ?? (asset ? (data.success ? 1 : 0) : 0);
       const totalAnnotations = data.count || 0;
-      setAutoLabelStatus(
-        `Successfully labeled ${totalAnnotations} objects across ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"} using YOLOv8s at ${Math.round(batchConfidenceThreshold * 100)}% confidence or higher.`
+      setAutoLabelStatus(isClassificationProject
+        ? `Successfully predicted image classes for ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"} at ${Math.round(batchConfidenceThreshold * 100)}% confidence or higher.`
+        : `Successfully labeled ${totalAnnotations} objects across ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"} using YOLOv26s at ${Math.round(batchConfidenceThreshold * 100)}% confidence or higher.`
       );
       await fetchAssets();
       setAnnotateView('tool');
     } catch (err) {
       console.error(err);
-      setAutoLabelError(err.message || "Failed to run YOLO labeling.");
+      setAutoLabelError(err.message || `Failed to run ${isClassificationProject ? "classification" : "YOLO"} auto-labeling.`);
     } finally {
       setIsApplyingAutoLabel(false);
     }
   };
 
-  const applyAutoLabelToBatch = () => runYoloLabeling();
+  const applyAutoLabelToBatch = () => runAutoLabeling();
 
   const createJob = async ({ batch, labeler, reviewer, instructions }) => {
     if (!batch || !labeler) return false;
@@ -730,29 +734,57 @@ export default function ProjectUpload() {
 
 
   const handleBatchDownload = async (batch, state = null) => {
+    const source =
+      state === "approved"
+        ? "annotate_dataset"
+        : state === "annotating"
+          ? "annotating"
+          : "unassigned";
+    setDownloadFormat("yolo");
+    setDownloadDialog({ open: true, batch, source });
+  };
+
+  const confirmBatchDownload = async () => {
+    const batch = downloadDialog.batch;
+    if (!batch) return;
     setIsBatchActionLoading(true);
     try {
-      let url = `/api/batches/${batch.batch_id}/export?project_id=${projectId}`;
-      if (state) url += `&state=${state}`;
-      
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.download_url) {
-          // Force download
-          const link = document.createElement('a');
-          link.href = data.download_url;
-          link.download = `${batch.batch_name.replace(/\s+/g, '_')}_coco.zip`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+      const startRes = await fetch(`/api/projects/${projectId}/export-dataset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: downloadDialog.source,
+          format: downloadFormat,
+          batch_id: batch.batch_id
+        })
+      });
+      const startData = await startRes.json();
+      if (!startRes.ok || !startData.export_id) return;
+
+      let ready = null;
+      for (let i = 0; i < 90; i++) {
+        const statusRes = await fetch(`/api/projects/${projectId}/dataset/exports/${startData.export_id}`);
+        if (!statusRes.ok) break;
+        const statusData = await statusRes.json();
+        if (statusData.status === "Ready") {
+          ready = statusData;
+          break;
         }
+        if (statusData.status === "Failed") break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (ready?.download_url) {
+        window.location.href = ready.download_url;
+      } else {
+        alert("Export failed or timed out. Please try again.");
       }
     } catch (err) {
       console.error("Download failed", err);
+      alert("Download failed. Please check server status and retry.");
     } finally {
       setIsBatchActionLoading(false);
       setActiveMenuBatchId(null);
+      setDownloadDialog({ open: false, batch: null, source: "unassigned" });
     }
   };
 
@@ -1288,7 +1320,7 @@ export default function ProjectUpload() {
                                                         <Edit3 size={14} /> Rename Batch
                                                      </button>
                                                      <button 
-                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch); }}
+                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch, "unassigned"); }}
                                                        disabled={isBatchActionLoading}
                                                        className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                                      >
@@ -1409,7 +1441,7 @@ export default function ProjectUpload() {
                                                      </button>
                                                      
                                                      <button 
-                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch); }}
+                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch, "annotating"); }}
                                                        disabled={isBatchActionLoading}
                                                        className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                                      >
@@ -1544,7 +1576,7 @@ export default function ProjectUpload() {
                                                      </button>
                                                      
                                                      <button 
-                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch, 'approved'); }}
+                                                       onClick={(e) => { e.stopPropagation(); handleBatchDownload(batch, "approved"); }}
                                                        disabled={isBatchActionLoading}
                                                        className="w-full text-left px-4 py-2 text-[12px] font-bold text-gray-700 hover:bg-violet-50 hover:text-violet-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                                      >
@@ -1605,6 +1637,7 @@ export default function ProjectUpload() {
                   applyAutoLabelToBatch={applyAutoLabelToBatch}
                   isGeneratingPreview={isGeneratingPreview}
                   isApplyingAutoLabel={isApplyingAutoLabel}
+                  projectType={projectType}
                   onCancel={() => setAnnotateView('batch')}
                 />
               ) : annotateView === 'batch' ? (
@@ -1987,6 +2020,33 @@ export default function ProjectUpload() {
         </div>
       </div>
 
+      {downloadDialog.open && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h3 className="text-[18px] font-bold text-gray-900">Export Batch</h3>
+              <button onClick={() => setDownloadDialog({ open: false, batch: null, source: "unassigned" })} className="text-gray-400 hover:text-gray-600 transition bg-white p-1.5 rounded-full border border-gray-100 shadow-sm">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 font-medium">Choose export format for <span className="font-bold text-gray-900">{downloadDialog.batch?.batch_name || "batch"}</span>.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setDownloadFormat("yolo")} className={`px-4 py-3 rounded-xl border text-sm font-bold ${downloadFormat === "yolo" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-gray-200 text-gray-600"}`}>YOLO</button>
+                <button onClick={() => setDownloadFormat("coco")} className={`px-4 py-3 rounded-xl border text-sm font-bold ${downloadFormat === "coco" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-gray-200 text-gray-600"}`}>COCO</button>
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex gap-3">
+              <button onClick={() => setDownloadDialog({ open: false, batch: null, source: "unassigned" })} className="flex-1 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition text-[13px]">Cancel</button>
+              <button onClick={confirmBatchDownload} disabled={isBatchActionLoading} className="flex-1 px-4 py-2.5 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 disabled:opacity-50 transition text-[13px] shadow-md flex items-center justify-center gap-2">
+                {isBatchActionLoading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                {isBatchActionLoading ? "Exporting..." : "Export"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RENAME BATCH MODAL */}
       {isRenameModalOpen && batchToAction && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fade-in">
@@ -2102,6 +2162,7 @@ function NavItem({ icon, label, active, onClick, disabled }) {
     </div>
   );
 }
+
 
 
 

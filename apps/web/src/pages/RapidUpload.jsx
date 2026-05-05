@@ -10,6 +10,7 @@ export default function RapidUpload() {
   const storedProjectName = localStorage.getItem("visionflow_active_project_name");
   const visibility = location.state?.visibility || "Public";
   const [projectId, setProjectId] = useState(location.state?.projectId || storedProjectId || null);
+  const [projectMeta, setProjectMeta] = useState({ project_type: "Object Detection", classification_type: null });
   const projectName = location.state?.projectName || storedProjectName || "My First Project";
 
   // Flow State: 'upload' -> 'build' -> 'review'
@@ -36,13 +37,13 @@ export default function RapidUpload() {
   const [lastQuery, setLastQuery] = useState("");
   const [foundObjectsByAsset, setFoundObjectsByAsset] = useState({});
   const [sliderValues, setSliderValues] = useState({});
-  const [selectedModel, setSelectedModel] = useState("yolov8s-world.pt");
+  const [selectedModel, setSelectedModel] = useState("yolo26s.pt");
   const [isAutoLabeling, setIsAutoLabeling] = useState(false);
   const [labelActionError, setLabelActionError] = useState(null);
   const [labelActionStatus, setLabelActionStatus] = useState(null);
 
   const TARGET_IMAGE_SIZE = 640;
-  const AUTO_LABEL_SCORE_THRESHOLD = 0.75;
+  const AUTO_LABEL_SCORE_THRESHOLD = 0.25;
   const MOCK_COLORS = ['#f97316', '#3b82f6', '#ec4899', '#10b981', '#8b5cf6'];
   const getPreviewUrl = (asset) => asset?.previewUrl || asset?.url || "";
   const getDetectionUrl = (asset) => asset?.remoteUrl || asset?.url || "";
@@ -53,8 +54,10 @@ export default function RapidUpload() {
   const activeDetectionUrl = getDetectionUrl(activeAsset);
   const activeFoundObjects = activeAssetId ? (foundObjectsByAsset[activeAssetId] || []) : [];
   const uploadedImageAssets = uploadedAssets.filter((asset) => asset?.uploadStatus === "uploaded");
+  const localReadyAssets = uploadedAssets.filter((asset) => asset?.uploadStatus === "local_ready");
   const processingImageAssets = uploadedAssets.filter((asset) => asset?.uploadStatus === "processing");
-  const canStartLabeling = uploadedImageAssets.length > 0 && processingImageAssets.length === 0 && !isUploading;
+  const readyForLabelingCount = uploadedImageAssets.length + localReadyAssets.length;
+  const canStartLabeling = readyForLabelingCount > 0 && processingImageAssets.length === 0 && !isUploading;
 
   useEffect(() => {
     if (projectId) {
@@ -64,6 +67,27 @@ export default function RapidUpload() {
       localStorage.setItem("visionflow_active_project_name", projectName);
     }
   }, [projectId, projectName]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!projectId) return;
+      try {
+        const res = await fetch("/api/projects");
+        if (!res.ok) return;
+        const projects = await res.json();
+        const me = Array.isArray(projects) ? projects.find((p) => String(p.id) === String(projectId)) : null;
+        if (me) {
+          setProjectMeta({
+            project_type: me.project_type || "Object Detection",
+            classification_type: me.classification_type || null,
+          });
+        }
+      } catch {
+        // noop
+      }
+    };
+    run();
+  }, [projectId]);
 
   useEffect(() => {
     setSearchFailed(false);
@@ -200,57 +224,22 @@ export default function RapidUpload() {
       const file = filesArray[i];
       const pendingAsset = pendingAssets[i];
 
-      const formData = new FormData();
-
       try {
         const resizedPayload = await resizeImageToSquare(file);
         updateUploadedAsset(pendingAsset.id, {
           previewUrl: resizedPayload.previewUrl,
-          statusMessage: "Uploading optimized image...",
+          preparedFile: resizedPayload.file,
+          uploadStatus: "local_ready",
+          statusMessage: `${TARGET_IMAGE_SIZE}x${TARGET_IMAGE_SIZE} ready to label`,
         });
-
-        formData.append('file', resizedPayload.file);
-        if (projectId) formData.append('project_id', projectId);
-        formData.append('batch_id', sessionBatchId);
-        formData.append('batch_name', sessionBatchName);
-
-        const res = await fetch("/api/assets", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          updateUploadedAsset(pendingAsset.id, {
-            id: data.id || Date.now() + i,
-            remoteUrl: data.url,
-            uploadStatus: "uploaded",
-            statusMessage: `${TARGET_IMAGE_SIZE}x${TARGET_IMAGE_SIZE} ready`,
-          });
-        } else {
-          let message = "Upload failed.";
-          try {
-            const errorData = await res.json();
-            message = errorData?.error || message;
-          } catch {
-            message = `Upload failed with status ${res.status}.`;
-          }
-          failedFiles.push(file.name);
-          updateUploadedAsset(pendingAsset.id, {
-            remoteUrl: null,
-            uploadStatus: "failed",
-            error: message,
-            statusMessage: message,
-          });
-        }
       } catch (err) {
         console.error("Rapid upload failed", err);
         failedFiles.push(file.name);
         updateUploadedAsset(pendingAsset.id, {
           remoteUrl: null,
           uploadStatus: "failed",
-          error: err.message || "Could not reach the upload API.",
-          statusMessage: err.message || "Could not reach the upload API.",
+          error: err.message || "Could not prepare image for labeling.",
+          statusMessage: err.message || "Could not prepare image for labeling.",
         });
       }
     }
@@ -288,6 +277,87 @@ export default function RapidUpload() {
     }
   };
 
+  const normalizeLabelingError = (message) => {
+    const text = String(message || "").trim();
+    if (!text) return "Auto label failed for the uploaded images.";
+    if (text.includes("<PIL.Image.Image")) {
+      return "One or more uploaded images could not be loaded by the labeling service. Please re-upload and try again.";
+    }
+    return text;
+  };
+
+  const persistAssetsForLabeling = async () => {
+    const alreadySavedAssets = uploadedAssets.filter((asset) => asset?.uploadStatus === "uploaded");
+    const pendingAssets = uploadedAssets.filter(
+      (asset) => asset?.uploadStatus === "local_ready" && asset?.preparedFile
+    );
+
+    if (pendingAssets.length === 0) {
+      return alreadySavedAssets;
+    }
+
+    setIsUploading(true);
+    setUploadError(null);
+    const failedFiles = [];
+    const persistedAssets = [];
+
+    for (let i = 0; i < pendingAssets.length; i++) {
+      const pendingAsset = pendingAssets[i];
+      const formData = new FormData();
+      formData.append("file", pendingAsset.preparedFile);
+      if (projectId) formData.append("project_id", projectId);
+      formData.append("batch_id", sessionBatchId);
+      formData.append("batch_name", sessionBatchName);
+
+      updateUploadedAsset(pendingAsset.id, {
+        uploadStatus: "processing",
+        statusMessage: "Saving image to project...",
+      });
+
+      try {
+        const res = await fetch("/api/assets", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          throw new Error(await getErrorMessage(res, "Failed to save image before labeling."));
+        }
+        const data = await res.json();
+        const nextId = data.id || `${Date.now()}-${i}`;
+        persistedAssets.push({
+          id: nextId,
+          remoteUrl: data.url || null,
+          uploadStatus: "uploaded",
+        });
+        updateUploadedAsset(pendingAsset.id, {
+          id: nextId,
+          remoteUrl: data.url,
+          uploadStatus: "uploaded",
+          preparedFile: null,
+          statusMessage: "Saved and ready for labeling",
+        });
+      } catch (err) {
+        failedFiles.push(pendingAsset.name || "Unknown file");
+        updateUploadedAsset(pendingAsset.id, {
+          remoteUrl: null,
+          uploadStatus: "failed",
+          error: err.message || "Failed to save image before labeling.",
+          statusMessage: err.message || "Failed to save image before labeling.",
+        });
+      }
+    }
+
+    setIsUploading(false);
+
+    if (failedFiles.length > 0) {
+      throw new Error(
+        `${failedFiles.length} file${failedFiles.length > 1 ? "s" : ""} failed to save. Please retry before labeling.`
+      );
+    }
+
+    return [...alreadySavedAssets, ...persistedAssets];
+  };
+
   const openAnnotationPage = () => {
     navigate('/upload', {
       state: {
@@ -301,7 +371,7 @@ export default function RapidUpload() {
   };
 
   const handleManualLabel = () => {
-    if (uploadedImageAssets.length === 0) {
+    if (readyForLabelingCount === 0) {
       setLabelActionError("Upload at least one image successfully before opening the annotation page.");
       return;
     }
@@ -312,9 +382,13 @@ export default function RapidUpload() {
     setLabelActionError(null);
     setLabelActionStatus(null);
     
-    // Create job for manual annotation
     const createManualJob = async () => {
       try {
+        const persistedAssets = await persistAssetsForLabeling();
+        if (persistedAssets.length === 0) {
+          throw new Error("No saved images are available for manual annotation.");
+        }
+
         const res = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -329,17 +403,22 @@ export default function RapidUpload() {
         if (!res.ok) console.error("Failed to create manual job entry");
       } catch (err) {
         console.error("Error creating job:", err);
+        throw err;
       }
     };
     
-    createManualJob().then(() => {
-      openAnnotationPage();
-    });
+    createManualJob()
+      .then(() => {
+        openAnnotationPage();
+      })
+      .catch((err) => {
+        setLabelActionError(err.message || "Failed to prepare images for manual annotation.");
+      });
   };
 
   const handleAutoLabelBatch = async () => {
     if (isAutoLabeling) return;
-    if (uploadedImageAssets.length === 0) {
+    if (readyForLabelingCount === 0) {
       setLabelActionError("Upload at least one image successfully before running auto label.");
       return;
     }
@@ -351,8 +430,14 @@ export default function RapidUpload() {
     setIsAutoLabeling(true);
     setLabelActionError(null);
     setLabelActionStatus(null);
+    const isClassificationProject = projectMeta.project_type === "Classification";
 
     try {
+      const persistedAssets = await persistAssetsForLabeling();
+      if (persistedAssets.length === 0) {
+        throw new Error("No saved images are available for auto labeling.");
+      }
+
       // 1. Create the job record first with 'auto-labeling' state (implied by labeler_name)
       const jobRes = await fetch("/api/jobs", {
         method: "POST",
@@ -372,14 +457,14 @@ export default function RapidUpload() {
         jobId = jobData.id;
       }
 
-      const totalImages = uploadedImageAssets.length;
-      const res = await fetch("/api/infer/yolo-label", {
+      const totalImages = persistedAssets.length;
+      const res = await fetch(isClassificationProject ? "/api/infer/classification-label" : "/api/infer/yolo-label", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: projectId,
-          asset_ids: uploadedImageAssets.map((asset) => asset.id),
-          model: "yolov8s.pt",
+          asset_ids: persistedAssets.map((asset) => asset.id),
+          model: "yolo26s.pt",
           conf: AUTO_LABEL_SCORE_THRESHOLD,
           job_id: jobId
         })
@@ -416,11 +501,13 @@ export default function RapidUpload() {
       }
 
       if (annotatedAssets === 0) {
-        throw new Error("YOLOv8s could not process any uploaded images.");
+        const firstFailure = batchResults.find((result) => result?.error)?.error;
+        throw new Error(normalizeLabelingError(firstFailure || "YOLOv26s could not process any uploaded images."));
       }
 
-      setLabelActionStatus(
-        `Summary: Total: ${totalImages} | Labeled: ${annotatedAssets} | Failed: ${failedFiles}. Move to the Annotate page to review results.`
+      setLabelActionStatus(isClassificationProject
+        ? `Summary: Total: ${totalImages} | Classified: ${annotatedAssets} | Failed: ${failedFiles}. Move to Annotate to review image labels.`
+        : `Summary: Total: ${totalImages} | Labeled: ${annotatedAssets} | Failed: ${failedFiles}. Move to the Annotate page to review results.`
       );
 
       setTimeout(() => {
@@ -435,7 +522,7 @@ export default function RapidUpload() {
       }, 1500);
     } catch (err) {
       console.error("Rapid auto label failed", err);
-      setLabelActionError(err.message || "Auto label failed for the uploaded images.");
+      setLabelActionError(normalizeLabelingError(err.message || "Auto label failed for the uploaded images."));
     } finally {
       setIsAutoLabeling(false);
     }
@@ -465,7 +552,7 @@ export default function RapidUpload() {
           body: JSON.stringify({
             url: currentUrl,
             queries: [q],
-            model: selectedModel,
+            model: "yolo26s.pt",
             conf: AUTO_LABEL_SCORE_THRESHOLD,
           })
         });
@@ -554,7 +641,7 @@ export default function RapidUpload() {
           body: JSON.stringify({
             url: currentUrl,
             queries: [query],
-            model: selectedModel,
+            model: "yolo26s.pt",
             conf: AUTO_LABEL_SCORE_THRESHOLD,
           })
         });
@@ -712,7 +799,7 @@ export default function RapidUpload() {
                         <div className="w-full mt-10">
                            <h3 className="text-[19px] font-bold text-gray-900 tracking-tight mb-2">Choose how you want to continue</h3>
                            <p className="text-[12px] font-bold text-gray-400 mb-6">
-                              Run YOLOv8s on every uploaded image automatically, or jump straight into manual annotation.
+                              Run YOLOv26s on every uploaded image automatically, or jump straight into manual annotation.
                            </p>
                            {uploadError && (
                              <div className="mb-4 rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-left text-[13px] font-medium text-red-700">
@@ -769,13 +856,13 @@ export default function RapidUpload() {
                                 <p className="text-[12px] font-bold text-gray-700">Uploaded Images</p>
                                 <p className="text-[12px] text-gray-500">
                                   {processingImageAssets.length > 0
-                                    ? `${processingImageAssets.length} resizing to ${TARGET_IMAGE_SIZE}x${TARGET_IMAGE_SIZE}`
-                                    : `${uploadedImageAssets.length} ready for labeling`}
+                                    ? `${processingImageAssets.length} processing...`
+                                    : `${readyForLabelingCount} ready for labeling`}
                                 </p>
                               </div>
                              <div className="text-right">
                                <p className="text-[12px] font-bold text-gray-700">Model</p>
-                               <p className="text-[12px] text-gray-500">YOLOv8s</p>
+                               <p className="text-[12px] text-gray-500">YOLOv26s</p>
                              </div>
                            </div>
                         </div>
@@ -920,7 +1007,7 @@ export default function RapidUpload() {
                      onChange={(e) => setSelectedModel(e.target.value)}
                      className="text-[11px] font-bold border border-gray-200 bg-gray-50 rounded text-gray-600 px-1 py-1 outline-none"
                    >
-                     <option value="yolov8x-world.pt">🎯 X-Large (Most Accurate)</option>
+                     <option value="yolo26s.pt">YOLOv26s (High Precision)</option>
                    </select>
                  </div>
                </div>
@@ -1156,3 +1243,4 @@ export default function RapidUpload() {
     </div>
   );
 }
+

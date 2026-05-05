@@ -4,6 +4,7 @@ import { Server, ImageIcon, ShieldCheck, Crosshair, HelpCircle, Loader } from "l
 
 export default function DeployTab({ projectId }) {
   const [models, setModels] = useState([]);
+  const [projectMeta, setProjectMeta] = useState({ project_type: "Object Detection" });
   const [selectedModel, setSelectedModel] = useState(null);
   const [_imageFile, setImageFile] = useState(null);
   const [imageURL, setImageURL] = useState(null);
@@ -12,6 +13,7 @@ export default function DeployTab({ projectId }) {
   const [infereceTime, setInferenceTime] = useState(null);
   const [activeCodeTab, setActiveCodeTab] = useState('python');
   const [copyMessage, setCopyMessage] = useState("");
+  const [isClassificationResult, setIsClassificationResult] = useState(false);
   
   const fileInputRef = useRef(null);
   const imgRef = useRef(null);
@@ -19,17 +21,39 @@ export default function DeployTab({ projectId }) {
 
   useEffect(() => {
     fetchModels();
-     
+    fetchProjectMeta();
 
   }, [projectId]);
+
+  useEffect(() => {
+    fetchModels();
+  }, [projectMeta.project_type]);
+
+  async function fetchProjectMeta() {
+    try {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return;
+      const projects = await res.json();
+      const me = Array.isArray(projects) ? projects.find((p) => String(p.id) === String(projectId)) : null;
+      if (me) setProjectMeta({ project_type: me.project_type || "Object Detection" });
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   async function fetchModels() {
     try {
       const res = await fetch(`/api/projects/${projectId}/models`);
       if (res.ok) {
         const data = await res.json();
-        setModels(data);
-        if (data.length > 0) setSelectedModel(data[data.length - 1].id || data[data.length - 1]._id);
+        const projectType = projectMeta?.project_type || "Object Detection";
+        const filtered = Array.isArray(data) ? data.filter((m) => {
+          const arch = String(m.architecture || "").toLowerCase();
+          const classify = ["resnet18", "vit", "dinov3", "simplecnn"].includes(arch);
+          return projectType === "Classification" ? classify : !classify;
+        }) : [];
+        setModels(filtered);
+        if (filtered.length > 0) setSelectedModel(filtered[filtered.length - 1].id || filtered[filtered.length - 1]._id);
       }
     } catch (err) {
       console.error(err);
@@ -68,7 +92,9 @@ export default function DeployTab({ projectId }) {
       
       if (res.ok) {
         const data = await res.json();
-        setPredictions(data.predictions);
+        const preds = Array.isArray(data.predictions) ? data.predictions : [];
+        setIsClassificationResult(preds.some((p) => String(p.type || "").toLowerCase() === "classification"));
+        setPredictions(preds);
         setInferenceTime(data.time);
       }
     } catch (err) {
@@ -91,6 +117,9 @@ export default function DeployTab({ projectId }) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     predictions.forEach(p => {
+      if (isClassificationResult || String(p.type || "").toLowerCase() === "classification") {
+        return;
+      }
       const w = p.width * canvas.width;
       const h = p.height * canvas.height;
       const x = p.x * canvas.width - w / 2;
@@ -223,6 +252,11 @@ System.out.println(response.body().string());`;
                            <ImageIcon size={14} /> Try Another
                            <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
                         </button>
+                     )}
+                     {!isInferencing && isClassificationResult && Array.isArray(predictions) && predictions.length > 0 && (
+                       <div className="absolute top-3 left-3 bg-violet-600 text-white px-3 py-2 rounded-lg text-xs font-bold shadow">
+                         {predictions[0].label || predictions[0].class || "Class"} {(Number(predictions[0].confidence ?? 1) * 100).toFixed(0)}%
+                       </div>
                      )}
                   </div>
                )}

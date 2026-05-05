@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 export default function CreateProject() {
   const navigate = useNavigate();
   const [projectType, setProjectType] = useState("Object Detection");
+  const [classificationType, setClassificationType] = useState("Multi-Label");
   const [projectName, setProjectName] = useState("");
   const [annotationGroup, setAnnotationGroup] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -25,6 +26,7 @@ export default function CreateProject() {
         body: JSON.stringify({
           name: trimmedName,
           project_type: projectType,
+          classification_type: projectType === "Classification" ? classificationType : null,
           annotation_group: annotationGroup,
         }),
       });
@@ -41,6 +43,7 @@ export default function CreateProject() {
           projectName: trimmedName,
           projectId: data.id,
           projectType,
+          classificationType: projectType === "Classification" ? classificationType : null,
         },
       });
     } catch (err) {
@@ -126,6 +129,36 @@ export default function CreateProject() {
               </div>
               <p className={`text-[13px] font-medium tracking-tight ${projectType === "Object Detection" ? "text-gray-600" : "text-gray-500"}`}>Identify objects and their positions with bounding boxes.</p>
             </div>
+
+            <div
+              onClick={() => setProjectType("Classification")}
+              className={`border rounded-lg p-5 cursor-pointer flex flex-col justify-center mb-1 relative transition ${projectType === "Classification" ? "border-violet-400 bg-violet-50/50 z-10" : "border-transparent border-b-gray-100 bg-white hover:bg-gray-50/50"}`}
+            >
+              <div className="flex justify-between items-center mb-2">
+                <h4 className={`text-[14px] ${projectType === "Classification" ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>Classification</h4>
+                <div className={`flex gap-[6px] text-[10px] uppercase font-bold tracking-wider ${projectType === "Classification" ? "text-violet-600" : "text-gray-400"}`}>
+                  <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm ${projectType === "Classification" ? "bg-white border border-violet-100" : "bg-gray-50 border border-transparent"}`}>
+                    Class Labels
+                  </span>
+                  <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-sm ${projectType === "Classification" ? "bg-white border border-violet-100" : "bg-gray-50 border border-transparent"}`}>Top-1</span>
+                </div>
+              </div>
+              <p className={`text-[13px] font-medium tracking-tight ${projectType === "Classification" ? "text-gray-600" : "text-gray-500"}`}>Predict class categories per image with classification models.</p>
+            </div>
+
+            {projectType === "Classification" && (
+              <div className="mt-3">
+                <label className="text-[12px] font-bold text-gray-700 mb-2 block">Classification Mode</label>
+                <select
+                  value={classificationType}
+                  onChange={(e) => setClassificationType(e.target.value)}
+                  className="w-full border border-gray-300 rounded-md px-3 py-[9px] text-[13px] text-gray-900 focus:border-violet-500 focus:outline-none transition"
+                >
+                  <option value="Multi-Label">Multi-Label</option>
+                  <option value="Single-Label">Single-Label</option>
+                </select>
+              </div>
+            )}
 
           </div>
 

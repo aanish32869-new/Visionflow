@@ -17,6 +17,7 @@ import {
 
 export default function VisualizeTab({ projectId, onTrainModel }) {
   const [models, setModels] = useState([]);
+  const [projectMeta, setProjectMeta] = useState({ project_type: "Object Detection" });
   const [selectedModelId, setSelectedModelId] = useState("");
   const [image, setImage] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -24,6 +25,7 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
   const [results, setResults] = useState(null);
   const [threshold, setThreshold] = useState(0.5);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
+  const [isClassificationResult, setIsClassificationResult] = useState(false);
   
   const fileInputRef = useRef(null);
   const imageRef = useRef(null);
@@ -35,7 +37,14 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
       const response = await fetch(`/api/projects/${projectId}/models`);
       if (response.ok) {
         const data = await response.json();
-        const readyModels = Array.isArray(data) ? data.filter(m => m.deployment_status === 'ready' || m.status === 'Completed') : [];
+        const projectType = projectMeta?.project_type || "Object Detection";
+        const readyModels = Array.isArray(data) ? data
+          .filter(m => m.deployment_status === 'ready' || m.status === 'Completed')
+          .filter(m => {
+            const arch = String(m.architecture || "").toLowerCase();
+            const classify = ["resnet18", "vit", "dinov3", "simplecnn"].includes(arch);
+            return projectType === "Classification" ? classify : !classify;
+          }) : [];
         setModels(readyModels);
         if (readyModels.length > 0) setSelectedModelId(readyModels[0].model_id);
       }
@@ -44,11 +53,24 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
     } finally {
       setIsLoadingModels(false);
     }
-  }, [projectId]);
+  }, [projectId, projectMeta]);
 
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetch("/api/projects");
+        if (!res.ok) return;
+        const projects = await res.json();
+        const me = Array.isArray(projects) ? projects.find((p) => String(p.id) === String(projectId)) : null;
+        if (me) setProjectMeta({ project_type: me.project_type || "Object Detection" });
+      } catch {}
+    };
+    run();
+  }, [projectId]);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -75,7 +97,18 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
       if (response.ok) {
         const data = await response.json();
         const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+        const classification = predictions.some((p) => String(p.type || "").toLowerCase() === "classification");
+        setIsClassificationResult(classification);
         setResults(predictions.map((prediction) => {
+          if (String(prediction.type || "").toLowerCase() === "classification") {
+            return {
+              box: [0.05, 0.05, 0.95, 0.2],
+              label: prediction.label || prediction.class || "Class",
+              confidence: Number(prediction.confidence ?? 1),
+              normalized: true,
+              type: "classification",
+            };
+          }
           const x = Number(prediction.x ?? prediction.x_center ?? 0.5);
           const y = Number(prediction.y ?? prediction.y_center ?? 0.5);
           const width = Number(prediction.width ?? 0);
@@ -196,6 +229,13 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
                      const height = isNorm ? (res.box[3] - res.box[1]) * containerSize.height : ((res.box[3] - res.box[1]) / imageRef.current.naturalHeight) * containerSize.height;
                      
                      if (res.confidence < threshold) return null;
+                     if (isClassificationResult && res.type === "classification") {
+                       return (
+                         <div key={i} className="absolute top-4 left-4 bg-violet-600 text-white px-3 py-2 rounded-xl text-[12px] font-black shadow-lg">
+                           {res.label} {(res.confidence * 100).toFixed(0)}%
+                         </div>
+                       );
+                     }
 
                      return (
                        <div 

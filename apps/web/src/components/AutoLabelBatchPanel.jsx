@@ -6,8 +6,26 @@ export default function AutoLabelBatchPanel({
   autoLabelStatus,
   applyAutoLabelToBatch,
   isApplyingAutoLabel,
+  projectType,
   onCancel,
 }) {
+  const isClassification = projectType === "Classification";
+  const title = isClassification ? "Rapid Classification Auto-Labeling" : "Rapid YOLO Labeling";
+  const subtitle = isClassification
+    ? `Run local classification model to auto-tag your ${assetCount} images.`
+    : `Run local YOLO model to autonomously annotate your ${assetCount} images.`;
+  const bodyHeading = isClassification ? "Production-Grade Image Classification" : "Production-Grade Object Detection";
+  const bodyText = isClassification
+    ? "This process predicts the top class per image and writes labels directly into your annotation pipeline. It is optimized for fast local classification-assisted labeling."
+    : "This process will trigger the onboard YOLOv8 model to scan every image in this batch. It will automatically generate bounding boxes, assign class labels, and calculate confidence scores for over 80+ common object categories.";
+  const strategyTitle = isClassification ? "Zero-Config Classification" : "Zero-Config Labeling";
+  const strategyText = isClassification
+    ? "The system uses a local image classification model and confidence thresholding to generate review-ready class predictions."
+    : "No manual class definition required. The system uses the pre-trained weights to find the most relevant features and map them to your project's schema.";
+  const actionText = isApplyingAutoLabel
+    ? (isClassification ? "Running Classification..." : "Running YOLO Inference...")
+    : (isClassification ? "Run Classification Auto-Labeling" : "Run YOLO Labeling");
+
   return (
     <div className="flex-1 flex flex-col h-full bg-[#fbfcff] animate-fade-in pb-12 w-full p-8 items-center justify-center">
       <div className="bg-white max-w-xl w-full border border-gray-200 shadow-xl rounded-2xl overflow-hidden animate-slide-up">
@@ -16,32 +34,23 @@ export default function AutoLabelBatchPanel({
             <Brain className="text-violet-600" size={24} />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-gray-900 tracking-tight">Rapid YOLO Labeling</h2>
-            <p className="text-sm font-medium text-gray-500">
-              Run local YOLO model to autonomously annotate your {assetCount} images.
-            </p>
+            <h2 className="text-xl font-bold text-gray-900 tracking-tight">{title}</h2>
+            <p className="text-sm font-medium text-gray-500">{subtitle}</p>
           </div>
         </div>
 
         <div className="p-8">
           <div className="mb-8">
-             <h3 className="text-[15px] font-bold text-gray-800 mb-2">Production-Grade Object Detection</h3>
-             <p className="text-[13px] text-gray-500 leading-relaxed">
-               This process will trigger the onboard YOLOv8 model to scan every image in this batch. 
-               It will automatically generate bounding boxes, assign class labels, and calculate 
-               confidence scores for over 80+ common object categories.
-             </p>
+             <h3 className="text-[15px] font-bold text-gray-800 mb-2">{bodyHeading}</h3>
+             <p className="text-[13px] text-gray-500 leading-relaxed">{bodyText}</p>
           </div>
 
           <div className="bg-violet-50 border border-violet-100 rounded-xl p-5 mb-8">
              <div className="flex items-center gap-3 mb-3">
                 <Sparkles size={18} className="text-violet-600" />
-                <span className="text-[13px] font-bold text-violet-900">Zero-Config Labeling</span>
+                <span className="text-[13px] font-bold text-violet-900">{strategyTitle}</span>
              </div>
-             <p className="text-[12px] text-violet-700/80 font-medium">
-                No manual class definition required. The system uses the pre-trained weights to 
-                find the most relevant features and map them to your project's schema.
-             </p>
+             <p className="text-[12px] text-violet-700/80 font-medium">{strategyText}</p>
           </div>
 
           {autoLabelError && (
@@ -68,7 +77,7 @@ export default function AutoLabelBatchPanel({
               disabled={isApplyingAutoLabel}
               className="px-6 py-3.5 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-xl transition flex-[2] flex items-center justify-center gap-2 text-sm shadow-md disabled:opacity-70 disabled:cursor-wait"
             >
-              <Rocket size={18} /> {isApplyingAutoLabel ? "Running YOLO Inference..." : "Run YOLO Labeling"}
+              <Rocket size={18} /> {actionText}
             </button>
           </div>
         </div>

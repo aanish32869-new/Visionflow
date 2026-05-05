@@ -293,6 +293,7 @@ def export_dataset_selection(project_id):
         data = request.json or {}
         asset_ids = data.get("asset_ids", [])
         export_format = data.get("format", "coco")
+        source = data.get("source", "dataset")
         
         # Validation
         is_supported, error_msg = validate_format_support(db, project_id, export_format, asset_ids)
@@ -304,7 +305,9 @@ def export_dataset_selection(project_id):
             "asset_ids": asset_ids,
             "version_id": data.get("version_id"),
             "tag_filter": data.get("tag_filter", {}),
-            "split": data.get("split")
+            "split": data.get("split"),
+            "source": source,
+            "batch_id": data.get("batch_id"),
         }
         
         export_id = ExportManager.enqueue_export(project_id, export_format, options)
@@ -316,6 +319,35 @@ def export_dataset_selection(project_id):
         })
     except Exception as e:
         logger.error(f"Error initiating dataset export: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@dataset_bp.route("/api/projects/<project_id>/export-dataset", methods=["POST"])
+def export_dataset_by_source(project_id):
+    try:
+        from dataset_exporter import validate_format_support
+        from services.export_manager import ExportManager
+
+        data = request.json or {}
+        export_format = data.get("format", "yolo")
+        source = data.get("source", "dataset")
+
+        is_supported, error_msg = validate_format_support(db, project_id, export_format, data.get("asset_ids", []))
+        if not is_supported:
+            return jsonify({"error": error_msg}), 400
+
+        options = {
+            "source": source,
+            "version_id": data.get("version_id"),
+            "batch_id": data.get("batch_id"),
+            "asset_ids": data.get("asset_ids", []),
+            "split": data.get("split"),
+            "tag_filter": data.get("tag_filter", {}),
+        }
+        export_id = ExportManager.enqueue_export(project_id, export_format, options)
+        return jsonify({"success": True, "export_id": export_id, "status": "Queued"})
+    except Exception as e:
+        logger.error(f"Error initiating source export: {e}")
         return jsonify({"error": str(e)}), 500
 
 @dataset_bp.route("/api/projects/<project_id>/dataset/exports/<export_id>", methods=["GET"])

@@ -468,8 +468,168 @@ def _image_filename(asset):
     return raw
 
 
+def _to_coco_image(asset, image_id, img):
+    return {
+        "id": image_id,
+        "file_name": _image_filename(asset),
+        "width": img.size[0],
+        "height": img.size[1],
+    }
+
+
+def _to_coco_annotations(annotations, image_id, classes_map, next_annotation_id, img):
+    rows = []
+    img_w, img_h = img.size
+    for annotation in annotations:
+        label = annotation.get("label")
+        if label not in classes_map:
+            continue
+        x = float(annotation.get("x_center", 0.5))
+        y = float(annotation.get("y_center", 0.5))
+        w = float(annotation.get("width", 0.1))
+        h = float(annotation.get("height", 0.1))
+        rows.append({
+            "id": next_annotation_id,
+            "image_id": image_id,
+            "category_id": classes_map[label],
+            "bbox": [(x - w / 2) * img_w, (y - h / 2) * img_h, w * img_w, h * img_h],
+            "area": w * h * img_w * img_h,
+            "iscrowd": 0,
+        })
+        next_annotation_id += 1
+    return rows, next_annotation_id
+
+
+def _write_source_export_archive(db, project_id, export_format, upload_folder, datasets_folder, options):
+    source = str(options.get("source") or "dataset").lower()
+    batch_id = options.get("batch_id")
+    version_id = options.get("version_id")
+    format_lower = str(export_format or "yolo").lower()
+    is_yolo = "yolo" in format_lower
+    if not is_yolo and "coco" not in format_lower:
+        raise ValueError("Only YOLO and COCO formats are supported for source exports")
+
+    query = {"project_id": project_id}
+    if batch_id:
+        query["batch_id"] = batch_id
+    if source == "unassigned":
+        query["$or"] = [{"status": "unassigned"}, {"is_annotated": False}]
+    elif source == "annotating":
+        query["status"] = {"$in": ["annotated", "in-progress", "annotating"]}
+        query["state"] = {"$ne": "approved"}
+    elif source == "annotate_dataset":
+        query["state"] = "approved"
+    elif source == "dataset":
+        query["status"] = "dataset"
+
+    if source == "version":
+        if not version_id:
+            raise ValueError("version_id is required for source=version")
+        query_assets = list(db.version_assets.find({"version_id": version_id}))
+    else:
+        query_assets = list(db.assets.find(query))
+
+    annotations_by_asset = _collect_annotations(db, query_assets, version_id=version_id if source == "version" else None)
+    classes_list = _collect_classes(annotations_by_asset)
+    classes_map = {name: idx for idx, name in enumerate(classes_list)}
+
+    archive_uuid = uuid.uuid4().hex
+    source_dir_name = {
+        "unassigned": "unassigned_export",
+        "annotating": "annotating_export",
+        "annotate_dataset": "annotate_dataset_export",
+        "dataset": "dataset",
+        "version": f"dataset_v{version_id or '1'}",
+    }.get(source, "dataset_export")
+    version_dir = os.path.join(datasets_folder, uuid.uuid4().hex, source_dir_name)
+    os.makedirs(version_dir, exist_ok=True)
+
+    if source in ("dataset", "version"):
+        splits = ("train", "valid", "test")
+    else:
+        splits = ("root",)
+
+    if is_yolo:
+        if splits == ("root",):
+            os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
+            os.makedirs(os.path.join(version_dir, "labels"), exist_ok=True)
+        else:
+            for split in splits:
+                os.makedirs(os.path.join(version_dir, split, "images"), exist_ok=True)
+                os.makedirs(os.path.join(version_dir, split, "labels"), exist_ok=True)
+    else:
+        if splits == ("root",):
+            os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
+            os.makedirs(os.path.join(version_dir, "annotations"), exist_ok=True)
+        else:
+            for split in splits:
+                os.makedirs(os.path.join(version_dir, split), exist_ok=True)
+            os.makedirs(os.path.join(version_dir, "annotations"), exist_ok=True)
+
+    coco = {split: {"images": [], "annotations": [], "categories": [{"id": v, "name": k} for k, v in classes_map.items()]} for split in splits}
+    image_id = 1
+    ann_id = 1
+    exported = 0
+    for index, asset in enumerate(query_assets):
+        split_name = "root"
+        if splits != ("root",):
+            split_name = asset.get("dataset_split") or asset.get("split") or ("train" if index % 10 < 7 else ("valid" if index % 10 < 9 else "test"))
+            if split_name not in ("train", "valid", "test"):
+                split_name = "train"
+        img = _load_asset_image(db, asset, upload_folder)
+        if img is None:
+            continue
+        try:
+            file_name = _image_filename(asset)
+            annotations = annotations_by_asset.get(str(asset.get("original_asset_id") or asset.get("_id")), [])
+            if source == "unassigned":
+                annotations = []
+
+            if is_yolo:
+                if split_name == "root":
+                    img_path = os.path.join(version_dir, "images", file_name)
+                    lbl_path = os.path.join(version_dir, "labels", f"{Path(file_name).stem}.txt")
+                else:
+                    img_path = os.path.join(version_dir, split_name, "images", file_name)
+                    lbl_path = os.path.join(version_dir, split_name, "labels", f"{Path(file_name).stem}.txt")
+                _write_image(img, img_path)
+                _write_yolo_label_file(lbl_path, annotations, classes_map)
+            else:
+                img_path = os.path.join(version_dir, "images", file_name) if split_name == "root" else os.path.join(version_dir, split_name, file_name)
+                _write_image(img, img_path)
+                coco[split_name]["images"].append(_to_coco_image(asset, image_id, img))
+                rows, ann_id = _to_coco_annotations(annotations, image_id, classes_map, ann_id, img)
+                coco[split_name]["annotations"].extend(rows)
+                image_id += 1
+            exported += 1
+        finally:
+            img.close()
+
+    if is_yolo and splits != ("root",):
+        with open(os.path.join(version_dir, "data.yaml"), "w", encoding="utf-8") as f:
+            f.write(f"path: {source_dir_name}\ntrain: train/images\nval: valid/images\ntest: test/images\n")
+            f.write("names:\n")
+            for idx, name in enumerate(classes_list):
+                f.write(f"{idx}: {name}\n")
+    if not is_yolo:
+        if splits == ("root",):
+            with open(os.path.join(version_dir, "annotations", "instances.json"), "w", encoding="utf-8") as f:
+                json.dump(coco["root"], f)
+        else:
+            for split in ("train", "valid", "test"):
+                with open(os.path.join(version_dir, "annotations", f"instances_{split}.json"), "w", encoding="utf-8") as f:
+                    json.dump(coco[split], f)
+
+    shutil.make_archive(os.path.join(datasets_folder, archive_uuid), "zip", os.path.dirname(version_dir))
+    return archive_uuid, {"exported_images_count": exported, "classes": classes_list}
+
+
 def generate_dataset_archive(db, project_id, export_format, upload_folder, datasets_folder, options=None):
     options = options or {}
+    source = str(options.get("source") or "").lower()
+    if source in {"unassigned", "annotating", "annotate_dataset", "dataset", "version"}:
+        return _write_source_export_archive(db, project_id, export_format, upload_folder, datasets_folder, options)
+
     version_id = options.get("version_id")
     version_doc = None
     if version_id:

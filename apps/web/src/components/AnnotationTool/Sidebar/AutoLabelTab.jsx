@@ -34,7 +34,7 @@ export default function AutoLabelTab() {
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-[13px] font-bold outline-none focus:ring-2 focus:ring-violet-200 transition appearance-none"
              >
                 <option value="yolov8x.pt">YOLOv8x (Standard)</option>
-                <option value="yolov26s.pt">YOLOv26s (High Precision)</option>
+                <option value="yolo26s.pt">YOLOv26s (High Precision)</option>
                 <option value="sam_vit_h">Segment Anything (SAM)</option>
                 <option value="clip">CLIP Zero-Shot</option>
              </select>
@@ -91,3 +91,4 @@ export default function AutoLabelTab() {
     </div>
   );
 }
+

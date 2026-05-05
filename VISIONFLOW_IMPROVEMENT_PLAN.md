@@ -567,3 +567,104 @@ Definition of done:
 Definition of done:
 
 - [ ] Security baseline and regression suite are in place for releases.
+
+## 20. How Training Should Work (IDE-Style) and Why Terminal Logs May Be Missing
+
+This section explains exactly how training should run when a user selects:
+
+- Dataset version
+- Model architecture
+- Epochs
+- Batch size
+- Workers
+- Hardware
+
+and then clicks `Train`.
+
+### A) What Happens After User Clicks Train
+
+1. Frontend sends request to training backend:
+   - `POST /api/projects/:projectId/train`
+2. Backend resolves `auto` values:
+   - `epochs`, `batch_size`, `workers`, `device`
+3. Backend creates a training job record:
+   - status = `Preparing`
+   - saves estimated time
+   - saves resolved training plan
+4. Backend starts local training thread:
+   - always local machine execution
+   - GPU if available, else CPU fallback
+5. Backend updates job status continuously:
+   - `Preparing` -> `Training` -> `Completed`/`Failed`
+6. Frontend polls jobs endpoint:
+   - updates progress, ETA, metrics in Train tab
+
+### B) Terminal Output You Should See During Real Training
+
+When running the training service directly in terminal, you should see logs similar to:
+
+```text
+[VisionFlow] Training Service starting on port 5005...
+[VisionFlow] Training Service connected to MongoDB.
+[TRAIN] Starting job: 5e913e080ed140489b84b79accd3567d
+[TRAIN] Version: 821b611e44c545f082056447238a66ea
+[TRAIN] Architecture: yolov8n
+[TRAIN] Params: epochs=25 batch=8 workers=4 device=cpu
+Epoch 1/25 ... loss=...
+Epoch 2/25 ... loss=...
+...
+Epoch 25/25 ... mAP=...
+[TRAIN] Completed job: 5e913e080ed140489b84b79accd3567d
+```
+
+In UI (`Train Tab > Recent Training Jobs`) you should simultaneously see:
+
+- Progress percentage
+- Estimated time remaining
+- Final metrics (mAP/precision/recall where available)
+
+### C) Why You Might Not See Image/Epoch Logs in Terminal
+
+- Training service was started in hidden/background process, not interactive terminal.
+- Logs are streamed to job state in MongoDB/UI, not always printed line-by-line.
+- Older process was running stale code.
+- Windows stdout encoding issue previously stopped log parsing (already patched).
+
+### D) How To Run It Like IDE Training (Interactive Local Mode)
+
+Use one terminal for backend logs and one for frontend:
+
+1. Terminal 1 (project root):
+   - run training service directly so logs print live
+   - `python services/training-service/app.py`
+2. Terminal 2:
+   - run app stack (or frontend dev)
+   - `npm start` (or existing project run command)
+3. In UI:
+   - Select version
+   - Select architecture
+   - Set epochs/batch/workers/device
+   - Click `Train Model`
+4. Observe:
+   - Terminal 1 for detailed training progress
+   - Train tab for ETA/progress/metrics
+
+### E) How To Verify Training Is Actually Running
+
+- Check jobs API:
+  - `GET /api/projects/:projectId/jobs`
+- Confirm latest job:
+  - `status` is `Preparing` or `Training`
+  - `progress` increases over time
+  - `estimated_time_remaining` decreases
+
+If status becomes `Failed`, inspect `error` field in the latest job row.
+
+### F) Expected End-to-End Behavior (Target)
+
+- User chooses dataset version + architecture + params.
+- Backend builds hardware-aware local training plan.
+- Local training starts using user machine resources.
+- Terminal shows live training trace (epochs/progress).
+- UI shows real-time ETA and metrics.
+- Model weights saved locally and available for download/deploy.

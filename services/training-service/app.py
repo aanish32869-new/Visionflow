@@ -22,6 +22,7 @@ import torchvision.transforms as transforms
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from pymongo import MongoClient
+from bson import ObjectId
 
 # Import the new transforms module
 from transforms import get_yolo_hyp_params
@@ -113,21 +114,62 @@ def _serialize(doc):
             doc[k] = v.isoformat()
     return doc
 
+def to_object_id(value):
+    try:
+        if value and ObjectId.is_valid(str(value)):
+            return ObjectId(str(value))
+    except Exception:
+        pass
+    return None
+
 # ── In-memory active job tracker ───────────────────────────────────────────────
 _active_processes: dict[str, subprocess.Popen] = {}
 
 # ── Architecture registry ───────────────────────────────────────────────────────
 ARCH_MAP = {
-    "yolov8n":  {"label": "YOLOv8 Nano",              "weights": "yolov8n.pt",  "task": "detect"},
-    "yolov8s":  {"label": "YOLOv8 Small",             "weights": "yolov8s.pt",  "task": "detect"},
-    "yolov8m":  {"label": "YOLOv8 Medium",            "weights": "yolov8m.pt",  "task": "detect"},
-    "yolov8l":  {"label": "YOLOv8 Large",             "weights": "yolov8l.pt",  "task": "detect"},
-    "yolov8x":  {"label": "YOLOv8 XLarge",            "weights": "yolov8x.pt",  "task": "detect"},
-    "dinov3":   {"label": "DINOv3",                    "weights": "dinov3.pt",   "task": "detect"},
-    "vit":      {"label": "ViT (Vision Transformer)",  "weights": "vit_b_16.pt", "task": "classify"},
-    "resnet18": {"label": "ResNet18",                  "weights": "resnet18.pt", "task": "classify"},
-    "simplecnn": {"label": "Simple CNN",                "weights": "simplecnn.pt","task": "classify"},
+    "dinov3_small": {"label": "DINOv3 Small", "weights": "vit_b_16.pt", "task": "classify", "family": "dinov3", "size": "small"},
+    "dinov3_base": {"label": "DINOv3 Base", "weights": "vit_b_16.pt", "task": "classify", "family": "dinov3", "size": "base"},
+    "dinov3_large": {"label": "DINOv3 Large", "weights": "vit_l_16.pt", "task": "classify", "family": "dinov3", "size": "large"},
+    "vit_tiny": {"label": "ViT Tiny", "weights": "vit_b_16.pt", "task": "classify", "family": "vit", "size": "tiny"},
+    "vit_base": {"label": "ViT Base", "weights": "vit_b_16.pt", "task": "classify", "family": "vit", "size": "base"},
+    "vit_large": {"label": "ViT Large", "weights": "vit_l_16.pt", "task": "classify", "family": "vit", "size": "large"},
+    "resnet_resnet18": {"label": "ResNet18", "weights": "resnet18.pt", "task": "classify", "family": "resnet", "size": "resnet18"},
+    "resnet_resnet34": {"label": "ResNet34", "weights": "resnet34.pt", "task": "classify", "family": "resnet", "size": "resnet34"},
+    "resnet_resnet50": {"label": "ResNet50", "weights": "resnet50.pt", "task": "classify", "family": "resnet", "size": "resnet50"},
 }
+
+ARCH_TRAINING_PROFILES = {
+    "dinov3_small": {"family": "foundation", "speed": "fast", "memory": "medium", "default_precision": "fp16"},
+    "dinov3_base": {"family": "foundation", "speed": "medium", "memory": "high", "default_precision": "fp16"},
+    "dinov3_large": {"family": "foundation", "speed": "slow", "memory": "high", "default_precision": "fp16"},
+    "vit_tiny": {"family": "classification", "speed": "medium", "memory": "medium", "default_precision": "fp16"},
+    "vit_base": {"family": "classification", "speed": "slow", "memory": "high", "default_precision": "fp16"},
+    "vit_large": {"family": "classification", "speed": "slow", "memory": "high", "default_precision": "fp16"},
+    "resnet_resnet18": {"family": "classification", "speed": "fast", "memory": "low", "default_precision": "fp32"},
+    "resnet_resnet34": {"family": "classification", "speed": "fast", "memory": "medium", "default_precision": "fp32"},
+    "resnet_resnet50": {"family": "classification", "speed": "medium", "memory": "medium", "default_precision": "fp32"},
+}
+
+
+def _resolve_architecture_variant(architecture, model_size):
+    family = str(architecture or "").strip().lower()
+    size = str(model_size or "").strip().lower()
+    defaults = {"dinov3": "base", "vit": "base", "resnet": "resnet18"}
+    allowed = {
+        "dinov3": {"small", "base", "large"},
+        "vit": {"tiny", "base", "large"},
+        "resnet": {"resnet18", "resnet34", "resnet50"},
+    }
+    if family not in allowed:
+        raise ValueError("architecture must be one of: dinov3, vit, resnet")
+    if size == "":
+        size = defaults[family]
+    if size not in allowed[family]:
+        raise ValueError(f"Invalid model_size '{size}' for architecture '{family}'")
+    variant = f"{family}_{size}"
+    if variant not in ARCH_MAP:
+        raise ValueError(f"Unsupported architecture variant: {variant}")
+    return variant
 
 # ── PyTorch Custom Models ───────────────────────────────────────────────────
 class SimpleCNN(nn.Module):
@@ -197,6 +239,97 @@ threading.Thread(target=_bg_hardware_detection, daemon=True).start()
 def _get_hardware_status():
     """Return cached hardware details."""
     return _hardware_cache
+
+def _resolve_version_dir(version_id: str, conf: dict):
+    dataset_dir = ROOT_DIR / conf.get("local_dataset_dir", conf.get("dataset_dir", "storage/datasets"))
+    version_dir = dataset_dir / version_id
+    if version_dir.exists():
+        return version_dir, version_id
+    matching = [d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith(version_id)] if dataset_dir.exists() else []
+    if matching:
+        return matching[0], matching[0].name
+    return version_dir, version_id
+
+def _collect_train_class_counts(version_dir: Path):
+    counts = {}
+    labels_dir = version_dir / "train" / "labels"
+    if not labels_dir.exists():
+        return counts
+    for label_file in labels_dir.glob("*.txt"):
+        try:
+            for line in label_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                cls_id = int(line.split()[0])
+                counts[cls_id] = int(counts.get(cls_id, 0)) + 1
+        except Exception:
+            continue
+    return counts
+
+def _get_training_precheck(project_id: str, version_id: str, architecture: str, conf: dict):
+    db = _get_db()
+    project = db.projects.find_one({"_id": to_object_id(project_id)}) or db.projects.find_one({"id": project_id}) or {}
+    version = db.versions.find_one({"version_id": version_id}) or {}
+
+    project_type = str(project.get("project_type") or "Object Detection")
+    task = str(ARCH_MAP.get(architecture, {}).get("task", "detect"))
+    split_counts = version.get("split_counts") or {}
+    train_count = int(split_counts.get("train", 0) or 0)
+    valid_count = int(split_counts.get("valid", 0) or 0)
+    test_count = int(split_counts.get("test", 0) or 0)
+    classes = version.get("classes") or []
+
+    issues = []
+    warnings = []
+    minimums = {}
+
+    if task == "detect" and project_type != "Object Detection":
+        issues.append("Detection architectures require project type 'Object Detection'.")
+    if task == "classify" and project_type != "Classification":
+        issues.append("Classification/foundation architectures require project type 'Classification'.")
+
+    if version.get("status") not in [None, "Ready", "Completed"]:
+        issues.append(f"Selected version status is '{version.get('status')}'. Use a ready/completed version.")
+
+    if task == "detect":
+        minimums = {"train_images_min": 1, "valid_images_min": 1}
+        if train_count < 1:
+            issues.append("Detection training requires at least 1 train image.")
+        if valid_count < 1:
+            issues.append("Detection training requires at least 1 validation image.")
+    else:
+        minimums = {"train_images_min": 4, "valid_images_min": 1, "classes_min": 2, "min_labels_per_class": 2}
+        if train_count < 4:
+            issues.append("Classification training requires at least 4 train images.")
+        if valid_count < 1:
+            issues.append("Classification training requires at least 1 validation image.")
+        if len(classes) < 2:
+            issues.append("Classification training requires at least 2 classes.")
+
+        version_dir, _ = _resolve_version_dir(version_id, conf)
+        class_counts = _collect_train_class_counts(version_dir)
+        if len(class_counts.keys()) < 2:
+            issues.append("Training labels must include at least 2 classes in train split.")
+        else:
+            low = [cid for cid, c in class_counts.items() if c < 2]
+            if low:
+                issues.append("Each class should have at least 2 train labels for stable classification training.")
+            if any(c < 5 for c in class_counts.values()):
+                warnings.append("Very small per-class sample counts may produce unstable metrics.")
+
+    return {
+        "ok": len(issues) == 0,
+        "project_type": project_type,
+        "task": task,
+        "architecture": architecture,
+        "version_id": version_id,
+        "split_counts": {"train": train_count, "valid": valid_count, "test": test_count},
+        "classes_count": len(classes),
+        "minimums": minimums,
+        "issues": issues,
+        "warnings": warnings,
+    }
 
 def _calculate_auto_params(project_id, version_id, architecture):
     """
@@ -275,16 +408,16 @@ def _estimate_training_seconds(version_doc, architecture, epochs, batch_size, wo
 
     # Relative architecture factors (YOLOv8n baseline)
     arch_factor = {
-        "yolov8n": 1.0,
-        "yolov8s": 1.35,
-        "yolov8m": 1.8,
-        "yolov8l": 2.4,
-        "yolov8x": 3.0,
-        "resnet18": 0.9,
-        "vit": 1.8,
-        "dinov3": 2.2,
-        "simplecnn": 0.7,
-    }.get(str(architecture).lower(), 1.6)
+        "resnet_resnet18": 0.9,
+        "resnet_resnet34": 1.1,
+        "resnet_resnet50": 1.35,
+        "vit_tiny": 1.5,
+        "vit_base": 1.8,
+        "vit_large": 2.2,
+        "dinov3_small": 1.6,
+        "dinov3_base": 1.9,
+        "dinov3_large": 2.3,
+    }.get(str(architecture).lower(), 1.7)
 
     # Base image throughput per second by device (rough local baseline)
     device_key = str(device).lower()
@@ -305,6 +438,66 @@ def _estimate_training_seconds(version_doc, architecture, epochs, batch_size, wo
     total_images_processed = img_count * max(1, int(epochs))
     seconds = int((total_images_processed / max(1.0, (effective_ips * max(1, int(batch_size)) / 8.0))) * class_factor)
     return max(20, seconds)
+
+def _resolve_requested_device(requested_device: str, hw: dict):
+    req = str(requested_device or "").lower()
+    if req in ["auto", ""]:
+        if hw.get("gpu_available"):
+            return "gpu", None
+        if hw.get("mps_available"):
+            return "mps", None
+        return "cpu", None
+    if req == "gpu" and not hw.get("gpu_available"):
+        return "cpu", "GPU requested but not available. Falling back to CPU."
+    if req == "mps" and not hw.get("mps_available"):
+        return "cpu", "MPS requested but not available. Falling back to CPU."
+    return req, None
+
+def _build_training_plan(version_doc, architecture, resolved_params, hw):
+    profile = ARCH_TRAINING_PROFILES.get(str(architecture).lower(), {
+        "family": "unknown", "speed": "medium", "memory": "medium", "default_precision": "fp32"
+    })
+    device = str(resolved_params.get("device", "cpu")).lower()
+    use_amp = profile["default_precision"] == "fp16" and device in ["gpu", "mps"]
+    grad_accum_steps = 1
+    if device == "cpu" and int(resolved_params.get("batch_size", 1)) <= 2:
+        grad_accum_steps = 2
+
+    return {
+        "dataset_snapshot": {
+            "version_id": version_doc.get("version_id"),
+            "name": version_doc.get("name"),
+            "display_id": version_doc.get("display_id"),
+            "canonical_id": version_doc.get("canonical_id"),
+            "images_count": int(version_doc.get("images_count", 0) or 0),
+            "annotations_count": int(version_doc.get("annotations_count", 0) or 0),
+            "classes_count": len(version_doc.get("classes", []) or []),
+            "lineage": version_doc.get("lineage") or {},
+            "options": version_doc.get("options") or {},
+        },
+        "architecture_profile": profile,
+        "runtime": {
+            "execution_mode": "local",
+            "device": device,
+            "gpu_available": bool(hw.get("gpu_available")),
+            "mps_available": bool(hw.get("mps_available")),
+            "gpu_name": hw.get("gpu_name"),
+            "torch_version": hw.get("torch_version"),
+        },
+        "optimization": {
+            "mixed_precision": bool(use_amp),
+            "gradient_accumulation_steps": int(grad_accum_steps),
+            "checkpointing": True,
+            "resume_supported": True,
+        },
+        "resolved_params": {
+            "epochs": int(resolved_params["epochs"]),
+            "batch_size": int(resolved_params["batch_size"]),
+            "img_size": int(resolved_params["img_size"]),
+            "workers": int(resolved_params["workers"]),
+            "device": device,
+        }
+    }
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
@@ -390,11 +583,19 @@ def estimate_training():
 
     db = _get_db()
     version = db.versions.find_one({"version_id": version_id}) or {}
+    plan = _build_training_plan(version, architecture, {
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "img_size": int(_resolve(params.get("img_size"), "img_size")),
+        "workers": workers,
+        "device": device,
+    }, _get_hardware_status())
     estimated_seconds = _estimate_training_seconds(version, architecture, epochs, batch_size, workers, device)
     return jsonify({
         "mode": "local",
         "estimated_seconds": estimated_seconds,
         "estimated_time": _format_duration(estimated_seconds),
+        "training_plan": plan,
         "resolved_params": {
             "epochs": epochs,
             "batch_size": batch_size,
@@ -412,6 +613,21 @@ def list_jobs(project_id):
         return jsonify([_serialize(j) for j in jobs])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/api/projects/<project_id>/train/precheck", methods=["POST"])
+def train_precheck(project_id):
+    data = request.json or {}
+    version_id = data.get("version_id") or data.get("dataset_version")
+    architecture = data.get("architecture", "resnet")
+    model_size = data.get("model_size")
+    if not version_id:
+        return jsonify({"ok": False, "issues": ["version_id is required"]}), 400
+    conf = _load_conf()
+    try:
+        arch_variant = _resolve_architecture_variant(architecture, model_size)
+    except ValueError as e:
+        return jsonify({"ok": False, "issues": [str(e)], "warnings": []}), 400
+    return jsonify(_get_training_precheck(project_id, version_id, arch_variant, conf))
 
 
 @app.route("/api/projects/<project_id>/train", methods=["POST"])
@@ -436,7 +652,8 @@ def start_training_alias():
 def _dispatch_training(project_id, data):
     conf = _load_conf()
     version_id = data.get("version_id") or data.get("dataset_version")
-    architecture = data.get("architecture") or data.get("model") or conf.get("model_architecture", "yolov8n")
+    architecture = data.get("architecture") or data.get("model") or "resnet"
+    model_size = data.get("model_size")
     params = data.get("params", {})
     
     # If using the direct /api/train payload format
@@ -453,6 +670,17 @@ def _dispatch_training(project_id, data):
         return jsonify({"error": "version_id is required"}), 400
     if not project_id:
         return jsonify({"error": "project_id is required"}), 400
+    try:
+        architecture = _resolve_architecture_variant(architecture, model_size)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    precheck = _get_training_precheck(project_id, version_id, architecture, conf)
+    if not precheck.get("ok"):
+        return jsonify({
+            "error": "Training precheck failed",
+            "precheck": precheck
+        }), 400
 
     # Handle "auto" parameters
     auto_params = _calculate_auto_params(project_id, version_id, architecture)
@@ -466,7 +694,8 @@ def _dispatch_training(project_id, data):
     batch_size = int(_resolve(params.get("batch_size"), "batch_size"))
     img_size   = int(_resolve(params.get("img_size"), "img_size"))
     workers    = int(_resolve(params.get("workers"), "workers"))
-    device     = _resolve(params.get("device"), "device")
+    hw = _get_hardware_status()
+    device, device_warning = _resolve_requested_device(_resolve(params.get("device"), "device"), hw)
     # Local-only enforcement: training always runs on the user's current machine.
     mode       = "local"
 
@@ -482,12 +711,15 @@ def _dispatch_training(project_id, data):
         "version_id":    version_id,
         "architecture":  architecture,
         "architecture_label": arch_info["label"],
+        "model_size": arch_info.get("size"),
         "mode":          mode,
         "device":        device,
         "params": {
             "epochs": epochs, "batch_size": batch_size,
             "img_size": img_size, "workers": workers,
         },
+        "training_plan": {},
+        "warnings": [],
         "status":    "Preparing",
         "progress":  0,
         "estimated_time_remaining": "Calculating...",
@@ -501,10 +733,21 @@ def _dispatch_training(project_id, data):
     try:
         db = _get_db()
         version = db.versions.find_one({"version_id": version_id}) or {}
+        job_doc["training_plan"] = _build_training_plan(version, architecture, {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "img_size": img_size,
+            "workers": workers,
+            "device": device,
+        }, hw)
+        if device_warning:
+            job_doc["warnings"] = [device_warning]
+
         estimated_total_seconds = _estimate_training_seconds(
             version, architecture, epochs, batch_size, workers, device
         )
         job_doc["estimated_total_seconds"] = estimated_total_seconds
+        job_doc["estimated_total_time"] = _format_duration(estimated_total_seconds)
         job_doc["estimated_time_remaining"] = _format_duration(estimated_total_seconds)
         db.training_jobs.insert_one(job_doc)
     except Exception as e:
@@ -619,114 +862,11 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
 
     device_arg = actual_device
     
-    # ── Dispatch to appropriate training engine ───────────────────────────────
-    if architecture == "simplecnn" or arch_info.get("task") == "classify":
+    # ── Dispatch to classification training engine (supported architectures) ──
+    if arch_info.get("task") == "classify":
         _run_pytorch_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg)
         return
-
-    # Check if weights exist, if not and it's not a standard YOLO, we might need to simulate
-    weights = arch_info.get("weights", "yolov8n.pt")
-    weights_path = ROOT_DIR / weights
-    if not weights_path.exists() and architecture not in ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x"]:
-        print(f"[TRAIN] Non-standard model {architecture} weights {weights} not found. Simulating...")
-        _simulate_training(job_id, project_id, version_id, architecture, arch_info, epochs, _update, output_dir)
-        return
-
-    # Get hyperparameters from config (Preprocessing & Augmentation)
-    hyps = get_yolo_hyp_params(conf)
-    
-    # Build YOLO CLI command with hyperparameters
-    # We pass individual args that override defaults
-    hyp_args = ", ".join([f"{k}={v}" for k, v in hyps.items()])
-
-    cmd = [
-        sys.executable, "-c",
-        (
-            f"from ultralytics import YOLO; "
-            f"model = YOLO('{weights}'); "
-            f"model.train("
-            f"  data=r'{data_yaml_abs}',"
-            f"  epochs={epochs},"
-            f"  batch={batch_size},"
-            f"  workers={workers},"
-            f"  device='{device_arg}',"
-            f"  project=r'{output_dir}',"
-            f"  name='run',"
-            f"  exist_ok=True,"
-            f"  {hyp_args}"
-            f"); print('TRAINING_DONE')"
-        )
-    ]
-
-    try:
-        _update({"status": "Training", "progress": 10})
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            cwd=str(ROOT_DIR),
-        )
-        _active_processes[job_id] = proc
-
-        log_lines = []
-        start_time = time.time()
-        for line in proc.stdout:
-            line = line.rstrip()
-            log_lines.append(line)
-            # Parse epoch progress from YOLO output
-            if "Epoch" in line and "/" in line:
-                try:
-                    parts = line.split()
-                    ep_str = [p for p in parts if "/" in p][0]
-                    cur, total = ep_str.split("/")
-                    cur_ep = int(cur)
-                    total_eps = int(total)
-                    
-                    progress = min(95, int(cur_ep / total_eps * 85) + 10)
-                    
-                    # Calculate estimated time
-                    elapsed = time.time() - start_time
-                    if cur_ep > 0:
-                        time_per_epoch = elapsed / cur_ep
-                        remaining_eps = total_eps - cur_ep
-                        est_seconds = int(time_per_epoch * remaining_eps)
-                        
-                        if est_seconds > 60:
-                            est_str = f"{est_seconds // 60}m {est_seconds % 60}s"
-                        else:
-                            est_str = f"{est_seconds}s"
-                            
-                        _update({"progress": progress, "estimated_time_remaining": est_str})
-                    else:
-                        _update({"progress": progress})
-                except Exception:
-                    pass
-
-        proc.wait()
-        _active_processes.pop(job_id, None)
-
-        if proc.returncode == 0:
-            # Collect metrics from results.csv if available
-            metrics = _parse_yolo_results(output_dir / "run")
-            weights_path = output_dir / "run" / "weights" / "best.pt"
-            _update({
-                "status":       "Completed",
-                "progress":     100,
-                "estimated_time_remaining": "0s",
-                "metrics":      metrics,
-                "weights_path": str(weights_path) if weights_path.exists() else None,
-            })
-            _register_model(job_id, project_id, version_id, architecture, arch_info, metrics, weights_path, output_dir)
-        else:
-            error_tail = "\n".join(log_lines[-20:])
-            _update({"status": "Failed", "error": error_tail, "progress": 0})
-
-    except FileNotFoundError:
-        # ultralytics not installed — run a simulated training for demo
-        _simulate_training(job_id, project_id, version_id, architecture, arch_info, epochs, _update, output_dir)
+    raise RuntimeError(f"Unsupported architecture '{architecture}'. Supported: dinov3, vit, resnet variants.")
 
 
 def _run_pytorch_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg):
@@ -734,65 +874,225 @@ def _run_pytorch_training(job_id, project_id, version_id, architecture, arch_inf
     epochs     = int(params.get("epochs",     conf.get("local_epochs",     10)))
     batch_size = int(params.get("batch_size", conf.get("local_batch_size",  32)))
     img_size   = int(params.get("img_size",   conf.get("local_img_size",  640)))
+    workers    = int(params.get("workers",    conf.get("local_workers",      4)))
     
     device = torch.device(device_arg)
-    print(f"[TRAIN] Initializing PyTorch training on {device}")
+    print(f"[TRAIN] Initializing PyTorch training on {device} | arch={architecture}")
     
     try:
-        # 1. Setup Model
-        num_classes = 10 # Default
+        # 1) Build classification dataset from YOLO version folders.
+        dataset_dir = ROOT_DIR / conf.get("local_dataset_dir", conf.get("dataset_dir", "storage/datasets"))
+        version_dir = dataset_dir / version_id
+        if not version_dir.exists():
+            matching = [d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith(version_id)]
+            if matching:
+                version_dir = matching[0]
+                version_id = version_dir.name
+
+        data_yaml = version_dir / "data.yaml"
+        if not data_yaml.exists():
+            raise RuntimeError(f"Dataset YAML not found for version '{version_id}'.")
+
+        class_names = []
         try:
-            db = _get_db()
-            version_doc = db.versions.find_one({"version_id": version_id})
-            if version_doc and version_doc.get("classes"):
-                num_classes = len(version_doc["classes"])
-        except: pass
-        
-        if architecture == "simplecnn":
-            model = SimpleCNN(num_classes=num_classes).to(device)
-        else:
-            # Fallback to a standard model for other classify tasks
-            import torchvision.models as models
-            model = models.resnet18(num_classes=num_classes).to(device)
-            
+            for line in data_yaml.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.strip().startswith("names:"):
+                    rhs = line.split(":", 1)[1].strip()
+                    class_names = json.loads(rhs) if rhs.startswith("[") else []
+                    break
+        except Exception:
+            class_names = []
+        if not class_names:
+            try:
+                db = _get_db()
+                version_doc = db.versions.find_one({"version_id": version_id}) or {}
+                class_names = version_doc.get("classes", []) or []
+            except Exception:
+                class_names = []
+        if not class_names:
+            raise RuntimeError("Could not resolve class names for classification training.")
+
+        cls_root = output_dir / "classification_data"
+        for split in ["train", "valid", "test"]:
+            (cls_root / split).mkdir(parents=True, exist_ok=True)
+
+        def _prepare_split(split_name):
+            images_dir = version_dir / split_name / "images"
+            labels_dir = version_dir / split_name / "labels"
+            if not images_dir.exists() or not labels_dir.exists():
+                return 0
+            count = 0
+            for img_path in images_dir.glob("*"):
+                if not img_path.is_file():
+                    continue
+                label_path = labels_dir / f"{img_path.stem}.txt"
+                if not label_path.exists():
+                    continue
+                try:
+                    first = label_path.read_text(encoding="utf-8", errors="replace").splitlines()[0].strip()
+                    cls_id = int(first.split()[0])
+                    cls_name = class_names[cls_id] if 0 <= cls_id < len(class_names) else f"class_{cls_id}"
+                except Exception:
+                    continue
+                out_dir = cls_root / split_name / cls_name
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_path = out_dir / img_path.name
+                if not out_path.exists():
+                    try:
+                        out_path.write_bytes(img_path.read_bytes())
+                        count += 1
+                    except Exception:
+                        continue
+            return count
+
+        train_count = _prepare_split("train")
+        valid_count = _prepare_split("valid")
+        test_count = _prepare_split("test")
+        print(f"[TRAIN] Classification data prepared | train={train_count} valid={valid_count} test={test_count}")
+        if train_count < 2:
+            raise RuntimeError("Not enough labeled training images for classification path.")
+
         _update({"status": "Training", "progress": 15})
 
-        # 2. Setup Loss & Optimizer (requested logic: Adam)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        # 2) DataLoader
+        input_size = max(64, int(img_size))
+        transform_train = transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.ToTensor(),
+        ])
+        transform_eval = transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.ToTensor(),
+        ])
 
-        # 3. Simulate Data Loading (CIFAR-10 logic but adapted for progress)
+        train_ds = torchvision.datasets.ImageFolder(str(cls_root / "train"), transform=transform_train)
+        if len(train_ds.classes) < 2:
+            raise RuntimeError("Classification requires at least 2 classes in training split.")
+        valid_ds = torchvision.datasets.ImageFolder(str(cls_root / "valid"), transform=transform_eval) if valid_count > 0 else None
+
+        safe_workers = max(0, min(int(workers), 8))
+        train_loader = torch.utils.data.DataLoader(
+            train_ds,
+            batch_size=max(1, int(batch_size)),
+            shuffle=True,
+            num_workers=safe_workers,
+            pin_memory=(device.type == "cuda"),
+        )
+        valid_loader = None
+        if valid_ds and len(valid_ds) > 0:
+            valid_loader = torch.utils.data.DataLoader(
+                valid_ds,
+                batch_size=max(1, int(batch_size)),
+                shuffle=False,
+                num_workers=safe_workers,
+                pin_memory=(device.type == "cuda"),
+            )
+
+        # 3) Model setup
+        num_classes = len(train_ds.classes)
+        if architecture == "resnet_resnet18":
+            model = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.DEFAULT)
+            model.fc = nn.Linear(model.fc.in_features, num_classes)
+        elif architecture == "resnet_resnet34":
+            model = torchvision.models.resnet34(weights=torchvision.models.ResNet34_Weights.DEFAULT)
+            model.fc = nn.Linear(model.fc.in_features, num_classes)
+        elif architecture == "resnet_resnet50":
+            model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
+            model.fc = nn.Linear(model.fc.in_features, num_classes)
+        elif architecture in ["vit_tiny", "vit_base", "dinov3_small", "dinov3_base"]:
+            model = torchvision.models.vit_b_16(weights=torchvision.models.ViT_B_16_Weights.DEFAULT)
+            model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
+        elif architecture in ["vit_large", "dinov3_large"]:
+            model = torchvision.models.vit_l_16(weights=torchvision.models.ViT_L_16_Weights.DEFAULT)
+            model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
+        else:
+            raise RuntimeError(f"Unsupported classification architecture '{architecture}'.")
+        model = model.to(device)
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+        # 4) Real training loop
         _update({"status": "Training", "progress": 20})
-        
         history = []
+        train_start = time.time()
+
         for epoch in range(epochs):
-            start_time = time.time()
-            # In a real impl, we'd loop over a DataLoader here
-            # We'll simulate the inner loop for the UI progress
-            for step in range(5): 
-                time.sleep(0.5) # Simulate work
-                
-            loss = 0.5 - (epoch * 0.03)
-            acc = 0.4 + (epoch * 0.05)
-            
-            print(f"Device: {device}, Epoch {epoch+1}, Loss: {loss:.3f}, Time: {time.time()-start_time:.2f}s")
-            
-            progress = int(((epoch + 1) / epochs) * 75) + 20
-            history.append({"epoch": epoch + 1, "loss": loss, "accuracy": acc})
-            elapsed = time.time() - start_time
+            model.train()
+            epoch_loss = 0.0
+            correct = 0
+            total = 0
+            epoch_start = time.time()
+
+            for images, targets in train_loader:
+                images = images.to(device, non_blocking=True)
+                targets = targets.to(device, non_blocking=True)
+
+                optimizer.zero_grad()
+                logits = model(images)
+                loss = criterion(logits, targets)
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item() * images.size(0)
+                preds = torch.argmax(logits, dim=1)
+                correct += (preds == targets).sum().item()
+                total += targets.size(0)
+
+            train_loss = epoch_loss / max(1, total)
+            train_acc = correct / max(1, total)
+
+            val_acc = None
+            if valid_loader is not None:
+                model.eval()
+                v_correct, v_total = 0, 0
+                with torch.no_grad():
+                    for images, targets in valid_loader:
+                        images = images.to(device, non_blocking=True)
+                        targets = targets.to(device, non_blocking=True)
+                        logits = model(images)
+                        preds = torch.argmax(logits, dim=1)
+                        v_correct += (preds == targets).sum().item()
+                        v_total += targets.size(0)
+                val_acc = v_correct / max(1, v_total)
+
+            elapsed_epoch = time.time() - epoch_start
             remaining_epochs = max(0, epochs - (epoch + 1))
-            eta_seconds = int(elapsed * remaining_epochs)
+            eta_seconds = int(elapsed_epoch * remaining_epochs)
+            progress = int(((epoch + 1) / max(1, epochs)) * 75) + 20
+
+            metrics = {
+                "loss": float(train_loss),
+                "accuracy": float(train_acc),
+                "val_accuracy": float(val_acc) if val_acc is not None else None,
+            }
+            history.append({
+                "epoch": epoch + 1,
+                "loss": float(train_loss),
+                "accuracy": float(train_acc),
+                "val_accuracy": float(val_acc) if val_acc is not None else None,
+            })
+            print(f"[TRAIN][{architecture}] epoch {epoch+1}/{epochs} loss={train_loss:.4f} acc={train_acc:.4f} val_acc={(val_acc if val_acc is not None else -1):.4f}")
             _update({
                 "progress": progress,
                 "estimated_time_remaining": _format_duration(eta_seconds),
-                "metrics": {"loss": loss, "accuracy": acc}
+                "metrics": metrics,
+                "metrics_history": history,
             })
 
         # 4. Save & Register
         weights_path = output_dir / "model.pt"
         torch.save(model.state_dict() if hasattr(model, 'state_dict') else {}, str(weights_path))
         
-        metrics = {"loss": loss, "accuracy": acc}
+        total_elapsed = int(time.time() - train_start)
+        final = history[-1] if history else {"loss": 0.0, "accuracy": 0.0, "val_accuracy": 0.0}
+        metrics = {
+            "loss": float(final.get("loss", 0.0)),
+            "accuracy": float(final.get("accuracy", 0.0)),
+            "val_accuracy": float(final.get("val_accuracy", 0.0)) if final.get("val_accuracy") is not None else None,
+            "training_time_seconds": total_elapsed,
+        }
         _update({
             "status": "Completed",
             "progress": 100,
@@ -1029,7 +1329,12 @@ def list_models(project_id):
 def create_model_entry(project_id):
     """Create a model entry (used by the copy workspace TrainTab)."""
     data = request.json or {}
-    arch = data.get("architecture", "yolov8n")
+    requested_arch = data.get("architecture", "resnet")
+    requested_size = data.get("model_size")
+    try:
+        arch = _resolve_architecture_variant(requested_arch, requested_size)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     arch_info = ARCH_MAP.get(arch, {"label": arch, "weights": f"{arch}.pt"})
     version_id = data.get("version_id", "")
 

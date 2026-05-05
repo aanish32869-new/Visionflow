@@ -152,6 +152,7 @@ def yolo_label():
     asset_id = data.get("asset_id")
     asset_ids = data.get("asset_ids")
     project_id = data.get("project_id")
+    batch_id = data.get("batch_id")
     model = data.get("model")
     confidence = data.get("conf")
 
@@ -179,12 +180,58 @@ def yolo_label():
                 project_id,
                 model_name=model,
                 confidence=confidence,
+                batch_id=batch_id,
             )
 
         logger.info("YOLO labeling completed successfully")
         return jsonify(result), 200
     except Exception as error:
         logger.error(f"YOLO labeling failed: {error}")
+        return jsonify({"error": str(error)}), 500
+
+
+@inference_bp.route("/api/infer/classification-label", methods=["POST"])
+def classification_label():
+    data = request.json or {}
+    asset_id = data.get("asset_id")
+    asset_ids = data.get("asset_ids")
+    project_id = data.get("project_id")
+    batch_id = data.get("batch_id")
+    model = data.get("model")
+    confidence = data.get("conf")
+
+    normalized_asset_ids = []
+    if isinstance(asset_ids, list):
+        normalized_asset_ids = [str(item).strip() for item in asset_ids if str(item).strip()]
+
+    logger.info(f"Classification labeling request for project {project_id} / asset {asset_id} with model {model}")
+    try:
+        if normalized_asset_ids:
+            result = InferenceLogic.run_assets_classification_labeling(
+                normalized_asset_ids,
+                model_name=model,
+                confidence=confidence,
+                job_id=data.get("job_id"),
+            )
+        elif asset_id:
+            result = InferenceLogic.run_classification_labeling(
+                asset_id,
+                model_name=model,
+                confidence=confidence,
+                job_id=data.get("job_id"),
+            )
+        else:
+            result = InferenceLogic.run_project_classification_labeling(
+                project_id,
+                model_name=model,
+                confidence=confidence,
+                batch_id=batch_id,
+            )
+
+        logger.info("Classification labeling completed successfully")
+        return jsonify(result), 200
+    except Exception as error:
+        logger.error(f"Classification labeling failed: {error}")
         return jsonify({"error": str(error)}), 500
 
 

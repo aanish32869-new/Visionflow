@@ -135,6 +135,14 @@ def create_version(project_id):
         readiness = _annotation_status(project_id)
         if readiness["total_assets"] == 0:
             return jsonify({"error": "Add images before creating a dataset version."}), 400
+        split = data.get("split", {"train": 70, "valid": 20, "test": 10})
+        split_total = int(split.get("train", 0)) + int(split.get("valid", 0)) + int(split.get("test", 0))
+        if split_total != 100:
+            return jsonify({"error": "Split ratios must add up to 100."}), 400
+
+        dataset_assets_count = db.assets.count_documents({"project_id": project_id, "status": "dataset"})
+        if dataset_assets_count == 0:
+            return jsonify({"error": "No assets found in Dataset. Move annotated images to Dataset before creating a version."}), 400
             
         project = _find_project(project_id)
         
@@ -155,7 +163,7 @@ def create_version(project_id):
         # Build options for management
         options = {
             "name": data.get("name") or f"Version {version_number}",
-            "split": data.get("split", {"train": 70, "valid": 20, "test": 10}),
+            "split": split,
             "preprocessing": data.get("preprocessing", {}),
             "augmentations": data.get("augmentations", []),
             "tag_filter": data.get("tag_filter", {}),
