@@ -3,16 +3,6 @@ import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2 } from "lucide-react"
 
 const ARCHITECTURES = [
   {
-    id: "dinov3",
-    name: "DINOv3",
-    description: "Fast training, resolution-agnostic, strong generalization.",
-    sizes: ["small", "base", "large"],
-    flow: "Image -> Patch Embedding -> Transformer Encoder -> Feature Vector -> Classification Head",
-    strengths: ["Fast training", "Resolution-agnostic", "Strong feature learning"],
-    caveats: ["Heavier than ResNet", "Best results with pretraining"],
-    defaults: { epochs: 60, batch: 16, image: 224, workers: 4 },
-  },
-  {
     id: "vit",
     name: "Vision Transformer (ViT)",
     description: "High accuracy, transformer-based, slower training/inference.",
@@ -25,11 +15,11 @@ const ARCHITECTURES = [
   {
     id: "resnet",
     name: "ResNet",
-    description: "Fast training and inference, efficient baseline.",
+    description: "Trains deep networks reliably using residual learning and skip connections. Excellent for transfer learning.",
     sizes: ["resnet18", "resnet34", "resnet50"],
-    flow: "Image -> Conv Layers -> Residual Blocks -> Global Pooling -> Fully Connected Layer",
-    strengths: ["Fast convergence", "Lightweight", "Great baseline"],
-    caveats: ["Lower accuracy ceiling vs ViT"],
+    flow: "Input -> Initial Conv -> Residual Blocks -> Feature Extraction -> Downsampling -> GAP -> FC",
+    strengths: ["Residual learning logic", "Identity skip connections", "Vanishing gradient prevention", "Stable deep optimization"],
+    caveats: ["Requires bottleneck for >50 layers", "Fixed resolution input (224)"],
     defaults: { epochs: 50, batch: 32, image: 224, workers: 4 },
   },
   {
@@ -41,6 +31,16 @@ const ARCHITECTURES = [
     strengths: ["SOTA Accuracy", "Extremely fast", "Real-time performance"],
     caveats: ["Primarily for detection", "Heavier than classification-only models"],
     defaults: { epochs: 50, batch: 16, image: 640, workers: 4 },
+  },
+  {
+    id: "dinov3",
+    name: "DINOv3",
+    description: "Trains very quickly, Resolution-agnostic, Inference speed comparable to ViT, Accuracy varies dataset-to-dataset.",
+    sizes: ["small", "base", "large"],
+    flow: "Image -> Patch Embedding -> Transformer Encoder -> Feature Vector -> Classification Head",
+    strengths: ["Trains very quickly", "Resolution-agnostic", "Inference speed comparable to ViT", "Accuracy varies dataset-to-dataset"],
+    caveats: ["Heavier than ResNet", "Best results with pretraining"],
+    defaults: { epochs: 60, batch: 16, image: 224, workers: 4 },
   },
 ];
 
@@ -190,6 +190,7 @@ export default function TrainTab({ projectId }) {
           <div className="space-y-2">
             {ARCHITECTURES.filter(a => {
               if (!project) return true;
+              if (a.id === "dinov3" || a.id === "resnet") return true; // Show Foundation and ResNet for both
               if (project.project_type === "Object Detection") return a.id === "yolov8";
               if (project.project_type === "Classification") return a.id !== "yolov8";
               return true;
@@ -207,6 +208,8 @@ export default function TrainTab({ projectId }) {
                   <div className="font-black text-sm text-gray-900">{a.name}</div>
                   {a.id === "yolov8" ? (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700 uppercase">Detection</span>
+                  ) : a.id === "dinov3" ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-700 uppercase">Foundation</span>
                   ) : (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 uppercase">Classification</span>
                   )}
@@ -236,10 +239,54 @@ export default function TrainTab({ projectId }) {
 
         <Step n={5} title="Configure Training">
           <div className="grid grid-cols-2 gap-3">
-            <input value={epochs} onChange={(e) => setEpochs(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2" placeholder="Epochs" />
-            <input value={batchSize} onChange={(e) => setBatchSize(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2" placeholder="Batch size" />
-            <input value={imageSize} onChange={(e) => setImageSize(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2" placeholder="Image size" />
-            <input value={workers} onChange={(e) => setWorkers(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2" placeholder="Workers" />
+            <div className="relative group">
+              <label className="block text-[10px] font-black uppercase text-gray-400 mb-1 ml-1">Epochs</label>
+              <div className="flex items-center border border-gray-200 rounded-xl px-3 py-2 bg-gray-50/30 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-all">
+                <input 
+                  type="number"
+                  value={epochs} 
+                  onChange={(e) => setEpochs(e.target.value)} 
+                  className="bg-transparent w-full font-black text-gray-900 outline-none text-sm" 
+                />
+                <span className="text-[9px] font-bold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-100">Ref: {currentArch.defaults.epochs}</span>
+              </div>
+            </div>
+            <div className="relative group">
+              <label className="block text-[10px] font-black uppercase text-gray-400 mb-1 ml-1">Batch Size</label>
+              <div className="flex items-center border border-gray-200 rounded-xl px-3 py-2 bg-gray-50/30 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-all">
+                <input 
+                  type="number"
+                  value={batchSize} 
+                  onChange={(e) => setBatchSize(e.target.value)} 
+                  className="bg-transparent w-full font-black text-gray-900 outline-none text-sm" 
+                />
+                <span className="text-[9px] font-bold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-100">Ref: {currentArch.defaults.batch}</span>
+              </div>
+            </div>
+            <div className="relative group">
+              <label className="block text-[10px] font-black uppercase text-gray-400 mb-1 ml-1">Image Size</label>
+              <div className="flex items-center border border-gray-200 rounded-xl px-3 py-2 bg-gray-50/30 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-all">
+                <input 
+                  type="number"
+                  value={imageSize} 
+                  onChange={(e) => setImageSize(e.target.value)} 
+                  className="bg-transparent w-full font-black text-gray-900 outline-none text-sm" 
+                />
+                <span className="text-[9px] font-bold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-100">Ref: {currentArch.defaults.image}</span>
+              </div>
+            </div>
+            <div className="relative group">
+              <label className="block text-[10px] font-black uppercase text-gray-400 mb-1 ml-1">Workers</label>
+              <div className="flex items-center border border-gray-200 rounded-xl px-3 py-2 bg-gray-50/30 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-all">
+                <input 
+                  type="number"
+                  value={workers} 
+                  onChange={(e) => setWorkers(e.target.value)} 
+                  className="bg-transparent w-full font-black text-gray-900 outline-none text-sm" 
+                />
+                <span className="text-[9px] font-bold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-100">Ref: {currentArch.defaults.workers}</span>
+              </div>
+            </div>
           </div>
         </Step>
 
@@ -253,36 +300,38 @@ export default function TrainTab({ projectId }) {
       <section className="bg-white border border-gray-200 rounded-2xl p-5">
         <h3 className="text-lg font-black text-gray-900 mb-3">Model Details</h3>
         <div className="grid lg:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-gray-100 p-4 bg-gray-50/60">
+          <div className="lg:col-span-2 rounded-xl border border-gray-100 p-4 bg-gray-50/60">
             <div className="text-[10px] font-black uppercase tracking-widest text-violet-600 mb-2">Selected Architecture</div>
             <div className="text-base font-black text-gray-900">{currentArch.name} ({modelSize})</div>
             <p className="text-sm text-gray-600 mt-2">{currentArch.description}</p>
-            <p className="text-xs text-gray-500 mt-3 font-medium">{currentArch.flow}</p>
-          </div>
-          <div className="rounded-xl border border-gray-100 p-4">
-            <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">Recommended Defaults</div>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="font-bold text-gray-700">Epochs</div><div className="font-black text-gray-900">{currentArch.defaults.epochs}</div>
-              <div className="font-bold text-gray-700">Batch Size</div><div className="font-black text-gray-900">{currentArch.defaults.batch}</div>
-              <div className="font-bold text-gray-700">Image Size</div><div className="font-black text-gray-900">{currentArch.defaults.image}</div>
-              <div className="font-bold text-gray-700">Workers</div><div className="font-black text-gray-900">{currentArch.defaults.workers}</div>
+            <p className="text-xs text-gray-500 mt-3 font-medium border-l-2 border-violet-200 pl-3 py-1 bg-white/50 rounded-r-lg italic">
+              Pipeline: {currentArch.flow}
+            </p>
+            
+            <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-100">
+              <div>
+                <div className="text-[10px] font-black uppercase text-emerald-600 mb-2">Strengths</div>
+                <ul className="space-y-1">
+                  {currentArch.strengths.map(s => (
+                    <li key={s} className="text-[11px] font-bold text-gray-700 flex items-center">
+                      <div className="w-1 h-1 bg-emerald-500 rounded-full mr-2" />
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="text-[10px] font-black uppercase text-amber-600 mb-2">Caveats</div>
+                <ul className="space-y-1">
+                  {currentArch.caveats.map(c => (
+                    <li key={c} className="text-[11px] font-bold text-gray-700 flex items-center">
+                      <div className="w-1 h-1 bg-amber-500 rounded-full mr-2" />
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-          </div>
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
-            <div className="text-[10px] font-black uppercase tracking-widest text-emerald-700 mb-2">Strengths</div>
-            <ul className="space-y-1">
-              {currentArch.strengths.map((s) => (
-                <li key={s} className="text-sm font-semibold text-emerald-800">{s}</li>
-              ))}
-            </ul>
-          </div>
-          <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
-            <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-2">Tradeoffs</div>
-            <ul className="space-y-1">
-              {currentArch.caveats.map((c) => (
-                <li key={c} className="text-sm font-semibold text-amber-800">{c}</li>
-              ))}
-            </ul>
           </div>
         </div>
       </section>

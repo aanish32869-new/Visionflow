@@ -892,9 +892,9 @@ export default function ProjectUpload() {
           </div>
         </div>
         
-        <div className="w-8 h-8 rounded-full bg-[#8A5A44] text-white flex items-center justify-center font-bold text-[13px] cursor-pointer shadow-sm">
-          A
-        </div>
+
+
+
       </div>
 
       {/* 2. Light Project Sidebar */}
