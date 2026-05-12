@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2 } from "lucide-react";
 
 const ARCHITECTURES = [
@@ -32,6 +32,16 @@ const ARCHITECTURES = [
     caveats: ["Lower accuracy ceiling vs ViT"],
     defaults: { epochs: 50, batch: 32, image: 224, workers: 4 },
   },
+  {
+    id: "yolov8",
+    name: "YOLOv8",
+    description: "State-of-the-art object detection. Fast, accurate, and easy to use.",
+    sizes: ["nano", "small", "medium"],
+    flow: "Image -> Backbone -> Neck (FPN/PAN) -> Head (Detection)",
+    strengths: ["SOTA Accuracy", "Extremely fast", "Real-time performance"],
+    caveats: ["Primarily for detection", "Heavier than classification-only models"],
+    defaults: { epochs: 50, batch: 16, image: 640, workers: 4 },
+  },
 ];
 
 function Step({ n, title, children }) {
@@ -47,6 +57,7 @@ function Step({ n, title, children }) {
 export default function TrainTab({ projectId }) {
   const [versions, setVersions] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState(null);
@@ -80,15 +91,24 @@ export default function TrainTab({ projectId }) {
     const load = async () => {
       setLoading(true);
       try {
-        const [vRes, jRes] = await Promise.all([
+        const [vRes, jRes, pRes] = await Promise.all([
           fetch(`/api/projects/${projectId}/versions`),
           fetch(`/api/projects/${projectId}/jobs`),
+          fetch(`/api/projects/${projectId}`),
         ]);
         const v = vRes.ok ? await vRes.json() : [];
         const j = jRes.ok ? await jRes.json() : [];
+        const p = pRes.ok ? await pRes.json() : {};
+        
+        setProject(p);
         setVersions(Array.isArray(v) ? v : []);
         setJobs(Array.isArray(j) ? j : []);
         if (!versionId && v?.length) setVersionId(v[0].version_id);
+        
+        // Auto-select architecture based on project type
+        if (p.project_type === "Object Detection") {
+          setArchitecture("yolov8");
+        }
       } catch {
         setMessage({ type: "error", text: "Failed to load train workspace." });
       } finally {
@@ -151,10 +171,6 @@ export default function TrainTab({ projectId }) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-gray-200 rounded-2xl p-6">
-        <h1 className="text-2xl font-black text-gray-900">Train Workspace</h1>
-        <p className="text-sm text-gray-500 mt-1">Pipeline: Input Images {"->"} Backbone {"->"} Classification Head {"->"} Loss {"->"} Backpropagation {"->"} Updated Weights</p>
-      </div>
 
       {message && (
         <div className={`rounded-xl border px-4 py-3 text-sm font-bold ${message.type === "error" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
@@ -172,10 +188,30 @@ export default function TrainTab({ projectId }) {
 
         <Step n={2} title="Select Architecture">
           <div className="space-y-2">
-            {ARCHITECTURES.map((a) => (
-              <button key={a.id} onClick={() => setArchitecture(a.id)} className={`w-full text-left p-3 rounded-xl border ${architecture === a.id ? "border-violet-500 bg-violet-50" : "border-gray-200"}`}>
-                <div className="font-black text-sm text-gray-900">{a.name}</div>
-                <div className="text-xs text-gray-500">{a.description}</div>
+            {ARCHITECTURES.filter(a => {
+              if (!project) return true;
+              if (project.project_type === "Object Detection") return a.id === "yolov8";
+              if (project.project_type === "Classification") return a.id !== "yolov8";
+              return true;
+            }).map((a) => (
+              <button 
+                key={a.id} 
+                onClick={() => setArchitecture(a.id)} 
+                className={`w-full text-left p-3 rounded-xl border transition ${
+                  architecture === a.id 
+                    ? "border-violet-500 bg-violet-50" 
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <div className="font-black text-sm text-gray-900">{a.name}</div>
+                  {a.id === "yolov8" ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700 uppercase">Detection</span>
+                  ) : (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 uppercase">Classification</span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">{a.description}</div>
               </button>
             ))}
           </div>
@@ -259,7 +295,7 @@ export default function TrainTab({ projectId }) {
               <div key={j.id || j.job_id} className="border border-gray-100 rounded-xl px-3 py-2 flex items-center justify-between">
                 <div>
                   <div className="font-black text-sm text-gray-900">{j.architecture_label || j.architecture}</div>
-                  <div className="text-xs text-gray-500">Job {j.job_id?.slice(0, 8)} • {j.version_id?.slice(0, 8)}</div>
+                  <div className="text-xs text-gray-500">Job {j.job_id?.slice(0, 8) || "created"} • {j.version_id?.slice(0, 8)}</div>
                 </div>
                 <div className="text-xs font-bold text-gray-600">{j.status} {j.status === "Completed" && <CheckCircle2 size={14} className="inline ml-1 text-emerald-500" />}</div>
               </div>
@@ -270,4 +306,3 @@ export default function TrainTab({ projectId }) {
     </div>
   );
 }
-

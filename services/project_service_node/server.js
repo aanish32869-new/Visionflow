@@ -418,6 +418,18 @@ app.post("/api/projects", async (req, res) => {
   }
 });
 
+app.get("/api/projects/:projectId", async (req, res) => {
+  try {
+    const project = await findProjectById(req.params.projectId);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    res.json(serializeProject(project));
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch project details" });
+  }
+});
+
 app.delete("/api/projects/:projectId", async (req, res) => {
   try {
     const project = await findProjectById(req.params.projectId);

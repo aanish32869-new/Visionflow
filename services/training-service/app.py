@@ -136,6 +136,9 @@ ARCH_MAP = {
     "resnet_resnet18": {"label": "ResNet18", "weights": "resnet18.pt", "task": "classify", "family": "resnet", "size": "resnet18"},
     "resnet_resnet34": {"label": "ResNet34", "weights": "resnet34.pt", "task": "classify", "family": "resnet", "size": "resnet34"},
     "resnet_resnet50": {"label": "ResNet50", "weights": "resnet50.pt", "task": "classify", "family": "resnet", "size": "resnet50"},
+    "yolov8_nano": {"label": "YOLOv8 Nano", "weights": "yolov8n.pt", "task": "detect", "family": "yolov8", "size": "nano"},
+    "yolov8_small": {"label": "YOLOv8 Small", "weights": "yolov8s.pt", "task": "detect", "family": "yolov8", "size": "small"},
+    "yolov8_medium": {"label": "YOLOv8 Medium", "weights": "yolov8m.pt", "task": "detect", "family": "yolov8", "size": "medium"},
 }
 
 ARCH_TRAINING_PROFILES = {
@@ -148,20 +151,24 @@ ARCH_TRAINING_PROFILES = {
     "resnet_resnet18": {"family": "classification", "speed": "fast", "memory": "low", "default_precision": "fp32"},
     "resnet_resnet34": {"family": "classification", "speed": "fast", "memory": "medium", "default_precision": "fp32"},
     "resnet_resnet50": {"family": "classification", "speed": "medium", "memory": "medium", "default_precision": "fp32"},
+    "yolov8_nano": {"family": "detection", "speed": "very_fast", "memory": "low", "default_precision": "fp16"},
+    "yolov8_small": {"family": "detection", "speed": "fast", "memory": "medium", "default_precision": "fp16"},
+    "yolov8_medium": {"family": "detection", "speed": "medium", "memory": "high", "default_precision": "fp16"},
 }
 
 
 def _resolve_architecture_variant(architecture, model_size):
     family = str(architecture or "").strip().lower()
     size = str(model_size or "").strip().lower()
-    defaults = {"dinov3": "base", "vit": "base", "resnet": "resnet18"}
+    defaults = {"dinov3": "base", "vit": "base", "resnet": "resnet18", "yolov8": "nano"}
     allowed = {
         "dinov3": {"small", "base", "large"},
         "vit": {"tiny", "base", "large"},
         "resnet": {"resnet18", "resnet34", "resnet50"},
+        "yolov8": {"nano", "small", "medium"},
     }
     if family not in allowed:
-        raise ValueError("architecture must be one of: dinov3, vit, resnet")
+        raise ValueError("architecture must be one of: dinov3, vit, resnet, yolov8")
     if size == "":
         size = defaults[family]
     if size not in allowed[family]:
@@ -862,11 +869,76 @@ def _run_local_training(job_id, project_id, version_id, architecture, arch_info,
 
     device_arg = actual_device
     
-    # ── Dispatch to classification training engine (supported architectures) ──
+    # ── Dispatch to appropriate training engine ───────────────────────────────
     if arch_info.get("task") == "classify":
         _run_pytorch_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg)
         return
-    raise RuntimeError(f"Unsupported architecture '{architecture}'. Supported: dinov3, vit, resnet variants.")
+    elif arch_info.get("task") == "detect" and arch_info.get("family") == "yolov8":
+        _run_yolo_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg)
+        return
+    raise RuntimeError(f"Unsupported architecture '{architecture}' for task '{task}'.")
+
+
+def _run_yolo_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg):
+    """Run YOLOv8 training using ultralytics library."""
+    from ultralytics import YOLO
+    
+    epochs     = int(params.get("epochs",     conf.get("local_epochs",     25)))
+    batch_size = int(params.get("batch_size", conf.get("local_batch_size",  8)))
+    img_size   = int(params.get("img_size",   conf.get("local_img_size",  640)))
+    workers    = int(params.get("workers",    conf.get("local_workers",     4)))
+    weights    = arch_info.get("weights", "yolov8n.pt")
+    
+    # Resolve Dataset Directory (handled already in _run_local_training, but we need the data.yaml path)
+    dataset_dir = ROOT_DIR / conf.get("local_dataset_dir", conf.get("dataset_dir", "storage/datasets"))
+    actual_version_dir = dataset_dir / version_id
+    if not actual_version_dir.exists():
+        matching = [d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith(version_id)]
+        if matching:
+            actual_version_dir = matching[0]
+    
+    data_yaml = actual_version_dir / "data.yaml"
+    if not data_yaml.exists():
+        raise RuntimeError(f"data.yaml not found in {actual_version_dir}")
+
+    _update({"status": "Training", "progress": 10})
+    
+    print(f"[TRAIN] Loading model {weights}...")
+    model = YOLO(weights)
+    
+    # Custom callback to update progress in MongoDB
+    def on_train_epoch_end(trainer):
+        # trainer.epoch is 0-indexed in some versions, 1-indexed in others. 
+        # Usually it's the current epoch index.
+        current_epoch = trainer.epoch + 1
+        progress = 10 + int((current_epoch / epochs) * 85)
+        _update({
+            "progress": min(95, progress),
+            "current_epoch": current_epoch,
+            "metrics": {
+                "box_loss": float(trainer.loss_items[0]) if hasattr(trainer, 'loss_items') else 0,
+                "cls_loss": float(trainer.loss_items[1]) if hasattr(trainer, 'loss_items') and len(trainer.loss_items) > 1 else 0
+            }
+        })
+
+    model.add_callback("on_train_epoch_end", on_train_epoch_end)
+
+    print(f"[TRAIN] Starting YOLOv8 training on {device_arg}...")
+    results = model.train(
+        data=str(data_yaml.resolve()),
+        epochs=epochs,
+        imgsz=img_size,
+        batch=batch_size,
+        workers=workers,
+        device=device_arg,
+        project=str(output_dir.resolve()),
+        name="yolo_run",
+        exist_ok=True,
+        verbose=True
+    )
+    
+    print(f"[TRAIN] YOLOv8 training completed.")
+    _update({"status": "Completed", "progress": 100})
 
 
 def _run_pytorch_training(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg):
