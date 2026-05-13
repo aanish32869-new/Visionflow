@@ -143,6 +143,61 @@ import time
 import json
 from pathlib import Path
 
+def _classification_eval_metrics(model, loader, device):
+    model.eval()
+    correct = 0
+    total = 0
+    tp = {}
+    fp = {}
+    fn = {}
+    infer_total_seconds = 0.0
+    infer_total_images = 0
+
+    with torch.no_grad():
+        for images, targets in loader:
+            images, targets = images.to(device), targets.to(device)
+            t0 = time.perf_counter()
+            outputs = model(images)
+            infer_total_seconds += (time.perf_counter() - t0)
+            infer_total_images += int(targets.size(0))
+
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            for t, p in zip(targets.view(-1), predicted.view(-1)):
+                ti = int(t.item())
+                pi = int(p.item())
+                if ti == pi:
+                    tp[ti] = tp.get(ti, 0) + 1
+                else:
+                    fp[pi] = fp.get(pi, 0) + 1
+                    fn[ti] = fn.get(ti, 0) + 1
+
+    classes = set(tp.keys()) | set(fp.keys()) | set(fn.keys())
+    if not classes:
+        return {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "speed_ms": None}
+
+    precisions = []
+    recalls = []
+    for c in classes:
+        c_tp = tp.get(c, 0)
+        c_fp = fp.get(c, 0)
+        c_fn = fn.get(c, 0)
+        precisions.append(c_tp / max(1, (c_tp + c_fp)))
+        recalls.append(c_tp / max(1, (c_tp + c_fn)))
+
+    speed_ms = None
+    if infer_total_images > 0 and infer_total_seconds > 0:
+        speed_ms = (infer_total_seconds / infer_total_images) * 1000.0
+
+    return {
+        "accuracy": (correct / max(1, total)),
+        "precision": (sum(precisions) / len(precisions)),
+        "recall": (sum(recalls) / len(recalls)),
+        "speed_ms": speed_ms,
+    }
+
 def train_resnet(job_id, project_id, version_id, architecture, arch_info, params, conf, update_func, output_dir, device_arg, root_dir, get_db_func, format_duration_func, register_model_func):
     """Run ResNet training loop."""
     epochs     = int(params.get("epochs", 50))
@@ -238,37 +293,79 @@ def train_resnet(job_id, project_id, version_id, architecture, arch_info, params
         model.fc = nn.Linear(model.fc.in_features, num_classes)
         model = model.to(device)
         
-        # 4. Training
+        # 4. DataLoader + Training
+        input_size = max(64, int(img_size))
+        transform_train = transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.ToTensor(),
+        ])
+        transform_eval = transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.ToTensor(),
+        ])
+
+        train_ds = torchvision.datasets.ImageFolder(str(cls_root / "train"), transform=transform_train)
+        valid_ds = torchvision.datasets.ImageFolder(str(cls_root / "valid"), transform=transform_eval) if valid_count > 0 else None
+
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=max(1, int(batch_size)), shuffle=True, num_workers=0)
+        valid_loader = torch.utils.data.DataLoader(valid_ds, batch_size=max(1, int(batch_size)), shuffle=False) if valid_ds else None
+
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
         
         update_func({"progress": 20, "status": "Residual Learning Active"})
         
-        # Simulated/Placeholder loop for this engine context
         start_time = time.time()
+        history = []
         for epoch in range(epochs):
-            # Mocking the metrics for now while ensuring the logic flow is correct
-            time.sleep(0.3)
+            model.train()
+            epoch_loss = 0.0
+            correct = 0
+            total = 0
+            for images, targets in train_loader:
+                images, targets = images.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = model(images)
+                loss = criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+
+            train_acc = correct / max(1, total)
             progress = 20 + int((epoch + 1) / epochs * 75)
-            
-            loss = 0.6 * (0.9 ** epoch)
-            acc = 0.65 + (0.3 * (epoch / epochs))
+            elapsed = time.time() - start_time
+            eta = (elapsed / (epoch + 1)) * (epochs - (epoch + 1))
+            metrics = {"loss": epoch_loss / max(1, len(train_loader)), "accuracy": train_acc}
+            history.append({"epoch": epoch + 1, **metrics})
             
             update_func({
                 "progress": min(95, progress),
                 "current_epoch": epoch + 1,
-                "metrics": {
-                    "loss": round(loss, 4),
-                    "accuracy": round(acc, 4),
-                    "engine": "ResNet-Residual-Loop"
-                }
+                "estimated_time_remaining": format_duration_func(eta),
+                "metrics": metrics,
+                "metrics_history": history,
             })
             
         weights_path = output_dir / "resnet_model.pt"
         torch.save(model.state_dict(), str(weights_path))
+        eval_loader = valid_loader if valid_loader is not None else train_loader
+        eval_metrics = _classification_eval_metrics(model, eval_loader, device)
+        final_metrics = {
+            "loss": history[-1]["loss"] if history else None,
+            "accuracy": float(eval_metrics["accuracy"]),
+            # For classification cards that expect mAP, we surface top-1 accuracy here.
+            "mAP": float(eval_metrics["accuracy"]),
+            "precision": float(eval_metrics["precision"]),
+            "recall": float(eval_metrics["recall"]),
+            "speed_ms": float(eval_metrics["speed_ms"]) if eval_metrics["speed_ms"] is not None else None,
+        }
         
-        update_func({"status": "Completed", "progress": 100, "weights_path": str(weights_path)})
-        register_model_func(job_id, project_id, version_id, architecture, arch_info, {"accuracy": acc}, weights_path, output_dir)
+        update_func({"status": "Completed", "progress": 100, "weights_path": str(weights_path), "metrics": final_metrics})
+        register_model_func(job_id, project_id, version_id, architecture, arch_info, final_metrics, weights_path, output_dir)
         
     except Exception as e:
         print(f"[ResNet] Error: {e}")

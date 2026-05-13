@@ -44,7 +44,7 @@ def train_yolo(job_id, project_id, version_id, architecture, arch_info, params, 
     model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
     print(f"[TRAIN] Starting YOLOv8 training on {device_arg}...")
-    model.train(
+    results = model.train(
         data=str(data_yaml.resolve()),
         epochs=epochs,
         imgsz=img_size,
@@ -56,6 +56,18 @@ def train_yolo(job_id, project_id, version_id, architecture, arch_info, params, 
         exist_ok=True,
         verbose=True
     )
+
+    yolo_metrics = {"mAP": None, "precision": None, "recall": None, "speed_ms": None}
+    try:
+        if hasattr(results, "results_dict") and isinstance(results.results_dict, dict):
+            rd = results.results_dict
+            yolo_metrics["mAP"] = rd.get("metrics/mAP50(B)")
+            yolo_metrics["precision"] = rd.get("metrics/precision(B)")
+            yolo_metrics["recall"] = rd.get("metrics/recall(B)")
+            if hasattr(results, "speed") and isinstance(results.speed, dict):
+                yolo_metrics["speed_ms"] = results.speed.get("inference")
+    except Exception:
+        pass
     
     best_weights = output_dir / "yolo_run" / "weights" / "best.pt"
     last_weights = output_dir / "yolo_run" / "weights" / "last.pt"
@@ -68,11 +80,16 @@ def train_yolo(job_id, project_id, version_id, architecture, arch_info, params, 
             version_id,
             architecture,
             arch_info,
-            {"mAP": None, "precision": None, "recall": None},
+            yolo_metrics,
             weights_path,
             output_dir,
         )
 
     print(f"[TRAIN] YOLOv8 training completed.")
-    update_func({"status": "Completed", "progress": 100, "weights_path": str(weights_path) if weights_path else None})
+    update_func({
+        "status": "Completed",
+        "progress": 100,
+        "weights_path": str(weights_path) if weights_path else None,
+        "metrics": yolo_metrics,
+    })
 

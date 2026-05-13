@@ -151,11 +151,6 @@ def _backfill_models_for_project(project_id: str):
     db = _get_db()
     deleted_markers = list(db.deleted_models.find({"project_id": str(project_id)}))
     deleted_job_ids = {str(item.get("source_job_id")) for item in deleted_markers if item.get("source_job_id")}
-    deleted_arch_version = {
-        (str(item.get("version_id") or ""), str(item.get("architecture") or ""))
-        for item in deleted_markers
-        if item.get("version_id") and item.get("architecture")
-    }
     jobs = list(db.training_jobs.find({
         "project_id": str(project_id),
         "status": "Completed",
@@ -165,8 +160,6 @@ def _backfill_models_for_project(project_id: str):
         if not job_id:
             continue
         if str(job_id) in deleted_job_ids:
-            continue
-        if (str(job.get("version_id") or ""), str(job.get("architecture") or "")) in deleted_arch_version:
             continue
         existing = db.models.find_one({
             "project_id": str(project_id),
@@ -209,16 +202,10 @@ def _purge_deleted_models_for_project(project_id: str):
     if not deleted_markers:
         return
     deleted_job_ids = {str(item.get("source_job_id")) for item in deleted_markers if item.get("source_job_id")}
-    deleted_arch_version = {
-        (str(item.get("version_id") or ""), str(item.get("architecture") or ""))
-        for item in deleted_markers
-        if item.get("version_id") and item.get("architecture")
-    }
     doomed_ids = []
     for model in db.models.find({"project_id": str(project_id)}):
         source_job_id = str(model.get("source_job_id") or "")
-        arch_ver = (str(model.get("version_id") or ""), str(model.get("architecture") or ""))
-        if source_job_id in deleted_job_ids or arch_ver in deleted_arch_version:
+        if source_job_id in deleted_job_ids:
             doomed_ids.append(model["_id"])
     if doomed_ids:
         db.models.delete_many({"_id": {"$in": doomed_ids}})
@@ -588,6 +575,111 @@ def _estimate_training_seconds(version_doc, architecture, epochs, batch_size, wo
     seconds = int((total_images_processed / max(1.0, (effective_ips * max(1, int(batch_size)) / 8.0))) * class_factor)
     return max(20, seconds)
 
+def _estimate_historical_training_seconds(project_id, version_id, architecture, params):
+    """
+    Estimate total training time from past completed jobs with same model/version profile.
+    Falls back to None when there is not enough history.
+    """
+    try:
+        db = _get_db()
+        completed = list(db.training_jobs.find({
+            "project_id": str(project_id),
+            "version_id": str(version_id),
+            "architecture": str(architecture),
+            "status": "Completed",
+        }).sort("updated_at", -1).limit(20))
+        if not completed:
+            return None
+
+        durations = []
+        target_epochs = int((params or {}).get("epochs", 0) or 0)
+        for job in completed:
+            created = job.get("created_at")
+            updated = job.get("updated_at")
+            if not created or not updated:
+                continue
+            try:
+                start_ts = datetime.fromisoformat(str(created).replace("Z", "+00:00")).timestamp()
+                end_ts = datetime.fromisoformat(str(updated).replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+            duration = int(max(1, end_ts - start_ts))
+            if duration <= 0:
+                continue
+
+            # Normalize by epochs to improve cross-run comparability.
+            run_epochs = int(((job.get("params") or {}).get("epochs", target_epochs)) or target_epochs or 1)
+            if run_epochs <= 0:
+                run_epochs = 1
+            if target_epochs > 0 and run_epochs != target_epochs:
+                duration = int(duration * (target_epochs / run_epochs))
+            durations.append(duration)
+
+        if not durations:
+            return None
+        durations.sort()
+        return int(durations[len(durations) // 2])  # median
+    except Exception:
+        return None
+
+def _build_progress_visual(percent: int, width: int = 24):
+    p = max(1, min(100, int(percent)))
+    filled = int(round((p / 100.0) * width))
+    bar = f"[{'=' * filled}{'.' * max(0, width - filled)}]"
+    return f"{bar} {p}%"
+
+def _compute_progress_update(job_doc, incoming_fields):
+    """
+    Normalize each engine update so frontend can render a consistent loading line,
+    1-100 processing state, and continuously improving ETA.
+    """
+    fields = dict(incoming_fields or {})
+    status = str(fields.get("status") or job_doc.get("status") or "Training")
+
+    raw_progress = fields.get("progress", job_doc.get("progress", 0))
+    try:
+        progress = int(raw_progress)
+    except Exception:
+        progress = 0
+    progress = max(1 if status not in ["Preparing", "Failed"] else 0, min(100, progress))
+
+    created_at = job_doc.get("created_at")
+    elapsed_seconds = 0
+    if created_at:
+        try:
+            created_ts = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).timestamp()
+            elapsed_seconds = max(0, int(time.time() - created_ts))
+        except Exception:
+            elapsed_seconds = 0
+
+    baseline_total = int(job_doc.get("historical_estimated_total_seconds") or job_doc.get("estimated_total_seconds") or 0)
+    dynamic_total = 0
+    if progress > 0 and elapsed_seconds > 3:
+        dynamic_total = int((elapsed_seconds * 100) / max(1, progress))
+
+    if baseline_total > 0 and dynamic_total > 0:
+        # Weighted blend: starts with baseline, converges toward observed runtime.
+        confidence = min(0.8, max(0.15, progress / 100.0))
+        total_estimate = int((baseline_total * (1 - confidence)) + (dynamic_total * confidence))
+    else:
+        total_estimate = max(baseline_total, dynamic_total, 0)
+
+    remaining_seconds = max(0, total_estimate - elapsed_seconds) if total_estimate > 0 else 0
+    eta_hms = _format_duration(remaining_seconds)
+
+    arch_label = str(job_doc.get("architecture_label") or job_doc.get("architecture") or "Model")
+    version_label = str(job_doc.get("version_display_id") or job_doc.get("version_id") or "version")
+    model_version_label = f"{arch_label} ({version_label})"
+
+    fields["progress"] = progress
+    fields["processing_percent"] = progress
+    fields["progress_line"] = _build_progress_visual(progress)
+    fields["estimated_time_remaining_seconds"] = remaining_seconds
+    fields["estimated_time_remaining"] = eta_hms
+    fields["eta_line"] = f"ETA: {eta_hms}"
+    fields["model_version_label"] = model_version_label
+    return fields
+
 def _resolve_requested_device(requested_device: str, hw: dict):
     req = str(requested_device or "").lower()
     if req in ["auto", ""]:
@@ -810,7 +902,13 @@ def _dispatch_training(project_id, data):
 
     db = _get_db()
     version = db.versions.find_one({"version_id": version_id}) or {}
+    job_doc["version_display_id"] = version.get("display_id")
     job_doc["estimated_total_seconds"] = _estimate_training_seconds(version, architecture, epochs, batch_size, workers, device)
+    historical = _estimate_historical_training_seconds(project_id, version_id, architecture, job_doc["params"])
+    if historical:
+        job_doc["historical_estimated_total_seconds"] = int(historical)
+    # Provide UI-ready loading representation from the start.
+    job_doc.update(_compute_progress_update(job_doc, {"status": "Preparing", "progress": 1}))
     db.training_jobs.insert_one(job_doc)
 
     thread = threading.Thread(
@@ -822,9 +920,18 @@ def _dispatch_training(project_id, data):
     return jsonify(_serialize(job_doc)), 202
 
 def _run_training(job_id, project_id, version_id, architecture, arch_info, params, output_dir, conf):
+    db = _get_db()
+    job_doc = db.training_jobs.find_one({"job_id": job_id, "project_id": project_id}) or {
+        "job_id": job_id, "project_id": project_id, "version_id": version_id,
+        "architecture": architecture, "architecture_label": arch_info.get("label", architecture),
+        "params": params, "created_at": _utc_now(), "progress": 0, "status": "Preparing",
+    }
+
     def _update(fields):
-        db = _get_db()
-        db.training_jobs.update_one({"job_id": job_id}, {"$set": {**fields, "updated_at": _utc_now()}})
+        nonlocal job_doc
+        enriched = _compute_progress_update(job_doc, fields)
+        db.training_jobs.update_one({"job_id": job_id}, {"$set": {**enriched, "updated_at": _utc_now()}})
+        job_doc = {**job_doc, **enriched}
 
     try:
         hw = _ensure_hardware_status_ready()

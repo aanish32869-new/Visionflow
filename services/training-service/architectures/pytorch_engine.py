@@ -7,6 +7,61 @@ import time
 import json
 from pathlib import Path
 
+def _classification_eval_metrics(model, loader, device):
+    model.eval()
+    correct = 0
+    total = 0
+    tp = {}
+    fp = {}
+    fn = {}
+    infer_total_seconds = 0.0
+    infer_total_images = 0
+
+    with torch.no_grad():
+        for images, targets in loader:
+            images, targets = images.to(device), targets.to(device)
+            t0 = time.perf_counter()
+            outputs = model(images)
+            infer_total_seconds += (time.perf_counter() - t0)
+            infer_total_images += int(targets.size(0))
+
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+
+            for t, p in zip(targets.view(-1), predicted.view(-1)):
+                ti = int(t.item())
+                pi = int(p.item())
+                if ti == pi:
+                    tp[ti] = tp.get(ti, 0) + 1
+                else:
+                    fp[pi] = fp.get(pi, 0) + 1
+                    fn[ti] = fn.get(ti, 0) + 1
+
+    classes = set(tp.keys()) | set(fp.keys()) | set(fn.keys())
+    if not classes:
+        return {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "speed_ms": None}
+
+    precisions = []
+    recalls = []
+    for c in classes:
+        c_tp = tp.get(c, 0)
+        c_fp = fp.get(c, 0)
+        c_fn = fn.get(c, 0)
+        precisions.append(c_tp / max(1, (c_tp + c_fp)))
+        recalls.append(c_tp / max(1, (c_tp + c_fn)))
+
+    speed_ms = None
+    if infer_total_images > 0 and infer_total_seconds > 0:
+        speed_ms = (infer_total_seconds / infer_total_images) * 1000.0
+
+    return {
+        "accuracy": (correct / max(1, total)),
+        "precision": (sum(precisions) / len(precisions)),
+        "recall": (sum(recalls) / len(recalls)),
+        "speed_ms": speed_ms,
+    }
+
 def train_pytorch(job_id, project_id, version_id, architecture, arch_info, params, conf, update_func, output_dir, device_arg, root_dir, get_db_func, format_duration_func, register_model_func):
     """Run custom PyTorch training loop for Classification models (e.g. ViT)."""
     epochs     = int(params.get("epochs",     conf.get("local_epochs",     10)))
@@ -164,8 +219,19 @@ def train_pytorch(job_id, project_id, version_id, architecture, arch_info, param
         # 5) Save & Register
         weights_path = output_dir / "vit_model.pt"
         torch.save(model.state_dict(), str(weights_path))
-        register_model_func(job_id, project_id, version_id, architecture, arch_info, metrics, weights_path, output_dir)
-        update_func({"status": "Completed", "progress": 100})
+        eval_loader = valid_loader if valid_loader is not None else train_loader
+        eval_metrics = _classification_eval_metrics(model, eval_loader, device)
+        final_metrics = {
+            "loss": metrics.get("loss"),
+            "accuracy": float(eval_metrics["accuracy"]),
+            # For classification cards that expect mAP, we surface top-1 accuracy here.
+            "mAP": float(eval_metrics["accuracy"]),
+            "precision": float(eval_metrics["precision"]),
+            "recall": float(eval_metrics["recall"]),
+            "speed_ms": float(eval_metrics["speed_ms"]) if eval_metrics["speed_ms"] is not None else None,
+        }
+        register_model_func(job_id, project_id, version_id, architecture, arch_info, final_metrics, weights_path, output_dir)
+        update_func({"status": "Completed", "progress": 100, "metrics": final_metrics})
 
     except Exception as e:
         print(f"[TRAIN] ViT loop error: {e}")

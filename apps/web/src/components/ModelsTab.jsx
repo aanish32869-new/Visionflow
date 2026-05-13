@@ -26,6 +26,24 @@ function metricValue(value, suffix = "") {
   return `${value}${suffix}`;
 }
 
+function asNumber(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function resolveModelMetrics(model) {
+  const m = model?.metrics || {};
+  const map50 = asNumber(m.mAP, m.map50, m["metrics/mAP50(B)"], m.accuracy);
+  const precision = asNumber(m.precision, m.mp, m["metrics/precision(B)"]);
+  const recall = asNumber(m.recall, m.mr, m["metrics/recall(B)"]);
+  const speedMs = asNumber(m.speed_ms, m.inference_ms, m.infer_speed_ms);
+  return { map50, precision, recall, speedMs };
+}
+
 function formatDate(value) {
   if (!value) return "Just now";
   const date = new Date(value);
@@ -36,6 +54,8 @@ function formatDate(value) {
 }
 
 function ModelCard({ model, onDelete, onDownload, onDeploy, onCheck }) {
+  const resolved = resolveModelMetrics(model);
+  const primaryMetricLabel = resolved.map50 !== null && model?.metrics?.mAP !== undefined ? "mAP @.50" : "Accuracy";
   return (
     <article className="group rounded-[32px] border border-gray-100 bg-white p-6 shadow-sm transition-all duration-300 hover:shadow-xl hover:shadow-violet-100/50 hover:border-violet-200">
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -75,19 +95,19 @@ function ModelCard({ model, onDelete, onDownload, onDeploy, onCheck }) {
 
       <div className="grid grid-cols-2 gap-3 mb-6">
         <div className="rounded-2xl bg-gray-50/80 p-4 border border-gray-50">
-          <div className="text-[16px] font-black text-gray-950">{metricValue(model.metrics?.mAP)}</div>
-          <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-gray-400">mAP @.50</div>
+          <div className="text-[16px] font-black text-gray-950">{metricValue(resolved.map50)}</div>
+          <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-gray-400">{primaryMetricLabel}</div>
         </div>
         <div className="rounded-2xl bg-gray-50/80 p-4 border border-gray-50">
-          <div className="text-[16px] font-black text-gray-950">{metricValue(model.metrics?.precision)}</div>
+          <div className="text-[16px] font-black text-gray-950">{metricValue(resolved.precision)}</div>
           <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-gray-400">Precision</div>
         </div>
         <div className="rounded-2xl bg-gray-50/80 p-4 border border-gray-50">
-          <div className="text-[16px] font-black text-gray-950">{metricValue(model.metrics?.recall)}</div>
+          <div className="text-[16px] font-black text-gray-950">{metricValue(resolved.recall)}</div>
           <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-gray-400">Recall</div>
         </div>
         <div className="rounded-2xl bg-gray-50/80 p-4 border border-gray-50">
-          <div className="text-[16px] font-black text-gray-950">{metricValue(model.metrics?.speed_ms, " ms")}</div>
+          <div className="text-[16px] font-black text-gray-950">{metricValue(resolved.speedMs, " ms")}</div>
           <div className="mt-1 text-[9px] font-bold uppercase tracking-widest text-gray-400">Inf. Speed</div>
         </div>
       </div>
@@ -264,7 +284,10 @@ export default function ModelsTab({ projectId, onTrainModel }) {
 
   const stats = useMemo(() => {
     if (!models.length) return { total: 0, bestMap: 0, ready: 0 };
-    const best = Math.max(...models.map(m => m.metrics?.mAP || 0));
+    const best = Math.max(...models.map((m) => {
+      const r = resolveModelMetrics(m);
+      return r.map50 ?? 0;
+    }));
     return {
       total: models.length,
       bestMap: best,
