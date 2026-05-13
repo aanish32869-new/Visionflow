@@ -42,11 +42,18 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
           .filter(m => m.deployment_status === 'ready' || m.status === 'Completed')
           .filter(m => {
             const arch = String(m.architecture || "").toLowerCase();
-            const classify = ["resnet18", "vit", "dinov3", "simplecnn"].includes(arch);
+            const classify = arch.includes("resnet") || arch.includes("vit") || arch.includes("dinov3") || arch.includes("simplecnn");
             return projectType === "Classification" ? classify : !classify;
           }) : [];
         setModels(readyModels);
-        if (readyModels.length > 0) setSelectedModelId(readyModels[0].model_id);
+        if (readyModels.length > 0) {
+          const preferred = localStorage.getItem("visionflow_selected_model_id");
+          const preferredExists = preferred && readyModels.some((m) => String(m.model_id) === String(preferred));
+          setSelectedModelId(preferredExists ? preferred : readyModels[0].model_id);
+          if (preferredExists) {
+            localStorage.removeItem("visionflow_selected_model_id");
+          }
+        }
       }
     } catch (error) {
       console.error(error);

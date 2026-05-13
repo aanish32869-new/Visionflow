@@ -1,4 +1,4 @@
-\"\"\"
+﻿"""
 DINOv3 (Distillation with NO Labels v3) Training Engine
 =======================================================
 
@@ -80,7 +80,7 @@ ARCHITECTURE OVERVIEW & INTERNAL LOGIC:
 
 15. Production-Level Workflow
 Input Image -> Patch Generation -> Patch Embedding -> ViT Encoder -> Self-Attention -> Teacher-Student Alignment -> Feature Embeddings -> Task Heads.
-\"\"\"
+"""
 
 import os
 import torch
@@ -92,40 +92,40 @@ import time
 import json
 from pathlib import Path
 
-def train_dinov3(job_id, project_id, version_id, params, conf, update_func, output_dir, device_arg):
-    \"\"\"
+def train_dinov3(job_id, project_id, version_id, architecture, arch_info, params, conf, update_func, output_dir, device_arg, register_model_func=None):
+    """
     Implements the DINOv3 training workflow.
     Ensures training runs exactly with the user-provided configuration.
-    \"\"\"
+    """
     # Sync and Extract Configuration
-    epochs = int(params.get(\"epochs\", 60))
-    batch_size = int(params.get(\"batch_size\", 16))
-    img_size = int(params.get(\"img_size\", 224))
-    workers = int(params.get(\"workers\", 4))
+    epochs = int(params.get("epochs", 60))
+    batch_size = int(params.get("batch_size", 16))
+    img_size = int(params.get("img_size", 224))
+    workers = int(params.get("workers", 4))
     # Note: architecture comes as the full variant name (e.g., dinov3_base)
-    architecture_variant = params.get(\"architecture\", \"dinov3_base\")
+    architecture_variant = params.get("architecture", "dinov3_base")
     
     device = torch.device(device_arg)
     update_func({
-        \"status\": \"Training\", 
-        \"progress\": 5, 
-        \"engine\": \"DINOv3\",
-        \"config_synced\": True,
-        \"actual_params\": {
-            \"epochs\": epochs,
-            \"batch_size\": batch_size,
-            \"img_size\": img_size,
-            \"workers\": workers,
-            \"device\": device_arg
+        "status": "Training", 
+        "progress": 5, 
+        "engine": "DINOv3",
+        "config_synced": True,
+        "actual_params": {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "img_size": img_size,
+            "workers": workers,
+            "device": device_arg
         }
     })
     
-    print(f\"[DINOv3] Starting training job {job_id} on {device} with config: {params}\")
+    print(f"[DINOv3] Starting training job {job_id} on {device} with config: {params}")
     
     try:
         # 1. Dataset Resolution
         root_dir = Path(__file__).resolve().parent.parent.parent.parent
-        dataset_dir = root_dir / conf.get(\"local_dataset_dir\", conf.get(\"dataset_dir\", \"storage/datasets\"))
+        dataset_dir = root_dir / conf.get("local_dataset_dir", conf.get("dataset_dir", "storage/datasets"))
         version_dir = dataset_dir / version_id
         
         if not version_dir.exists():
@@ -135,19 +135,19 @@ def train_dinov3(job_id, project_id, version_id, params, conf, update_func, outp
                  version_dir = matching[0]
         
         if not version_dir.exists():
-            raise RuntimeError(f\"Dataset version {version_id} not found at {version_dir}\")
+            raise RuntimeError(f"Dataset version {version_id} not found at {version_dir}")
 
-        update_func({\"progress\": 10, \"status\": \"Loading dataset...\"})
+        update_func({"progress": 10, "status": "Loading dataset..."})
         
         # 2. Model Initialization based on variant
         # DINOv3 is ViT-based. We map the variants to appropriate ViT backbones.
-        print(f\"[DINOv3] Initializing {architecture_variant} backbone...\")
+        print(f"[DINOv3] Initializing {architecture_variant} backbone...")
         
         # In a production DINOv3 implementation, this would load weights from a model hub
         # For this local engine, we use torchvision backbones as the base.
-        if \"small\" in architecture_variant:
+        if "small" in architecture_variant:
             model = torchvision.models.vit_b_16(weights=torchvision.models.ViT_B_16_Weights.DEFAULT)
-        elif \"large\" in architecture_variant:
+        elif "large" in architecture_variant:
             model = torchvision.models.vit_l_16(weights=torchvision.models.ViT_L_16_Weights.DEFAULT)
         else:
             # Default to Base
@@ -164,7 +164,7 @@ def train_dinov3(job_id, project_id, version_id, params, conf, update_func, outp
         optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.05)
         criterion = nn.CrossEntropyLoss()
         
-        update_func({\"progress\": 20, \"status\": \"Running DINOv3 Transformer Pipeline\"})
+        update_func({"progress": 20, "status": "Running DINOv3 Transformer Pipeline"})
         
         # 4. Training Loop
         start_time = time.time()
@@ -186,27 +186,39 @@ def train_dinov3(job_id, project_id, version_id, params, conf, update_func, outp
             remaining = (elapsed / (epoch + 1)) * (epochs - (epoch + 1))
             
             update_func({
-                \"progress\": min(95, progress),
-                \"current_epoch\": epoch + 1,
-                \"estimated_time_remaining\": f\"{int(remaining)}s\",
-                \"metrics\": {
-                    \"loss\": round(loss, 4),
-                    \"accuracy\": round(acc, 4),
-                    \"architecture\": \"DINOv3-ViT\"
+                "progress": min(95, progress),
+                "current_epoch": epoch + 1,
+                "estimated_time_remaining": f"{int(remaining)}s",
+                "metrics": {
+                    "loss": round(loss, 4),
+                    "accuracy": round(acc, 4),
+                    "architecture": "DINOv3-ViT"
                 }
             })
             
         # 5. Completion and Weights Saving
-        weights_path = Path(output_dir) / \"dinov3_model.pt\"
+        weights_path = Path(output_dir) / "dinov3_model.pt"
         torch.save(model.state_dict(), str(weights_path))
+        if register_model_func:
+            register_model_func(
+                job_id,
+                project_id,
+                version_id,
+                architecture,
+                arch_info,
+                {"accuracy": round(acc, 4), "mAP": None, "precision": None, "recall": None},
+                weights_path,
+                output_dir,
+            )
         
-        print(f\"[DINOv3] Job {job_id} completed. Weights saved to {weights_path}\")
+        print(f"[DINOv3] Job {job_id} completed. Weights saved to {weights_path}")
         update_func({
-            \"status\": \"Completed\", 
-            \"progress\": 100,
-            \"weights_path\": str(weights_path)
+            "status": "Completed", 
+            "progress": 100,
+            "weights_path": str(weights_path)
         })
         
     except Exception as e:
-        print(f\"[DINOv3] Engine Error: {e}\")
-        update_func({\"status\": \"Failed\", \"error\": str(e)})
+        print(f"[DINOv3] Engine Error: {e}")
+        update_func({"status": "Failed", "error": str(e)})
+

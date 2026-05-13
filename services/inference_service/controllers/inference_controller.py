@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from utils.logger import logger
 
 from services.inference_service import InferenceLogic
@@ -117,6 +117,23 @@ def infer_model(project_id, model_id):
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+@inference_bp.route("/api/models/<model_id>/weights", methods=["GET"])
+def download_model_weights(model_id):
+    try:
+        model_doc = InferenceLogic.get_model_by_ref(model_id)
+        if not model_doc:
+            return jsonify({"error": "Model not found"}), 404
+
+        weights_path = InferenceLogic.resolve_weights_path(model_doc)
+        if not weights_path:
+            return jsonify({"error": "Weights file not found"}), 404
+
+        filename = f"{str(model_doc.get('name') or model_doc.get('model_id') or 'model').replace(' ', '_')}.pt"
+        return send_file(str(weights_path), as_attachment=True, download_name=filename)
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
 
 
 @inference_bp.route("/api/projects/<project_id>/compare", methods=["POST"])

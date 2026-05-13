@@ -36,6 +36,9 @@ const upload = multer({
 });
 
 const allowedProjectTypes = new Set(["Object Detection", "Classification"]);
+const KNOWN_OBJECT_VOCAB = new Set([
+  "person","car","truck","bus","motorcycle","bicycle","wheel","helmet","dog","cat","bird","bottle","cup","chair","table","laptop","phone","book","box","bag","boat","train","traffic light","stop sign"
+]);
 const PROJECT_LABEL_COLORS = ["#8b5cf6", "#ef4444", "#10b981", "#f59e0b", "#3b82f6", "#ec4899", "#14b8a6"];
 const ASSET_FILES_BUCKET = "asset_files";
 
@@ -238,6 +241,13 @@ app.get("/api/deployments/summary", async (_req, res) => {
       getWorkflows(),
       db.collection("deployments").find().sort({ updated_at: -1, created_at: -1 }).toArray(),
     ]);
+    const successfulRuns = deployments.filter((item) => String(item.status || "").toLowerCase() === "running");
+    const successScores = successfulRuns
+      .map((item) => Number(item.success_score))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const successfulRunsScore = successScores.length
+      ? Math.round((successScores.reduce((acc, value) => acc + value, 0) / successScores.length) * 100)
+      : 0;
 
     res.json({
       templates: DEPLOYMENT_TEMPLATES,
@@ -248,6 +258,8 @@ app.get("/api/deployments/summary", async (_req, res) => {
         templates: DEPLOYMENT_TEMPLATES.length,
         deployments: deployments.length,
         running: deployments.filter((item) => item.status === "Running").length,
+        successful_runs: successfulRuns.length,
+        successful_runs_score: successfulRunsScore,
       },
     });
   } catch (error) {
@@ -278,6 +290,13 @@ app.post("/api/deployments", async (req, res) => {
     const projectId = String(req.body?.project_id || "").trim();
     const endpointPath = `/api/deployments/${deploymentId}/infer`;
     const endpointUrl = `http://localhost:${config.port}${endpointPath}`;
+    const modelId = String(req.body?.model_id || "").trim() || null;
+    const modelName = String(req.body?.model_name || "").trim() || null;
+    const versionId = String(req.body?.version_id || "").trim() || null;
+    const versionDisplayId = String(req.body?.version_display_id || "").trim() || null;
+    const successScoreRaw = Number(req.body?.success_score);
+    const successScore = Number.isFinite(successScoreRaw) ? Math.max(0, Math.min(1, successScoreRaw)) : 0;
+    const apiKey = `vf_${crypto.randomBytes(16).toString("hex")}`;
 
     const deploymentDoc = {
       deployment_id: deploymentId,
@@ -292,6 +311,12 @@ app.post("/api/deployments", async (req, res) => {
       project_name: String(req.body?.project_name || "").trim() || "Unassigned Project",
       workflow_id: workflowId || null,
       workflow_name: String(req.body?.workflow_name || "").trim() || "Default Workflow",
+      model_id: modelId,
+      model_name: modelName,
+      version_id: versionId,
+      version_display_id: versionDisplayId,
+      success_score: successScore,
+      api_key: apiKey,
       config: {
         ...(template.default_config || {}),
         ...(req.body?.config || {}),
@@ -379,7 +404,9 @@ app.post("/api/projects", async (req, res) => {
       updated_at: now,
       public: payload.visibility === "Public",
       detected_classes: Array.isArray(req.body?.detected_classes) ? req.body.detected_classes : [],
-      classes: Array.isArray(req.body?.classes) ? req.body.classes : [],
+      classes: Array.isArray(req.body?.classes)
+        ? req.body.classes
+        : (Array.isArray(payload.classes) ? payload.classes : []),
       tags: Array.isArray(req.body?.tags) ? req.body.tags : [],
       annotation_lock_classes: Boolean(req.body?.annotation_lock_classes),
       keypoint_definition: req.body?.keypoint_definition || { points: [], edges: [] },
@@ -428,6 +455,34 @@ app.get("/api/projects/:projectId", async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch project details" });
   }
+});
+
+app.post("/api/annotation-groups/validate", async (req, res) => {
+  const projectType = String(req.body?.project_type || "Object Detection").trim();
+  const rawGroup = String(req.body?.annotation_group || "").trim();
+  const items = rawGroup
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (!rawGroup) {
+    return res.json({ ok: true, items: [], invalid: [] });
+  }
+
+  if (projectType !== "Object Detection") {
+    return res.json({ ok: true, items, invalid: [] });
+  }
+
+  const invalid = items.filter((item) => !KNOWN_OBJECT_VOCAB.has(item.toLowerCase()));
+  return res.json({
+    ok: invalid.length === 0,
+    items,
+    invalid,
+    message:
+      invalid.length > 0
+        ? `${invalid.join(", ")} is not a known object. Check spelling and re-enter object name correctly.`
+        : null,
+  });
 });
 
 app.delete("/api/projects/:projectId", async (req, res) => {
@@ -1967,13 +2022,38 @@ function normalizeProjectPayload(body) {
   }
 
   const normalizedName = name.toLocaleLowerCase();
+  const annotationGroup = String(body?.annotation_group || "objects").trim() || "objects";
+  const annotationItems = annotationGroup
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (projectType === "Object Detection") {
+    const invalid = annotationItems.filter((item) => !KNOWN_OBJECT_VOCAB.has(item.toLowerCase()));
+    if (invalid.length > 0) {
+      const error = new Error(
+        `${invalid.join(", ")} is not an object. Check the spelling and re-enter the object name correctly.`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const seededClasses = annotationItems.map((item, index) => ({
+    name: item,
+    color: PROJECT_LABEL_COLORS[index % PROJECT_LABEL_COLORS.length],
+    attributes: [],
+    keypoints: [],
+  }));
+
   return {
     name,
     normalized_name: normalizedName,
     tool: String(body?.tool || "Rapid").trim() || "Rapid",
     project_type: projectType,
     classification_type: projectType === "Classification" ? String(body?.classification_type || "Multi-Label") : null,
-    annotation_group: String(body?.annotation_group || "objects").trim() || "objects",
+    annotation_group: annotationGroup,
+    classes: seededClasses,
     license: String(body?.license || "Public Domain").trim() || "Public Domain",
     visibility: String(body?.visibility || "Public").trim() === "Private" ? "Private" : "Public",
     folder_id: String(body?.folder_id || "").trim() || null,
@@ -2198,6 +2278,12 @@ function serializeDeployment(deployment) {
     project_name: deployment.project_name || "Unassigned Project",
     workflow_id: deployment.workflow_id || null,
     workflow_name: deployment.workflow_name || "Default Workflow",
+    model_id: deployment.model_id || null,
+    model_name: deployment.model_name || null,
+    version_id: deployment.version_id || null,
+    version_display_id: deployment.version_display_id || null,
+    success_score: Number.isFinite(Number(deployment.success_score)) ? Number(deployment.success_score) : 0,
+    api_key: deployment.api_key || null,
     config: deployment.config || {},
     status: deployment.status || "Provisioning",
     endpoint_path: deployment.endpoint_path || `/api/deployments/${id}/infer`,

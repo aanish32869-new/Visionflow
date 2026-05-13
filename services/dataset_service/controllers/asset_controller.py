@@ -40,6 +40,22 @@ def upload_asset():
         logger.error(f"Upload failed: {e}")
         return jsonify({"error": str(e)}), 400
 
+@asset_bp.route("/api/assets/check", methods=["POST"])
+def check_assets():
+    data = request.json or {}
+    project_id = data.get("project_id")
+    hashes = data.get("hashes")
+    
+    if not project_id or not hashes:
+        return jsonify({"error": "project_id and hashes are required"}), 400
+    
+    try:
+        existing_hashes = AssetService.check_hashes_existence(project_id, hashes)
+        return jsonify({"existing_hashes": existing_hashes}), 200
+    except Exception as e:
+        logger.error(f"Hash check failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @asset_bp.route("/api/assets/<asset_id>", methods=["DELETE"])
 def delete_asset(asset_id):
     try:

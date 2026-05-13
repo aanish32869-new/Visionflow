@@ -54,7 +54,7 @@ function Step({ n, title, children }) {
   );
 }
 
-export default function TrainTab({ projectId }) {
+export default function TrainTab({ projectId, onOpenModels }) {
   const [versions, setVersions] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [project, setProject] = useState(null);
@@ -73,6 +73,16 @@ export default function TrainTab({ projectId }) {
   const [workers, setWorkers] = useState("4");
 
   const currentArch = useMemo(() => ARCHITECTURES.find((a) => a.id === architecture) || ARCHITECTURES[0], [architecture]);
+
+  const safeJson = async (res) => {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: text };
+    }
+  };
 
   useEffect(() => {
     if (!currentArch.sizes.includes(modelSize)) {
@@ -96,19 +106,15 @@ export default function TrainTab({ projectId }) {
           fetch(`/api/projects/${projectId}/jobs`),
           fetch(`/api/projects/${projectId}`),
         ]);
-        const v = vRes.ok ? await vRes.json() : [];
-        const j = jRes.ok ? await jRes.json() : [];
-        const p = pRes.ok ? await pRes.json() : {};
+        const v = vRes.ok ? await safeJson(vRes) : [];
+        const j = jRes.ok ? await safeJson(jRes) : [];
+        const p = pRes.ok ? await safeJson(pRes) : {};
         
         setProject(p);
         setVersions(Array.isArray(v) ? v : []);
         setJobs(Array.isArray(j) ? j : []);
         if (!versionId && v?.length) setVersionId(v[0].version_id);
         
-        // Auto-select architecture based on project type
-        if (p.project_type === "Object Detection") {
-          setArchitecture("yolov8");
-        }
       } catch {
         setMessage({ type: "error", text: "Failed to load train workspace." });
       } finally {
@@ -131,7 +137,7 @@ export default function TrainTab({ projectId }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ version_id: versionId, architecture, model_size: modelSize }),
       });
-      const pre = await precheck.json();
+      const pre = await safeJson(precheck);
       if (!precheck.ok || pre.ok === false) {
         throw new Error(pre?.issues?.[0] || pre?.error || "Training precheck failed.");
       }
@@ -153,11 +159,11 @@ export default function TrainTab({ projectId }) {
           },
         }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Failed to start training");
       setMessage({ type: "success", text: `Training started. Job: ${data.job_id?.slice(0, 8) || "created"}` });
       const jRes = await fetch(`/api/projects/${projectId}/jobs`);
-      if (jRes.ok) setJobs(await jRes.json());
+      if (jRes.ok) setJobs(await safeJson(jRes));
     } catch (e) {
       setMessage({ type: "error", text: e.message || "Failed to start training." });
     } finally {
@@ -188,13 +194,7 @@ export default function TrainTab({ projectId }) {
 
         <Step n={2} title="Select Architecture">
           <div className="space-y-2">
-            {ARCHITECTURES.filter(a => {
-              if (!project) return true;
-              if (a.id === "dinov3" || a.id === "resnet") return true; // Show Foundation and ResNet for both
-              if (project.project_type === "Object Detection") return a.id === "yolov8";
-              if (project.project_type === "Classification") return a.id !== "yolov8";
-              return true;
-            }).map((a) => (
+            {ARCHITECTURES.map((a) => (
               <button 
                 key={a.id} 
                 onClick={() => setArchitecture(a.id)} 
@@ -337,7 +337,16 @@ export default function TrainTab({ projectId }) {
       </section>
 
       <div className="bg-white border border-gray-200 rounded-2xl p-5">
-        <h3 className="text-lg font-black text-gray-900 mb-3">Recent Training Jobs</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-black text-gray-900">Recent Training Jobs</h3>
+          <button
+            type="button"
+            onClick={() => onOpenModels?.()}
+            className="text-xs font-black text-violet-700 hover:text-violet-800"
+          >
+            Open Models Tab
+          </button>
+        </div>
         {jobs.length === 0 ? <p className="text-sm text-gray-500">No jobs yet.</p> : (
           <div className="space-y-2">
             {jobs.map((j) => (

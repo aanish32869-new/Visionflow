@@ -137,6 +137,45 @@ class InferenceLogic:
         return normalized
 
     @staticmethod
+    def _normalize_label_text(value):
+        text = str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+        while "  " in text:
+            text = text.replace("  ", " ")
+        return text
+
+    @staticmethod
+    def _to_word_set(value):
+        text = InferenceLogic._normalize_label_text(value)
+        words = [w for w in text.split(" ") if w]
+        expanded = set(words)
+        for word in words:
+            if word.endswith("s") and len(word) > 3:
+                expanded.add(word[:-1])
+            elif len(word) > 2:
+                expanded.add(f"{word}s")
+        return expanded
+
+    @staticmethod
+    def _label_matches_queries(label, queries):
+        if not queries:
+            return True
+        label_text = InferenceLogic._normalize_label_text(label)
+        label_words = InferenceLogic._to_word_set(label_text)
+
+        for query in queries:
+            q_text = InferenceLogic._normalize_label_text(query)
+            if not q_text:
+                continue
+            if label_text == q_text:
+                return True
+            query_words = InferenceLogic._to_word_set(q_text)
+            # Accept when all query terms are present in the predicted label terms
+            # (e.g., "fan" matches "ceiling fan"), but reject unrelated labels.
+            if query_words and query_words.issubset(label_words):
+                return True
+        return False
+
+    @staticmethod
     def _parse_confidence(value, default=0.25):
         try:
             confidence = float(value)
@@ -246,6 +285,30 @@ class InferenceLogic:
                 ],
             }
         )
+
+    @staticmethod
+    def get_model_by_ref(model_ref):
+        model_text = str(model_ref or "").strip()
+        if not model_text:
+            return None
+        if ObjectId.is_valid(model_text):
+            model = db.models.find_one({"_id": ObjectId(model_text)})
+            if model:
+                return model
+        return db.models.find_one({"model_id": model_text})
+
+    @staticmethod
+    def resolve_weights_path(model_doc):
+        candidate = str(model_doc.get("weights_path") or model_doc.get("runtime_model") or "").strip()
+        if not candidate:
+            return None
+        p = Path(candidate)
+        if p.exists():
+            return p.resolve()
+        resolved = (REPO_ROOT / candidate).resolve()
+        if resolved.exists():
+            return resolved
+        return None
 
     @staticmethod
     def _generate_training_metrics(project_id, version_doc, architecture, model_size, checkpoint):
@@ -434,7 +497,7 @@ class InferenceLogic:
         return text
 
     @staticmethod
-    def _extract_box_detections(results, model, label_filter=None):
+    def _extract_box_detections(results, model, label_queries=None):
         detections = []
         classes = []
         seen_classes = set()
@@ -448,7 +511,7 @@ class InferenceLogic:
                 class_id = int(box.cls[0].item())
                 label = InferenceLogic._label_from_names(names, class_id)
 
-                if label_filter and label.lower() not in label_filter:
+                if not InferenceLogic._label_matches_queries(label, label_queries):
                     continue
 
                 x_center, y_center, width, height = box.xywhn[0].tolist()
@@ -514,15 +577,14 @@ class InferenceLogic:
         normalized_queries = InferenceLogic._normalize_queries(queries)
         resolved_model_name = InferenceLogic.resolve_model_name(model_name)
         model = InferenceLogic.get_auto_label_model(model_name=model_name, classes=normalized_queries)
-        is_world_model = "world" in Path(resolved_model_name).name.lower()
-        label_filter = {query.lower() for query in normalized_queries} if normalized_queries and not is_world_model else None
 
         results = model.predict(
             resolved_source,
             verbose=False,
             conf=InferenceLogic._parse_confidence(confidence),
         )
-        detections, classes = InferenceLogic._extract_box_detections(results, model, label_filter=label_filter)
+        # Always enforce query-locked filtering so only requested objects are returned.
+        detections, classes = InferenceLogic._extract_box_detections(results, model, label_queries=normalized_queries)
 
         return {
             "success": True,

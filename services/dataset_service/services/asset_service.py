@@ -62,13 +62,13 @@ class AssetService:
             file_content = file.read()
             file.seek(0) # Reset stream for GridFS
             
-            # Hash for deduplication
-            file_hash = hashlib.md5(file_content).hexdigest()
+            # Hash for deduplication (SHA-256 for browser compatibility)
+            file_hash = hashlib.sha256(file_content).hexdigest()
             
             # Validate image integrity
             try:
+                # Optimized dimension extraction - try to get dimensions without full verify first
                 with Image.open(file) as img:
-                    img.verify()
                     width, height = img.size
                 file.seek(0)
             except Exception as e:
@@ -78,6 +78,12 @@ class AssetService:
             existing = db.assets.find_one({"project_id": str(project_id), "hash": file_hash})
             if existing:
                 logger.info(f"Duplicate asset found for project {project_id}, hash: {file_hash}")
+                # Update batch info if provided to associate with new upload session
+                if batch_id and existing.get("batch_id") != batch_id:
+                    db.assets.update_one(
+                        {"_id": existing["_id"]},
+                        {"$set": {"batch_id": batch_id, "batch_name": batch_name or "Imported Batch"}}
+                    )
                 return serialize_doc(existing)
 
         except Exception as e:
@@ -136,6 +142,20 @@ class AssetService:
 
         db.assets.insert_one(asset_doc)
         return serialize_doc(asset_doc)
+
+    @staticmethod
+    def check_hashes_existence(project_id, hashes):
+        """
+        Returns a list of hashes that already exist in the project.
+        """
+        if not project_id or not hashes:
+            return []
+        
+        existing = db.assets.find(
+            {"project_id": str(project_id), "hash": {"$in": hashes}},
+            {"hash": 1}
+        )
+        return [doc["hash"] for doc in existing]
 
     @staticmethod
     def update_asset_status(asset_id, new_status):

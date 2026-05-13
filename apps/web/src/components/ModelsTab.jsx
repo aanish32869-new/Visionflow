@@ -35,7 +35,7 @@ function formatDate(value) {
   });
 }
 
-function ModelCard({ model, onDelete, onDownload, onDeploy }) {
+function ModelCard({ model, onDelete, onDownload, onDeploy, onCheck }) {
   return (
     <article className="group rounded-[32px] border border-gray-100 bg-white p-6 shadow-sm transition-all duration-300 hover:shadow-xl hover:shadow-violet-100/50 hover:border-violet-200">
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -103,12 +103,20 @@ function ModelCard({ model, onDelete, onDownload, onDeploy }) {
            </span>
         </div>
         
-        <button 
-          onClick={() => onDeploy(model)}
-          className="w-full mt-4 py-3.5 bg-gray-950 text-white rounded-2xl text-[13px] font-black hover:bg-violet-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-gray-100 group-hover:shadow-violet-200"
-        >
-           Deploy Model <ArrowRight size={16} />
-        </button>
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <button 
+            onClick={() => onCheck(model)}
+            className="py-3.5 bg-white border border-gray-200 text-gray-900 rounded-2xl text-[13px] font-black hover:border-violet-300 hover:text-violet-700 transition-all flex items-center justify-center gap-2"
+          >
+             Check Model <ExternalLink size={14} />
+          </button>
+          <button 
+            onClick={() => onDeploy(model)}
+            className="py-3.5 bg-gray-950 text-white rounded-2xl text-[13px] font-black hover:bg-violet-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-gray-100 group-hover:shadow-violet-200"
+          >
+             Deploy Model <ArrowRight size={16} />
+          </button>
+        </div>
       </div>
     </article>
   );
@@ -119,6 +127,11 @@ export default function ModelsTab({ projectId, onTrainModel }) {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [feedback, setFeedback] = useState(null);
+  const [checkModel, setCheckModel] = useState(null);
+  const [checkImage, setCheckImage] = useState(null);
+  const [checkThreshold, setCheckThreshold] = useState(0.5);
+  const [isChecking, setIsChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState(null);
 
   const fetchModels = useCallback(async () => {
     setIsLoading(true);
@@ -157,7 +170,85 @@ export default function ModelsTab({ projectId, onTrainModel }) {
   };
 
   const handleDeploy = (model) => {
-    setFeedback({ type: 'success', message: `Deploying ${model.name} to edge inference server...` });
+    const deploy = async () => {
+      try {
+        const projectsRes = await fetch("/api/projects");
+        const projects = projectsRes.ok ? await projectsRes.json() : [];
+        const project = Array.isArray(projects) ? projects.find((p) => String(p.id) === String(projectId)) : null;
+        const m = model.metrics || {};
+        const score = Number(m.mAP ?? m.accuracy ?? model.mAP ?? model.accuracy ?? 0);
+        const boundedScore = Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
+        const createRes = await fetch("/api/deployments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deployment_key: "hosted_api",
+            name: `${model.name} Deployment`,
+            project_id: String(projectId),
+            project_name: project?.name || "Project",
+            model_id: model.model_id || model.id,
+            model_name: model.name,
+            version_id: model.version_id,
+            version_display_id: model.version_display_id || model.version_canonical_id || null,
+            success_score: boundedScore,
+            config: { confidence_threshold: 0.5 },
+          }),
+        });
+        const deployment = await createRes.json().catch(() => ({}));
+        if (!createRes.ok) throw new Error(deployment?.error || "Failed to create deployment");
+
+        await fetch(`/api/deployments/${deployment.id}/activate`, { method: "POST" });
+        await fetch(`/api/models/${model.model_id || model.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deployment_status: "deployed",
+            deployment_id: deployment.id,
+            api_key: deployment.api_key || null,
+            success_score: boundedScore,
+          }),
+        });
+        setFeedback({ type: "success", message: `${model.name} deployed successfully.` });
+        fetchModels();
+      } catch (e) {
+        setFeedback({ type: "error", message: e.message || "Deployment failed." });
+      }
+    };
+    deploy();
+  };
+
+  const handleCheck = (model) => {
+    setCheckModel(model);
+    setCheckImage(null);
+    setCheckResult(null);
+    setCheckThreshold(0.5);
+  };
+
+  const runModelCheck = async () => {
+    if (!checkModel?.model_id || !checkImage) return;
+    setIsChecking(true);
+    try {
+      const form = new FormData();
+      form.append("file", checkImage);
+      const response = await fetch(`/api/projects/${projectId}/models/${checkModel.model_id}/infer?conf=${checkThreshold}`, {
+        method: "POST",
+        body: form,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "Inference failed");
+      const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+      const confs = predictions.map((p) => Number(p.confidence ?? 0)).filter((n) => Number.isFinite(n));
+      const avgConfidence = confs.length ? (confs.reduce((a, b) => a + b, 0) / confs.length) : 0;
+      setCheckResult({
+        detections: predictions.length,
+        avgConfidence,
+        threshold: checkThreshold,
+      });
+    } catch (error) {
+      setCheckResult({ error: error.message || "Check failed" });
+    } finally {
+      setIsChecking(false);
+    }
   };
 
   const filteredModels = useMemo(() => {
@@ -190,6 +281,49 @@ export default function ModelsTab({ projectId, onTrainModel }) {
 
   return (
     <div className="w-full animate-page-enter space-y-8 pb-20">
+      {checkModel && (
+        <section className="bg-white rounded-[32px] border border-gray-100 p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-[18px] font-black text-gray-900">Check Model: {checkModel.name}</h2>
+            <button className="text-sm font-black text-gray-500 hover:text-gray-800" onClick={() => setCheckModel(null)}>Close</button>
+          </div>
+          <div className="grid md:grid-cols-[1fr_auto] gap-4 items-end">
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Threshold {(checkThreshold * 100).toFixed(0)}%</label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={checkThreshold}
+                onChange={(e) => setCheckThreshold(Number(e.target.value))}
+                className="w-full mt-2 accent-violet-600"
+              />
+            </div>
+            <div className="flex gap-2">
+              <input type="file" accept="image/*" onChange={(e) => setCheckImage(e.target.files?.[0] || null)} className="text-xs font-bold" />
+              <button
+                onClick={runModelCheck}
+                disabled={!checkImage || isChecking}
+                className="px-4 py-2 bg-violet-600 text-white rounded-xl text-xs font-black disabled:opacity-50"
+              >
+                {isChecking ? "Checking..." : "Upload & Check"}
+              </button>
+            </div>
+          </div>
+          {checkResult && !checkResult.error && (
+            <div className="grid sm:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-gray-100 p-3"><div className="text-xs text-gray-400 font-bold uppercase">Detections</div><div className="text-xl font-black">{checkResult.detections}</div></div>
+              <div className="rounded-xl border border-gray-100 p-3"><div className="text-xs text-gray-400 font-bold uppercase">Avg Confidence</div><div className="text-xl font-black">{(checkResult.avgConfidence * 100).toFixed(1)}%</div></div>
+              <div className="rounded-xl border border-gray-100 p-3"><div className="text-xs text-gray-400 font-bold uppercase">Threshold</div><div className="text-xl font-black">{(checkResult.threshold * 100).toFixed(0)}%</div></div>
+            </div>
+          )}
+          {checkResult?.error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-700 p-3 text-sm font-bold">{checkResult.error}</div>
+          )}
+        </section>
+      )}
+
       <header className="flex justify-between items-start">
         <div>
           <h1 className="text-[26px] font-black text-gray-900 tracking-tight">Model Registry</h1>
@@ -258,11 +392,12 @@ export default function ModelsTab({ projectId, onTrainModel }) {
         <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           {filteredModels.map((model) => (
             <ModelCard 
-              key={model.id} 
+              key={model.model_id || model.id} 
               model={model} 
               onDelete={handleDelete}
               onDownload={handleDownload}
               onDeploy={handleDeploy}
+              onCheck={handleCheck}
             />
           ))}
         </div>

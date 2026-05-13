@@ -271,14 +271,12 @@ export default function ProjectUpload() {
            fetchAssets();
            setAnnotateView('board');
            setActiveAnnotationBatchId(null);
-           setBatchImages([]);
-        } else {
-           logger.error(`Failed to move batch to dataset: ${res.status}`);
-        }
-     } catch (err) {
-        logger.error("Error adding to dataset", err);
-     }
-  };
+
+         }
+      } catch (err) {
+         logger.error("Error adding to dataset", err);
+      }
+   };
 
   const deleteAsset = async (assetId) => {
     try {
@@ -311,6 +309,13 @@ export default function ProjectUpload() {
     });
   };
 
+  const calculateHash = async (file) => {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   const processFiles = async (files) => {
     if (!files.length) return;
     setIsUploading(true);
@@ -323,77 +328,106 @@ export default function ProjectUpload() {
     };
     
     const filesArray = Array.from(files);
-    const CHUNK_SIZE = 5; // Process in chunks to prevent crashing on 500GB massive loads
     
-    // AI similarity engine
+    // 1. AI similarity engine (Run in background, don't block upload)
     if (filesArray[0].type.startsWith('image/')) {
         setIsAnalyzing(true);
-        try {
-           const imgUrl = URL.createObjectURL(filesArray[0]);
-           const img = new Image();
-           img.src = imgUrl;
-           await new Promise(r => { img.onload = r; });
-           const model = await mobilenet.load({ version: 2, alpha: 0.5 });
-           const predictions = await model.classify(img);
-           let label = predictions[0].className.split(',')[0].trim();
-           setDetectedObject(label);
-           
-           const res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=pageimages&generator=search&gsrsearch=${encodeURIComponent(label)}&pithumbsize=300&format=json&origin=*`);
-           const data = await res.json();
-           const foundURLs = [];
-           if (data.query && data.query.pages) {
-               Object.values(data.query.pages).forEach(p => {
-                  if (p.thumbnail && p.thumbnail.source) foundURLs.push(p.thumbnail.source);
-               });
-           }
-           
-           if(foundURLs.length < 3) {
-               const fallback = Array.from({length: 10}).map((_, i) => `https://picsum.photos/seed/${label.replace(/\s+/g,'')}${i}/200/200`);
-               setSimilarImages(fallback);
-           } else {
-               setSimilarImages(foundURLs);
-           }
-        } catch (err) {
-           console.error("TFJS Analyze error", err);
-           setSimilarImages(Array.from({length: 8}).map((_, i) => `https://picsum.photos/seed/visionflow${i}/200/200`));
-           setDetectedObject('related objects');
-        }
-        setIsAnalyzing(false);
+        (async () => {
+            try {
+               const imgUrl = URL.createObjectURL(filesArray[0]);
+               const img = new Image();
+               img.src = imgUrl;
+               await new Promise(r => { img.onload = r; });
+               const model = await mobilenet.load({ version: 2, alpha: 0.5 });
+               const predictions = await model.classify(img);
+               let label = predictions[0].className.split(',')[0].trim();
+               setDetectedObject(label);
+               
+               const res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=pageimages&generator=search&gsrsearch=${encodeURIComponent(label)}&pithumbsize=300&format=json&origin=*`);
+               const data = await res.json();
+               const foundURLs = [];
+               if (data.query && data.query.pages) {
+                   Object.values(data.query.pages).forEach(p => {
+                      if (p.thumbnail && p.thumbnail.source) foundURLs.push(p.thumbnail.source);
+                   });
+               }
+               
+               if(foundURLs.length < 3) {
+                   const fallback = Array.from({length: 10}).map((_, i) => `https://picsum.photos/seed/${label.replace(/\s+/g,'')}${i}/200/200`);
+                   setSimilarImages(fallback);
+               } else {
+                   setSimilarImages(foundURLs);
+               }
+            } catch (err) {
+               console.error("TFJS Analyze error", err);
+            } finally {
+               setIsAnalyzing(false);
+            }
+        })();
     } else {
         setSimilarImages(Array.from({length: 8}).map((_, i) => `https://picsum.photos/seed/video${i}/200/200`));
     }
 
-    // Initialize progress map safely (cap at 50 to prevent state bloat & crashing)
-    const initialProgress = {};
-    for (let i = 0; i < Math.min(filesArray.length, 50); i++) {
-        initialProgress[filesArray[i].name] = 0;
+    // 2. Pre-check hashes for deduplication
+    logger.info(`Checking existence of ${filesArray.length} files...`);
+    const fileHashes = await Promise.all(filesArray.map(f => calculateHash(f)));
+    
+    let existingHashSet = new Set();
+    try {
+        const checkRes = await fetch('/api/assets/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: projectId, hashes: fileHashes })
+        });
+        if (checkRes.ok) {
+            const { existing_hashes } = await checkRes.json();
+            existingHashSet = new Set(existing_hashes);
+            logger.info(`Skipping ${existingHashSet.size} duplicate files.`);
+        }
+    } catch (err) {
+        logger.error("Hash check failed", err);
     }
+
+    // 3. Initialize progress map
+    const initialProgress = {};
+    filesArray.slice(0, 50).forEach(f => {
+        initialProgress[f.name] = existingHashSet.has(fileHashes[filesArray.indexOf(f)]) ? 100 : 0;
+    });
     setUploadProgress(prev => ({...prev, ...initialProgress}));
     
-    for (let i = 0; i < filesArray.length; i += CHUNK_SIZE) {
-       const chunk = filesArray.slice(i, i + CHUNK_SIZE);
-       const promises = chunk.map(async (file, idx) => {
-           let p = 0;
-           const intvl = setInterval(() => {
-              p += 15;
-              if (i + idx < 50) { // Only animate progress for first 50 items
-                  setUploadProgress(prev => ({...prev, [file.name]: Math.min(p, 100)}));
-              }
-              if (p >= 100) clearInterval(intvl);
-           }, 200);
-           try {
-              await uploadFile(file, batchMeta);
-           } catch(e) {
-              console.error(e);
-           } finally {
-              clearInterval(intvl);
-              if (i + idx < 50) {
-                  setUploadProgress(prev => ({...prev, [file.name]: 100}));
-              }
-           }
-       });
-       await Promise.all(promises);
-    }
+    // 4. Upload with concurrency pool
+    const filesToUpload = filesArray.filter((f, i) => !existingHashSet.has(fileHashes[i]));
+    const CONCURRENCY = 12;
+    const uploadQueue = [...filesToUpload];
+    
+    const workers = Array(Math.min(CONCURRENCY, uploadQueue.length)).fill(null).map(async () => {
+        while (uploadQueue.length > 0) {
+            const file = uploadQueue.shift();
+            const fileIdx = filesArray.indexOf(file);
+            
+            let p = 0;
+            const intvl = setInterval(() => {
+               p += 20;
+               if (fileIdx < 50) {
+                   setUploadProgress(prev => ({...prev, [file.name]: Math.min(p, 95)}));
+               }
+               if (p >= 100) clearInterval(intvl);
+            }, 100);
+
+            try {
+               await uploadFile(file, batchMeta);
+               if (fileIdx < 50) {
+                   setUploadProgress(prev => ({...prev, [file.name]: 100}));
+               }
+            } catch(e) {
+               console.error(`Upload failed for ${file.name}`, e);
+            } finally {
+               clearInterval(intvl);
+            }
+        }
+    });
+
+    await Promise.all(workers);
     
     setIsUploading(false);
     setActiveAnnotationBatchId(batchMeta.batchId);
@@ -466,6 +500,7 @@ export default function ProjectUpload() {
 
   const getAutoLabelQueries = () =>
     autoLabelClasses.map((item) => item.name.trim()).filter(Boolean);
+
 
   const runAutoLabeling = async (asset = null) => {
     setIsApplyingAutoLabel(true);

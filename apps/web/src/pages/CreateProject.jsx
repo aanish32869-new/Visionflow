@@ -8,6 +8,7 @@ export default function CreateProject() {
   const [classificationType, setClassificationType] = useState("Multi-Label");
   const [projectName, setProjectName] = useState("");
   const [annotationGroup, setAnnotationGroup] = useState("");
+  const [annotationGroupError, setAnnotationGroupError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const buttonText = "Create Project";
 
@@ -16,6 +17,25 @@ export default function CreateProject() {
     if (!trimmedName) {
       alert("Project name cannot be empty.");
       return;
+    }
+
+    if (projectType === "Object Detection") {
+      try {
+        const validateRes = await fetch("/api/annotation-groups/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_type: projectType, annotation_group: annotationGroup }),
+        });
+        const validate = await validateRes.json().catch(() => ({}));
+        if (!validateRes.ok || validate?.ok === false) {
+          setAnnotationGroupError(validate?.message || "Annotation group is invalid. Check spelling and try again.");
+          return;
+        }
+        setAnnotationGroupError("");
+      } catch {
+        setAnnotationGroupError("Unable to validate annotation group right now.");
+        return;
+      }
     }
 
     setIsCreating(true);
@@ -48,7 +68,12 @@ export default function CreateProject() {
       });
     } catch (err) {
       console.error("Failed to create project", err);
-      alert(err.message || "Failed to create project. Please ensure the backend is running and you have connection.");
+      const msg = err.message || "Failed to create project. Please ensure the backend is running and you have connection.";
+      if (msg.toLowerCase().includes("object")) {
+        setAnnotationGroupError(msg);
+      } else {
+        alert(msg);
+      }
     } finally {
       setIsCreating(false);
     }
@@ -102,9 +127,29 @@ export default function CreateProject() {
             <input
               type="text"
               value={annotationGroup}
-              onChange={(e) => setAnnotationGroup(e.target.value)}
+              onChange={(e) => {
+                setAnnotationGroup(e.target.value);
+                if (annotationGroupError) setAnnotationGroupError("");
+              }}
+              onBlur={async () => {
+                if (projectType !== "Object Detection" || !annotationGroup.trim()) return;
+                try {
+                  const res = await fetch("/api/annotation-groups/validate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ project_type: projectType, annotation_group: annotationGroup }),
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  setAnnotationGroupError(data?.ok === false ? (data?.message || "Invalid annotation group.") : "");
+                } catch {
+                  setAnnotationGroupError("");
+                }
+              }}
               className="border border-gray-300 rounded-md px-3 py-[9px] text-[13px] text-gray-900 focus:border-violet-500 focus:outline-none transition"
             />
+            {annotationGroupError && (
+              <p className="mt-1 text-[12px] font-semibold text-rose-600">{annotationGroupError}</p>
+            )}
           </div>
         </div>
 
