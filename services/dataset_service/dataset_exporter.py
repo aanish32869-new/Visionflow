@@ -26,14 +26,21 @@ def validate_format_support(db, project_id, export_format, asset_ids=None):
     if asset_ids:
         query["_id"] = {"$in": [ObjectId(aid) if ObjectId.is_valid(aid) else aid for aid in asset_ids]}
     
-    # Validation bypassed to guarantee YOLOv8 export success
-    return True, None
-
-    # For classification, we need at least one image
-    if format_lower == "classification":
-        total = db.assets.count_documents(query)
-        if total == 0:
-            return False, "No images found for classification export."
+    supported = {
+        "yolo", "yolov5", "yolov8", "yolov11",
+        "coco", "coco_json",
+        "pascal_voc_xml", "voc",
+        "tensorflow_tfrecord",
+        "createml",
+        "darknet", "darknet_yolo",
+        "rf_detr",
+        "ssd_mobilenet",
+        "classification", "folder_classification",
+        "tensorflow_classification",
+        "multi_label_classification",
+    }
+    if format_lower not in supported:
+        return False, f"Unsupported export format: {export_format}"
 
     return True, None
 
@@ -500,14 +507,109 @@ def _to_coco_annotations(annotations, image_id, classes_map, next_annotation_id,
     return rows, next_annotation_id
 
 
+def _canonical_export_format(export_format):
+    fmt = str(export_format or "yolo").strip().lower()
+    aliases = {
+        "yolo": "yolov8",
+        "yolov5": "yolov5",
+        "yolov8": "yolov8",
+        "yolov11": "yolov11",
+        "coco": "coco_json",
+        "coco_json": "coco_json",
+        "pascal_voc_xml": "pascal_voc_xml",
+        "voc": "pascal_voc_xml",
+        "tensorflow_tfrecord": "tensorflow_tfrecord",
+        "createml": "createml",
+        "darknet": "darknet_yolo",
+        "darknet_yolo": "darknet_yolo",
+        "rf_detr": "rf_detr",
+        "ssd_mobilenet": "ssd_mobilenet",
+        "folder_classification": "folder_classification",
+        "classification": "folder_classification",
+        "tensorflow_classification": "tensorflow_classification",
+        "multi_label_classification": "multi_label_classification",
+    }
+    if fmt in aliases:
+        return aliases[fmt]
+    if "coco" in fmt:
+        return "coco_json"
+    if "voc" in fmt:
+        return "pascal_voc_xml"
+    if "darknet" in fmt:
+        return "darknet_yolo"
+    if "tfrecord" in fmt:
+        return "tensorflow_tfrecord"
+    if "classification" in fmt:
+        return "folder_classification"
+    if "yolo" in fmt:
+        return "yolov8"
+    return fmt
+
+
+def _bbox_to_xyxy(annotation, img_w, img_h):
+    x = float(annotation.get("x_center", 0.5))
+    y = float(annotation.get("y_center", 0.5))
+    w = float(annotation.get("width", 0.1))
+    h = float(annotation.get("height", 0.1))
+    xmin = max(0, int((x - w / 2) * img_w))
+    ymin = max(0, int((y - h / 2) * img_h))
+    xmax = min(img_w, int((x + w / 2) * img_w))
+    ymax = min(img_h, int((y + h / 2) * img_h))
+    return xmin, ymin, xmax, ymax
+
+
+def _write_pascal_voc_xml(xml_path, filename, img_w, img_h, annotations):
+    lines = [
+        "<annotation>",
+        f"  <filename>{filename}</filename>",
+        "  <size>",
+        f"    <width>{img_w}</width>",
+        f"    <height>{img_h}</height>",
+        "    <depth>3</depth>",
+        "  </size>",
+    ]
+    for ann in annotations:
+        label = ann.get("label") or "unknown"
+        xmin, ymin, xmax, ymax = _bbox_to_xyxy(ann, img_w, img_h)
+        lines.extend([
+            "  <object>",
+            f"    <name>{label}</name>",
+            "    <bndbox>",
+            f"      <xmin>{xmin}</xmin>",
+            f"      <ymin>{ymin}</ymin>",
+            f"      <xmax>{xmax}</xmax>",
+            f"      <ymax>{ymax}</ymax>",
+            "    </bndbox>",
+            "  </object>",
+        ])
+    lines.append("</annotation>")
+    with open(xml_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def _write_label_map_pbtxt(path, classes_list):
+    with open(path, "w", encoding="utf-8") as f:
+        for idx, name in enumerate(classes_list, start=1):
+            f.write("item {\n")
+            f.write(f"  id: {idx}\n")
+            f.write(f"  name: '{name}'\n")
+            f.write("}\n")
+
+
 def _write_source_export_archive(db, project_id, export_format, upload_folder, datasets_folder, options):
+    options = options or {}
+    progress_callback = options.get("progress_callback")
+
+    def update_progress(pct):
+        if progress_callback:
+            progress_callback(max(1, min(100, int(pct))))
+
+    update_progress(1)  # Initialize progress at 1%
+
     source = str(options.get("source") or "dataset").lower()
     batch_id = options.get("batch_id")
     version_id = options.get("version_id")
-    format_lower = str(export_format or "yolo").lower()
-    is_yolo = "yolo" in format_lower
-    if not is_yolo and "coco" not in format_lower:
-        raise ValueError("Only YOLO and COCO formats are supported for source exports")
+    canonical_format = _canonical_export_format(export_format)
 
     query = {"project_id": project_id}
     if batch_id:
@@ -532,6 +634,7 @@ def _write_source_export_archive(db, project_id, export_format, upload_folder, d
     annotations_by_asset = _collect_annotations(db, query_assets, version_id=version_id if source == "version" else None)
     classes_list = _collect_classes(annotations_by_asset)
     classes_map = {name: idx for idx, name in enumerate(classes_list)}
+    update_progress(10)  # Report 10% after assets/annotations prep
 
     archive_uuid = uuid.uuid4().hex
     source_dir_name = {
@@ -549,27 +652,51 @@ def _write_source_export_archive(db, project_id, export_format, upload_folder, d
     else:
         splits = ("root",)
 
-    if is_yolo:
-        if splits == ("root",):
-            os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
-            os.makedirs(os.path.join(version_dir, "labels"), exist_ok=True)
-        else:
-            for split in splits:
-                os.makedirs(os.path.join(version_dir, split, "images"), exist_ok=True)
-                os.makedirs(os.path.join(version_dir, split, "labels"), exist_ok=True)
-    else:
-        if splits == ("root",):
-            os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
-            os.makedirs(os.path.join(version_dir, "annotations"), exist_ok=True)
-        else:
-            for split in splits:
+    # Directory setup by canonical format
+    if canonical_format in {"yolov5", "yolov8", "yolov11"}:
+        for split in (("train", "valid", "test") if splits != ("root",) else ("root",)):
+            base = version_dir if split == "root" else os.path.join(version_dir, split)
+            os.makedirs(os.path.join(base, "images"), exist_ok=True)
+            os.makedirs(os.path.join(base, "labels"), exist_ok=True)
+    elif canonical_format == "darknet_yolo":
+        os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
+        os.makedirs(os.path.join(version_dir, "labels"), exist_ok=True)
+    elif canonical_format == "coco_json":
+        for split in (("train", "valid", "test") if splits != ("root",) else ("root",)):
+            if split != "root":
                 os.makedirs(os.path.join(version_dir, split), exist_ok=True)
-            os.makedirs(os.path.join(version_dir, "annotations"), exist_ok=True)
+        os.makedirs(os.path.join(version_dir, "annotations"), exist_ok=True)
+    elif canonical_format == "pascal_voc_xml":
+        os.makedirs(os.path.join(version_dir, "JPEGImages"), exist_ok=True)
+        os.makedirs(os.path.join(version_dir, "Annotations"), exist_ok=True)
+        os.makedirs(os.path.join(version_dir, "ImageSets", "Main"), exist_ok=True)
+    elif canonical_format in {"tensorflow_tfrecord", "ssd_mobilenet"}:
+        os.makedirs(os.path.join(version_dir, "records"), exist_ok=True)
+    elif canonical_format == "rf_detr":
+        os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
+    elif canonical_format == "createml":
+        os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
+    elif canonical_format in {"folder_classification", "tensorflow_classification"}:
+        for split in (("train", "valid", "test") if splits != ("root",) else ("train",)):
+            for cls in (classes_list or ["unknown"]):
+                os.makedirs(os.path.join(version_dir, split, cls), exist_ok=True)
+    elif canonical_format == "multi_label_classification":
+        os.makedirs(os.path.join(version_dir, "images"), exist_ok=True)
+    else:
+        raise ValueError(f"Unsupported export format: {export_format}")
 
     coco = {split: {"images": [], "annotations": [], "categories": [{"id": v, "name": k} for k, v in classes_map.items()]} for split in splits}
+    rfdetr = {"images": [], "annotations": [], "categories": [{"id": v, "name": k} for k, v in classes_map.items()]}
+    createml_rows = []
+    split_file_lists = {"train": [], "valid": [], "test": []}
+    tfrecord_rows = {"train": [], "valid": [], "test": []}
+    multilabel_rows = [("image", "labels")]
+    next_rfdetr_image = 1
+    next_rfdetr_ann = 1
     image_id = 1
     ann_id = 1
     exported = 0
+    total_assets = max(1, len(query_assets))
     for index, asset in enumerate(query_assets):
         split_name = "root"
         if splits != ("root",):
@@ -585,33 +712,117 @@ def _write_source_export_archive(db, project_id, export_format, upload_folder, d
             if source == "unassigned":
                 annotations = []
 
-            if is_yolo:
+            out_name = file_name if split_name == "root" else f"{split_name}_{file_name}"
+            if canonical_format in {"yolov5", "yolov8", "yolov11"}:
                 if split_name == "root":
-                    img_path = os.path.join(version_dir, "images", file_name)
-                    lbl_path = os.path.join(version_dir, "labels", f"{Path(file_name).stem}.txt")
+                    img_path = os.path.join(version_dir, "images", out_name)
+                    lbl_path = os.path.join(version_dir, "labels", f"{Path(out_name).stem}.txt")
                 else:
                     img_path = os.path.join(version_dir, split_name, "images", file_name)
                     lbl_path = os.path.join(version_dir, split_name, "labels", f"{Path(file_name).stem}.txt")
                 _write_image(img, img_path)
                 _write_yolo_label_file(lbl_path, annotations, classes_map)
-            else:
-                img_path = os.path.join(version_dir, "images", file_name) if split_name == "root" else os.path.join(version_dir, split_name, file_name)
+            elif canonical_format == "darknet_yolo":
+                img_path = os.path.join(version_dir, "images", out_name)
+                lbl_path = os.path.join(version_dir, "labels", f"{Path(out_name).stem}.txt")
+                _write_image(img, img_path)
+                _write_yolo_label_file(lbl_path, annotations, classes_map)
+                if split_name in split_file_lists:
+                    split_file_lists[split_name].append(f"images/{out_name}")
+            elif canonical_format == "coco_json":
+                img_path = os.path.join(version_dir, "images", out_name) if split_name == "root" else os.path.join(version_dir, split_name, file_name)
                 _write_image(img, img_path)
                 coco[split_name]["images"].append(_to_coco_image(asset, image_id, img))
                 rows, ann_id = _to_coco_annotations(annotations, image_id, classes_map, ann_id, img)
                 coco[split_name]["annotations"].extend(rows)
                 image_id += 1
+            elif canonical_format == "pascal_voc_xml":
+                img_path = os.path.join(version_dir, "JPEGImages", out_name)
+                xml_path = os.path.join(version_dir, "Annotations", f"{Path(out_name).stem}.xml")
+                _write_image(img, img_path)
+                _write_pascal_voc_xml(xml_path, out_name, img.size[0], img.size[1], annotations)
+                if split_name in split_file_lists:
+                    split_file_lists[split_name].append(Path(out_name).stem)
+            elif canonical_format in {"tensorflow_tfrecord", "ssd_mobilenet"}:
+                img_path = os.path.join(version_dir, "records", out_name)
+                _write_image(img, img_path)
+                tfrecord_rows[split_name if split_name in tfrecord_rows else "train"].append({
+                    "file_name": out_name,
+                    "width": img.size[0],
+                    "height": img.size[1],
+                    "annotations": [
+                        {
+                            "label": ann.get("label"),
+                            "bbox": list(_bbox_to_xyxy(ann, img.size[0], img.size[1])),
+                        }
+                        for ann in annotations
+                    ],
+                })
+            elif canonical_format == "rf_detr":
+                img_path = os.path.join(version_dir, "images", out_name)
+                _write_image(img, img_path)
+                rfdetr["images"].append({"id": next_rfdetr_image, "file_name": out_name, "width": img.size[0], "height": img.size[1]})
+                rows, next_rfdetr_ann = _to_coco_annotations(annotations, next_rfdetr_image, classes_map, next_rfdetr_ann, img)
+                rfdetr["annotations"].extend(rows)
+                next_rfdetr_image += 1
+            elif canonical_format == "createml":
+                img_path = os.path.join(version_dir, "images", out_name)
+                _write_image(img, img_path)
+                cm_anns = []
+                for ann in annotations:
+                    label = ann.get("label")
+                    if label not in classes_map:
+                        continue
+                    x = float(ann.get("x_center", 0.5)) * img.size[0]
+                    y = float(ann.get("y_center", 0.5)) * img.size[1]
+                    w = float(ann.get("width", 0.1)) * img.size[0]
+                    h = float(ann.get("height", 0.1)) * img.size[1]
+                    cm_anns.append({"label": label, "coordinates": {"x": x, "y": y, "width": w, "height": h}})
+                createml_rows.append({"image": out_name, "annotations": cm_anns})
+            elif canonical_format in {"folder_classification", "tensorflow_classification"}:
+                primary = (annotations[0].get("label") if annotations else "unknown") or "unknown"
+                target_split = split_name if split_name in ("train", "valid", "test") else "train"
+                img_path = os.path.join(version_dir, target_split, primary, file_name)
+                _write_image(img, img_path)
+            elif canonical_format == "multi_label_classification":
+                img_path = os.path.join(version_dir, "images", out_name)
+                _write_image(img, img_path)
+                labels = sorted({str(ann.get("label") or "").strip() for ann in annotations if str(ann.get("label") or "").strip()})
+                multilabel_rows.append((out_name, ",".join(labels)))
             exported += 1
+            # Update continuously during the per-asset loop (10% to 90%)
+            current_pct = 10 + int(((index + 1) / total_assets) * 80)
+            update_progress(current_pct)
         finally:
             img.close()
 
-    if is_yolo and splits != ("root",):
+    if canonical_format in {"yolov5", "yolov8", "yolov11"} and splits != ("root",):
         with open(os.path.join(version_dir, "data.yaml"), "w", encoding="utf-8") as f:
             f.write(f"path: {source_dir_name}\ntrain: train/images\nval: valid/images\ntest: test/images\n")
             f.write("names:\n")
             for idx, name in enumerate(classes_list):
                 f.write(f"{idx}: {name}\n")
-    if not is_yolo:
+            f.write(f"nc: {len(classes_list)}\n")
+
+    if canonical_format == "darknet_yolo":
+        for split in ("train", "valid", "test"):
+            with open(os.path.join(version_dir, f"{split}.txt"), "w", encoding="utf-8") as f:
+                f.write("\n".join(split_file_lists[split]))
+        with open(os.path.join(version_dir, "obj.names"), "w", encoding="utf-8") as f:
+            f.write("\n".join(classes_list))
+        with open(os.path.join(version_dir, "obj.data"), "w", encoding="utf-8") as f:
+            f.write(f"classes = {len(classes_list)}\n")
+            f.write("train = train.txt\n")
+            f.write("valid = valid.txt\n")
+            f.write("names = obj.names\n")
+            f.write("backup = backup/\n")
+
+    if canonical_format == "pascal_voc_xml":
+        for split in ("train", "valid", "test"):
+            with open(os.path.join(version_dir, "ImageSets", "Main", f"{split}.txt"), "w", encoding="utf-8") as f:
+                f.write("\n".join(split_file_lists[split]))
+
+    if canonical_format == "coco_json":
         if splits == ("root",):
             with open(os.path.join(version_dir, "annotations", "instances.json"), "w", encoding="utf-8") as f:
                 json.dump(coco["root"], f)
@@ -620,7 +831,38 @@ def _write_source_export_archive(db, project_id, export_format, upload_folder, d
                 with open(os.path.join(version_dir, "annotations", f"instances_{split}.json"), "w", encoding="utf-8") as f:
                     json.dump(coco[split], f)
 
+    if canonical_format == "rf_detr":
+        with open(os.path.join(version_dir, "annotations.json"), "w", encoding="utf-8") as f:
+            json.dump(rfdetr, f)
+
+    if canonical_format == "createml":
+        with open(os.path.join(version_dir, "annotations.json"), "w", encoding="utf-8") as f:
+            json.dump(createml_rows, f)
+
+    if canonical_format in {"tensorflow_tfrecord", "ssd_mobilenet", "tensorflow_classification"}:
+        for split in ("train", "valid", "test"):
+            with open(os.path.join(version_dir, f"{split}.record"), "w", encoding="utf-8") as f:
+                for row in tfrecord_rows.get(split, []):
+                    f.write(json.dumps(row) + "\n")
+        _write_label_map_pbtxt(os.path.join(version_dir, "label_map.pbtxt"), classes_list)
+        with open(os.path.join(version_dir, "README_TFRECORD.txt"), "w", encoding="utf-8") as f:
+            f.write("TensorFlow package is not installed in this service, so .record files are JSONL placeholders.\n")
+            f.write("Install tensorflow and convert these JSONL rows to tf.train.Example for binary TFRecord.\n")
+        if canonical_format == "ssd_mobilenet":
+            with open(os.path.join(version_dir, "pipeline.config"), "w", encoding="utf-8") as f:
+                f.write("model { ssd { num_classes: %d } }\n" % len(classes_list))
+                f.write("train_input_reader { label_map_path: 'label_map.pbtxt' tf_record_input_reader { input_path: 'train.record' } }\n")
+                f.write("eval_input_reader { label_map_path: 'label_map.pbtxt' tf_record_input_reader { input_path: 'valid.record' } }\n")
+
+    if canonical_format == "multi_label_classification":
+        with open(os.path.join(version_dir, "labels.csv"), "w", encoding="utf-8") as f:
+            f.write("image,labels\n")
+            for image_name, labels in multilabel_rows[1:]:
+                f.write(f"{image_name},\"{labels}\"\n")
+
+    update_progress(95)  # Report 95% before zipping
     shutil.make_archive(os.path.join(datasets_folder, archive_uuid), "zip", os.path.dirname(version_dir))
+    update_progress(100)  # Report 100% after archive creation
     return archive_uuid, {"exported_images_count": exported, "classes": classes_list}
 
 
@@ -644,7 +886,7 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
         if progress_callback:
             progress_callback(pct)
 
-    update_progress(5) # Started
+    update_progress(1) # Initialize progress at 1%
     class_remap = options.get("class_remap", {})
 
     # Use version_id as the folder name if provided, otherwise fallback to archive_uuid
@@ -679,14 +921,11 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
         ]
         random.shuffle(assets)
 
-    update_progress(15) # Assets fetched
-
-
     annotations_by_asset = _collect_annotations(db, assets, version_id=version_id)
     classes_list = _collect_classes(annotations_by_asset)
     classes_map = {name: index for index, name in enumerate(classes_list)}
 
-    update_progress(25) # Annotations collected
+    update_progress(10) # Report 10% after assets/annotations prep
 
     coco_data = {
         split_name: {
@@ -877,10 +1116,9 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
         if augmentation_name: augmentation_copies += 1
 
     for index, asset in enumerate(assets):
-        # Report progress during processing (25% to 85%)
-        if index % 10 == 0:
-            current_pct = 25 + int((index / total_assets) * 60)
-            update_progress(current_pct)
+        # Update continuously during the per-asset loop (10% to 90%)
+        current_pct = 10 + int(((index + 1) / total_assets) * 80)
+        update_progress(current_pct)
 
         split_name = asset.get("split") or ("train" if index < train_end else ("valid" if index < valid_end else "test"))
         source_image = _load_asset_image(db, asset, upload_folder)
@@ -964,7 +1202,7 @@ def generate_dataset_archive(db, project_id, export_format, upload_folder, datas
                     f.write("filename,label\n")
                     f.write("\n".join(classification_data[s]))
 
-    update_progress(90) # Starting zip
+    update_progress(95) # Report 95% before zipping
     shutil.make_archive(os.path.join(datasets_folder, archive_uuid), "zip", version_dir)
-    update_progress(100) # Done
+    update_progress(100) # Report 100% after archive creation
     return archive_uuid, {"exported_images_count": exported_images_count, "classes": classes_list}

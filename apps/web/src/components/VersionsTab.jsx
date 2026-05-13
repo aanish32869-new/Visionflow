@@ -71,9 +71,14 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
   const handleDelete = async (versionId) => {
     if (!window.confirm("Are you sure you want to delete this version? This action cannot be undone.")) return;
     try {
-      const response = await fetch(`/api/versions/${versionId}`, {
+      const pid = typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId;
+      let response = await fetch(`/api/projects/${pid}/versions/${versionId}`, {
         method: 'DELETE'
       });
+      if (response.status === 404) {
+        // Backward compatibility with older dataset-service route.
+        response = await fetch(`/api/versions/${versionId}`, { method: 'DELETE' });
+      }
       if (response.ok) {
         setVersions(prev => prev.filter(v => (v.version_id || v.id || v._id) !== versionId));
         // Notify other tabs (like Train Workspace)

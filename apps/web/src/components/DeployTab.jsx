@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/exhaustive-deps, no-unused-vars */
 import React, { useState, useEffect, useRef } from "react";
-import { Server, ImageIcon, ShieldCheck, Crosshair, HelpCircle, Loader } from "lucide-react";
+import { Server, ImageIcon, ShieldCheck, Crosshair, HelpCircle, Loader, AlertCircle } from "lucide-react";
 
 export default function DeployTab({ projectId }) {
   const [models, setModels] = useState([]);
@@ -14,10 +14,71 @@ export default function DeployTab({ projectId }) {
   const [activeCodeTab, setActiveCodeTab] = useState('python');
   const [copyMessage, setCopyMessage] = useState("");
   const [isClassificationResult, setIsClassificationResult] = useState(false);
+  const [threshold, setThreshold] = useState(0.5);
+  const [inferenceError, setInferenceError] = useState("");
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const clamp01 = (value) => Math.min(1, Math.max(0, value));
+  const isFiniteNumber = (value) => Number.isFinite(Number(value));
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const normalizeBox = (prediction, naturalWidth, naturalHeight) => {
+    if (!prediction) return null;
+    if (Array.isArray(prediction.box) && prediction.box.length >= 4) {
+      const [x1Raw, y1Raw, x2Raw, y2Raw] = prediction.box;
+      if (![x1Raw, y1Raw, x2Raw, y2Raw].every(isFiniteNumber)) return null;
+      let x1 = toNumber(x1Raw);
+      let y1 = toNumber(y1Raw);
+      let x2 = toNumber(x2Raw);
+      let y2 = toNumber(y2Raw);
+      const isNorm = Boolean(prediction.normalized);
+      if (!isNorm && naturalWidth > 0 && naturalHeight > 0) {
+        x1 /= naturalWidth; x2 /= naturalWidth;
+        y1 /= naturalHeight; y2 /= naturalHeight;
+      }
+      x1 = clamp01(x1); y1 = clamp01(y1); x2 = clamp01(x2); y2 = clamp01(y2);
+      const w = Math.max(0, x2 - x1);
+      const h = Math.max(0, y2 - y1);
+      if (w <= 0 || h <= 0) return null;
+      return { x: x1 + w / 2, y: y1 + h / 2, width: w, height: h };
+    }
+
+    const xRaw = prediction?.x ?? prediction?.x_center ?? prediction?.cx;
+    const yRaw = prediction?.y ?? prediction?.y_center ?? prediction?.cy;
+    const wRaw = prediction?.width ?? prediction?.w;
+    const hRaw = prediction?.height ?? prediction?.h;
+    if (![xRaw, yRaw, wRaw, hRaw].every(isFiniteNumber)) return null;
+
+    let x = toNumber(xRaw);
+    let y = toNumber(yRaw);
+    let w = toNumber(wRaw);
+    let h = toNumber(hRaw);
+
+    // If model returns pixel-space boxes, convert to normalized space.
+    if (naturalWidth > 0 && naturalHeight > 0 && (w > 1.5 || h > 1.5 || x > 1.5 || y > 1.5)) {
+      x /= naturalWidth;
+      y /= naturalHeight;
+      w /= naturalWidth;
+      h /= naturalHeight;
+    }
+
+    x = clamp01(x);
+    y = clamp01(y);
+    w = clamp01(w);
+    h = clamp01(h);
+
+    if (w <= 0 || h <= 0) return null;
+    return { x, y, width: w, height: h };
+  };
+  const isFullFrameLike = (box) => {
+    if (!box) return false;
+    const { x, y, width: w, height: h } = box;
+    return w >= 0.9 && h >= 0.9 && Math.abs(x - 0.5) <= 0.12 && Math.abs(y - 0.5) <= 0.12;
+  };
   
   const fileInputRef = useRef(null);
   const imgRef = useRef(null);
-  const canvasRef = useRef(null);
 
   useEffect(() => {
     fetchModels();
@@ -31,10 +92,17 @@ export default function DeployTab({ projectId }) {
 
   async function fetchProjectMeta() {
     try {
-      const res = await fetch("/api/projects");
-      if (!res.ok) return;
-      const projects = await res.json();
-      const me = Array.isArray(projects) ? projects.find((p) => String(p.id) === String(projectId)) : null;
+      const pid = typeof projectId === "object" && projectId !== null ? (projectId.id || projectId._id) : projectId;
+      let me = null;
+      const direct = await fetch(`/api/projects/${pid}`);
+      if (direct.ok) {
+        me = await direct.json();
+      } else {
+        const res = await fetch("/api/projects");
+        if (!res.ok) return;
+        const projects = await res.json();
+        me = Array.isArray(projects) ? projects.find((p) => String(p.id || p._id) === String(pid)) : null;
+      }
       if (me) setProjectMeta({ project_type: me.project_type || "Object Detection" });
     } catch (err) {
       console.error(err);
@@ -49,18 +117,33 @@ export default function DeployTab({ projectId }) {
         const projectType = projectMeta?.project_type || "Object Detection";
         const filtered = Array.isArray(data) ? data.filter((m) => {
           const arch = String(m.architecture || "").toLowerCase();
-          const classify = ["resnet18", "vit", "dinov3", "simplecnn"].includes(arch);
+          const classify =
+            arch.includes("resnet") ||
+            arch.includes("vit") ||
+            arch.includes("dinov3") ||
+            arch.includes("simplecnn");
           return projectType === "Classification" ? classify : !classify;
         }) : [];
-        setModels(filtered);
-        if (filtered.length > 0) setSelectedModel(filtered[filtered.length - 1].id || filtered[filtered.length - 1]._id);
+        const fallbackDeployed = Array.isArray(data)
+          ? data.filter((m) => m.deployment_status === "deployed" || m.deployment_id)
+          : [];
+        const effectiveModels = filtered.length > 0 ? filtered : fallbackDeployed;
+        setModels(effectiveModels);
+        if (effectiveModels.length > 0) {
+          const currentExists = selectedModel && effectiveModels.some((m) => String(m.model_id || m.id || m._id) === String(selectedModel));
+          if (!currentExists) {
+            const yoloPreferred = effectiveModels.find((m) => String(m.architecture || "").toLowerCase().includes("yolo"));
+            const fallback = projectType === "Object Detection" ? (yoloPreferred || effectiveModels[effectiveModels.length - 1]) : effectiveModels[effectiveModels.length - 1];
+            setSelectedModel(fallback.model_id || fallback.id || fallback._id);
+          }
+        }
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  const currentModel = models.find(m => (m.id || m._id) === selectedModel);
+  const currentModel = models.find(m => (m.model_id || m.id || m._id) === selectedModel);
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
@@ -77,6 +160,7 @@ export default function DeployTab({ projectId }) {
   const runInference = async (file, modelId) => {
     if (!file || !modelId) return;
     setIsInferencing(true);
+    setInferenceError("");
 
     const formData = new FormData();
     formData.append("file", file);
@@ -85,62 +169,48 @@ export default function DeployTab({ projectId }) {
       // Give it a tiny delay to pretend it's uploading/inferencing on cloud
       await new Promise(r => setTimeout(r, 600));
 
-      const res = await fetch(`/api/projects/${projectId}/models/${modelId}/infer`, {
+      const res = await fetch(`/api/projects/${projectId}/models/${modelId}/infer?conf=${threshold}`, {
         method: "POST",
         body: formData
       });
       
       if (res.ok) {
         const data = await res.json();
+        if (data?.success === false) {
+          throw new Error(data?.error || "Inference failed");
+        }
         const preds = Array.isArray(data.predictions) ? data.predictions : [];
+        const naturalWidth = imgRef.current?.naturalWidth || 0;
+        const naturalHeight = imgRef.current?.naturalHeight || 0;
         setIsClassificationResult(preds.some((p) => String(p.type || "").toLowerCase() === "classification"));
-        setPredictions(preds);
+        const normalizedPreds = preds
+            .map((p) => {
+              if (String(p?.type || "").toLowerCase() === "classification") return p;
+              const box = normalizeBox(p, naturalWidth, naturalHeight);
+              if (!box) return null;
+              return { ...p, x: box.x, y: box.y, width: box.width, height: box.height, confidence: Number(p?.confidence ?? 0) };
+            })
+            .filter(Boolean);
+        const detectionPreds = normalizedPreds.filter((p) => String(p?.type || "").toLowerCase() !== "classification");
+        const keepDetections = detectionPreds.filter((p) => !isFullFrameLike(p));
+        const classificationPreds = normalizedPreds.filter((p) => String(p?.type || "").toLowerCase() === "classification");
+        const thresholdedDetections = keepDetections.filter((p) => Number(p?.confidence ?? 0) >= threshold);
+        setPredictions([...classificationPreds, ...thresholdedDetections]);
         setInferenceTime(data.time);
       }
     } catch (err) {
       console.error(err);
+      setPredictions([]);
+      setInferenceError(err?.message || "Inference failed");
     }
     setIsInferencing(false);
   };
 
-  const drawPredictions = () => {
-    if (!predictions || !imgRef.current || !canvasRef.current) return;
-    
-    const img = imgRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    
-    // Match canvas to image dimensions
-    canvas.width = img.width;
-    canvas.height = img.height;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    predictions.forEach(p => {
-      if (isClassificationResult || String(p.type || "").toLowerCase() === "classification") {
-        return;
-      }
-      const w = p.width * canvas.width;
-      const h = p.height * canvas.height;
-      const x = p.x * canvas.width - w / 2;
-      const y = p.y * canvas.height - h / 2;
-      
-      // Draw Box
-      ctx.strokeStyle = '#8b5cf6';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, h);
-      ctx.fillStyle = 'rgba(139, 92, 246, 0.2)';
-      ctx.fillRect(x, y, w, h);
-      
-      // Draw Label
-      const label = `${p.class} ${(p.confidence * 100).toFixed(1)}%`;
-      ctx.fillStyle = '#8b5cf6';
-      const textWidth = ctx.measureText(label).width + 10;
-      ctx.fillRect(x, y - 18, Math.max(80, textWidth), 18);
-      
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px sans-serif';
-      ctx.fillText(label, x + 4, y - 5);
+  const updateImageSize = () => {
+    if (!imgRef.current) return;
+    setImageSize({
+      width: imgRef.current.clientWidth,
+      height: imgRef.current.clientHeight,
     });
   };
 
@@ -184,10 +254,14 @@ System.out.println(response.body().string());`;
   };
 
   useEffect(() => {
-    drawPredictions();
-     
+    window.addEventListener("resize", updateImageSize);
+    return () => window.removeEventListener("resize", updateImageSize);
+  }, []);
 
-  }, [predictions]);
+  useEffect(() => {
+    if (!_imageFile || !selectedModel) return;
+    runInference(_imageFile, selectedModel);
+  }, [threshold, selectedModel]);
 
   return (
     <div className="flex flex-col gap-6 w-full animate-page-enter max-w-[1200px] mx-auto min-h-[70vh]">
@@ -198,6 +272,11 @@ System.out.println(response.body().string());`;
       </div>
 
       <div className="flex flex-col xl:flex-row gap-8 h-full">
+         {inferenceError && (
+           <div className="w-full p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-bold flex items-center gap-2">
+             <AlertCircle size={16} /> {inferenceError}
+           </div>
+         )}
          
          {/* Left Side: Test your model directly */}
          <div className="flex-1 bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-[500px]">
@@ -234,12 +313,28 @@ System.out.println(response.body().string());`;
                        src={imageURL} 
                        alt="Inference" 
                        className={`max-h-[50vh] object-contain rounded-lg shadow-xl outline outline-4 outline-white transition ${isInferencing ? 'opacity-50 blur-[2px]' : ''}`} 
-                       onLoad={drawPredictions} 
+                       onLoad={updateImageSize} 
                      />
-                     <canvas 
-                       ref={canvasRef} 
-                       className="absolute top-0 left-0 pointer-events-none"
-                     ></canvas>
+                     {Array.isArray(predictions) && predictions.map((p, i) => {
+                       if (isClassificationResult || String(p.type || "").toLowerCase() === "classification") return null;
+                       if (!imageSize.width || !imageSize.height) return null;
+                       const w = Number(p.width || 0) * imageSize.width;
+                       const h = Number(p.height || 0) * imageSize.height;
+                       const x = Number(p.x || 0) * imageSize.width - w / 2;
+                       const y = Number(p.y || 0) * imageSize.height - h / 2;
+                       const label = `${p.class || "Object"} ${(Number(p.confidence || 0) * 100).toFixed(1)}%`;
+                       return (
+                         <div
+                           key={`${p.class || "obj"}-${i}`}
+                           className="absolute border-2 border-violet-500 bg-violet-500/10 pointer-events-none"
+                           style={{ left: x, top: y, width: w, height: h }}
+                         >
+                           <div className="absolute -top-6 left-[-2px] bg-violet-600 text-white px-2 py-0.5 rounded-t-[4px] text-[10px] font-black whitespace-nowrap shadow-sm">
+                             {label}
+                           </div>
+                         </div>
+                       );
+                     })}
 
                      {isInferencing && (
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -276,7 +371,7 @@ System.out.println(response.body().string());`;
                   disabled={models.length === 0}
                >
                   {models.map((m, _i) => (
-                     <option key={m.id || m._id} value={m.id || m._id}>{m.name}</option>
+                     <option key={m.model_id || m.id || m._id} value={m.model_id || m.id || m._id}>{m.name}</option>
                   ))}
                   {models.length === 0 && <option>No models available</option>}
                </select>
@@ -287,6 +382,19 @@ System.out.println(response.body().string());`;
                      <span className="text-xs font-bold text-green-800">Model verified and deployed</span>
                   </div>
                )}
+
+               <label className="text-[11px] font-bold tracking-widest uppercase text-gray-400 mb-2 block mt-2">
+                 Confidence Threshold {(threshold * 100).toFixed(0)}%
+               </label>
+               <input
+                 type="range"
+                 min="0.05"
+                 max="0.99"
+                 step="0.01"
+                 value={threshold}
+                 onChange={(e) => setThreshold(Number(e.target.value))}
+                 className="w-full h-1.5 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-violet-600 mb-4"
+               />
                
                <label className="text-[11px] font-bold tracking-widest uppercase text-gray-400 mb-2 block mt-6 flex gap-1 items-center">
                  API Endpoint <HelpCircle size={10} />

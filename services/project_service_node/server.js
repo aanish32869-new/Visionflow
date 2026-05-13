@@ -473,14 +473,22 @@ app.post("/api/annotation-groups/validate", async (req, res) => {
     return res.json({ ok: true, items, invalid: [] });
   }
 
-  const invalid = items.filter((item) => !KNOWN_OBJECT_VOCAB.has(item.toLowerCase()));
+  const genericAll = new Set(["object", "objects", "all", "any"]);
+  const normalized = items.map((item) => item.toLowerCase());
+  const hasGeneric = normalized.some((item) => genericAll.has(item));
+  const effectiveItems = hasGeneric ? [] : items;
+
+  // For VisionFlow custom projects, allow free-form object names.
+  // Vocabulary warnings are only informational and should not block project creation.
+  const vocabMisses = effectiveItems.filter((item) => !KNOWN_OBJECT_VOCAB.has(item.toLowerCase()));
   return res.json({
-    ok: invalid.length === 0,
-    items,
-    invalid,
+    ok: true,
+    items: effectiveItems,
+    invalid: [],
+    warnings: vocabMisses,
     message:
-      invalid.length > 0
-        ? `${invalid.join(", ")} is not a known object. Check spelling and re-enter object name correctly.`
+      hasGeneric
+        ? "Using generic object mode. Auto-label will detect all objects."
         : null,
   });
 });
@@ -2027,19 +2035,14 @@ function normalizeProjectPayload(body) {
     .split(/[,\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+  const genericAll = new Set(["object", "objects", "all", "any"]);
+  const hasGenericAll = annotationItems.some((item) => genericAll.has(item.toLowerCase()));
+  const effectiveAnnotationItems = hasGenericAll ? [] : annotationItems;
 
-  if (projectType === "Object Detection") {
-    const invalid = annotationItems.filter((item) => !KNOWN_OBJECT_VOCAB.has(item.toLowerCase()));
-    if (invalid.length > 0) {
-      const error = new Error(
-        `${invalid.join(", ")} is not an object. Check the spelling and re-enter the object name correctly.`
-      );
-      error.statusCode = 400;
-      throw error;
-    }
-  }
+  // Do not hard-block unknown object names for object-detection projects.
+  // Allow generic "object(s)" to represent detect-all behavior.
 
-  const seededClasses = annotationItems.map((item, index) => ({
+  const seededClasses = effectiveAnnotationItems.map((item, index) => ({
     name: item,
     color: PROJECT_LABEL_COLORS[index % PROJECT_LABEL_COLORS.length],
     attributes: [],

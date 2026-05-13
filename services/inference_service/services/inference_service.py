@@ -16,6 +16,18 @@ from ultralytics import YOLO
 
 from config import Config
 
+try:
+    import torch
+    import torch.nn as nn
+except Exception:
+    torch = None
+    nn = None
+try:
+    import torchvision
+    import torchvision.transforms as tv_transforms
+except Exception:
+    torchvision = None
+    tv_transforms = None
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROJECTS_ROOT = Path(
@@ -59,6 +71,28 @@ def slugify(value):
 
 class InferenceLogic:
     models = {}
+    _device_cache = None
+
+    @classmethod
+    def get_inference_device(cls):
+        if cls._device_cache:
+            return cls._device_cache
+        requested = str(os.getenv("INFERENCE_DEVICE", "auto")).strip().lower()
+        if requested in {"cpu", "cuda", "mps"}:
+            cls._device_cache = requested
+            return cls._device_cache
+        if torch is not None:
+            try:
+                if torch.cuda.is_available():
+                    cls._device_cache = "cuda:0"
+                    return cls._device_cache
+                if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    cls._device_cache = "mps"
+                    return cls._device_cache
+            except Exception:
+                pass
+        cls._device_cache = "cpu"
+        return cls._device_cache
 
     @classmethod
     def get_model(cls, model_name=None):
@@ -137,6 +171,27 @@ class InferenceLogic:
         return normalized
 
     @staticmethod
+    def _project_annotation_queries(project):
+        if not project:
+            return []
+        project_type = str(project.get("project_type") or "Object Detection").strip().lower()
+        if "object" not in project_type and "detect" not in project_type:
+            return []
+        raw_group = str(project.get("annotation_group") or "").strip()
+        if not raw_group:
+            return []
+        items = [
+            str(item).strip()
+            for item in raw_group.replace("\n", ",").split(",")
+            if str(item).strip()
+        ]
+        normalized_items = [item.lower() for item in items]
+        if any(item in {"object", "objects", "all", "any"} for item in normalized_items):
+            # Generic group means detect all.
+            return []
+        return InferenceLogic._normalize_queries(items)
+
+    @staticmethod
     def _normalize_label_text(value):
         text = str(value or "").strip().lower().replace("_", " ").replace("-", " ")
         while "  " in text:
@@ -174,6 +229,15 @@ class InferenceLogic:
             if query_words and query_words.issubset(label_words):
                 return True
         return False
+
+    @staticmethod
+    def _is_full_frame_like(x, y, w, h):
+        try:
+            x = float(x); y = float(y); w = float(w); h = float(h)
+        except Exception:
+            return False
+        # Treat near-full-image boxes as degenerate for object detection overlays.
+        return (w >= 0.95 and h >= 0.95 and abs(x - 0.5) <= 0.08 and abs(y - 0.5) <= 0.08)
 
     @staticmethod
     def _parse_confidence(value, default=0.25):
@@ -582,6 +646,7 @@ class InferenceLogic:
             resolved_source,
             verbose=False,
             conf=InferenceLogic._parse_confidence(confidence),
+            device=InferenceLogic.get_inference_device(),
         )
         # Always enforce query-locked filtering so only requested objects are returned.
         detections, classes = InferenceLogic._extract_box_detections(results, model, label_queries=normalized_queries)
@@ -603,7 +668,12 @@ class InferenceLogic:
         threshold = InferenceLogic._parse_confidence(confidence)
         resolved_model_name = InferenceLogic.resolve_model_name(model_name)
         model = InferenceLogic.get_model(model_name)
-        results = model.predict(resolved_source, verbose=False, conf=threshold)
+        results = model.predict(
+            resolved_source,
+            verbose=False,
+            conf=threshold,
+            device=InferenceLogic.get_inference_device(),
+        )
 
         labels = []
         seen_labels = set()
@@ -669,6 +739,151 @@ class InferenceLogic:
             "success": True,
             "labels": labels,
             "model": os.path.basename(resolved_model_name),
+        }
+
+    @staticmethod
+    def _extract_state_dict(raw_state):
+        if isinstance(raw_state, dict):
+            if "state_dict" in raw_state and isinstance(raw_state["state_dict"], dict):
+                return raw_state["state_dict"]
+            if "model_state_dict" in raw_state and isinstance(raw_state["model_state_dict"], dict):
+                return raw_state["model_state_dict"]
+        return raw_state
+
+    @staticmethod
+    def _resolve_class_names(model_doc):
+        classes = model_doc.get("classes") or []
+        names = []
+        for item in classes:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+            else:
+                name = str(item or "").strip()
+            if name:
+                names.append(name)
+        if names:
+            return names
+        version_id = model_doc.get("version_id")
+        if version_id:
+            version = db.versions.find_one({"version_id": version_id}) or {}
+            v_classes = version.get("classes") or []
+            for item in v_classes:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                else:
+                    name = str(item or "").strip()
+                if name:
+                    names.append(name)
+        return names
+
+    @staticmethod
+    def _build_torchvision_classifier(architecture, num_classes):
+        arch = str(architecture or "").lower()
+        if torchvision is None:
+            raise RuntimeError("torchvision is unavailable")
+
+        if arch.startswith("dinov3") or arch.startswith("vit"):
+            if "large" in arch:
+                model = torchvision.models.vit_l_16(weights=None)
+            else:
+                model = torchvision.models.vit_b_16(weights=None)
+            model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
+            return model
+
+        if "resnet34" in arch:
+            model = torchvision.models.resnet34(weights=None)
+        elif "resnet50" in arch:
+            model = torchvision.models.resnet50(weights=None)
+        else:
+            model = torchvision.models.resnet18(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
+        return model
+
+    @staticmethod
+    def _infer_checkpoint_num_classes(state_dict, architecture, fallback):
+        arch = str(architecture or "").lower()
+        if not isinstance(state_dict, dict):
+            return int(fallback or 2)
+        if arch.startswith("dinov3") or arch.startswith("vit"):
+            w = state_dict.get("heads.head.weight")
+            if hasattr(w, "shape") and len(w.shape) >= 1:
+                return int(w.shape[0])
+        if arch.startswith("resnet"):
+            w = state_dict.get("fc.weight")
+            if hasattr(w, "shape") and len(w.shape) >= 1:
+                return int(w.shape[0])
+        return int(fallback or 2)
+
+    @staticmethod
+    def classify_image_torch(source, model_doc, confidence=None):
+        if torch is None or tv_transforms is None:
+            return {"success": False, "error": "PyTorch/torchvision runtime unavailable", "labels": []}
+
+        resolved_source = InferenceLogic._resolve_source_input(source)
+        if not resolved_source:
+            return {"success": False, "error": "Missing or invalid image source", "labels": []}
+
+        class_names = InferenceLogic._resolve_class_names(model_doc)
+        threshold = InferenceLogic._parse_confidence(confidence, default=0.25)
+        architecture = model_doc.get("architecture")
+        weights_path = InferenceLogic.resolve_weights_path(model_doc)
+        if not weights_path:
+            return {"success": False, "error": "Weights file not found for model", "labels": []}
+
+        device_name = InferenceLogic.get_inference_device()
+        map_loc = "cpu" if device_name.startswith("cuda") and (torch is None or not torch.cuda.is_available()) else device_name
+        device = torch.device(map_loc)
+
+        raw_state = torch.load(str(weights_path), map_location=device)
+        state_dict = InferenceLogic._extract_state_dict(raw_state)
+        ckpt_num_classes = InferenceLogic._infer_checkpoint_num_classes(
+            state_dict,
+            architecture,
+            fallback=len(class_names) or 2,
+        )
+        model = InferenceLogic._build_torchvision_classifier(architecture, max(2, ckpt_num_classes))
+        model.load_state_dict(state_dict, strict=False)
+        model = model.to(device)
+        model.eval()
+
+        if isinstance(resolved_source, Image.Image):
+            image = resolved_source.convert("RGB")
+        else:
+            with Image.open(resolved_source) as opened:
+                image = opened.convert("RGB")
+
+        transform = tv_transforms.Compose([
+            tv_transforms.Resize((224, 224)),
+            tv_transforms.ToTensor(),
+            tv_transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        with torch.no_grad():
+            tensor = transform(image).unsqueeze(0).to(device)
+            logits = model(tensor)
+            probs = torch.softmax(logits, dim=1)[0]
+            topk = min(5, probs.shape[0])
+            scores, indices = torch.topk(probs, k=topk)
+
+        labels = []
+        scores_map = {}
+        for score_tensor, idx_tensor in zip(scores, indices):
+            score = float(score_tensor.item())
+            idx = int(idx_tensor.item())
+            label = class_names[idx] if idx < len(class_names) else f"class_{idx}"
+            scores_map[label] = score
+            if score >= threshold:
+                labels.append(label)
+
+        if not labels:
+            top_idx = int(indices[0].item())
+            labels = [class_names[top_idx] if top_idx < len(class_names) else f"class_{top_idx}"]
+
+        return {
+            "success": True,
+            "labels": labels,
+            "scores": scores_map,
+            "model": str(weights_path.name),
         }
 
     @staticmethod
@@ -791,6 +1006,8 @@ class InferenceLogic:
         model_doc = InferenceLogic._resolve_model_doc(project_id, model_id)
         if not model_doc:
             return {"success": False, "error": "Model not found", "predictions": []}
+        project = db.projects.find_one({"_id": to_object_id(project_id)}) or {}
+        project_type = str(project.get("project_type") or "Object Detection")
 
         threshold = InferenceLogic._parse_confidence(confidence, default=0.25)
         
@@ -798,14 +1015,33 @@ class InferenceLogic:
         runtime_model = model_doc.get("weights_path") or model_doc.get("runtime_model") or Config.YOLO_AUTO_LABEL_MODEL
         
         architecture = str(model_doc.get("architecture") or "").lower()
-        classification_arches = {"resnet18", "vit", "dinov3", "simplecnn"}
+        is_classification_arch = (
+            architecture.startswith("resnet")
+            or architecture.startswith("vit")
+            or architecture.startswith("dinov3")
+            or architecture.startswith("simplecnn")
+        )
 
-        if architecture in classification_arches:
-            result = InferenceLogic.classify_image(
-                source,
-                model_name=runtime_model,
-                confidence=threshold,
-            )
+        if project_type == "Object Detection" and is_classification_arch:
+            return {
+                "success": False,
+                "error": "Selected model is a classification model. Use a YOLO detection model for bounding boxes.",
+                "predictions": [],
+            }
+
+        if is_classification_arch:
+            try:
+                result = InferenceLogic.classify_image(
+                    source,
+                    model_name=runtime_model,
+                    confidence=threshold,
+                )
+            except Exception:
+                result = InferenceLogic.classify_image_torch(
+                    source,
+                    model_doc=model_doc,
+                    confidence=threshold,
+                )
             if not result.get("success"):
                 return {
                     "success": False,
@@ -818,7 +1054,7 @@ class InferenceLogic:
                     "type": "classification",
                     "class": label,
                     "label": label,
-                    "confidence": 1.0,
+                    "confidence": float((result.get("scores") or {}).get(label, 1.0)),
                 }
                 for label in labels
             ]
@@ -835,6 +1071,9 @@ class InferenceLogic:
                     "predictions": [],
                 }
 
+            # Keep all detections for visualize/deploy flows.
+            # Client-side can choose to hide suspicious full-frame boxes, but
+            # dropping here can lead to zero predictions even when objects exist.
             predictions = [
                 {
                     "type": "detection",
@@ -888,7 +1127,7 @@ class InferenceLogic:
         }
 
     @staticmethod
-    def run_yolo_labeling(asset_id, model_name=None, confidence=None, job_id=None):
+    def run_yolo_labeling(asset_id, model_name=None, confidence=None, job_id=None, label_queries=None):
         asset_oid = to_object_id(asset_id)
         if not asset_oid:
             return {"success": False, "error": f"Invalid asset id: {asset_id}", "annotated_assets": 0}
@@ -908,7 +1147,12 @@ class InferenceLogic:
         try:
             threshold = InferenceLogic._parse_confidence(confidence, default=0.75)
             model = InferenceLogic.get_model(model_name)
-            results = model.predict(source_input, verbose=False, conf=threshold)
+            results = model.predict(
+                source_input,
+                verbose=False,
+                conf=threshold,
+                device=InferenceLogic.get_inference_device(),
+            )
             names = model.names
 
             annotations = []
@@ -923,6 +1167,8 @@ class InferenceLogic:
                     cls_id = int(box.cls[0].item())
                     label = names[cls_id] if isinstance(names, dict) else names[cls_id]
                     label = str(label)
+                    if label_queries and not InferenceLogic._label_matches_queries(label, label_queries):
+                        continue
                     detected_classes.add(label)
 
                     x_center, y_center, width, height = box.xywhn[0].tolist()
@@ -1004,7 +1250,7 @@ class InferenceLogic:
             return {"success": False, "error": str(error), "annotated_assets": 0}
 
     @staticmethod
-    def run_assets_yolo_labeling(asset_ids, model_name=None, confidence=None, job_id=None):
+    def run_assets_yolo_labeling(asset_ids, model_name=None, confidence=None, job_id=None, label_queries=None):
         unique_asset_ids = []
         seen = set()
         for asset_id in asset_ids or []:
@@ -1025,6 +1271,7 @@ class InferenceLogic:
                 model_name=model_name,
                 confidence=threshold,
                 job_id=job_id,
+                label_queries=label_queries,
             )
             total_annotations += int(result.get("count", 0) or 0)
             annotated_assets += int(result.get("annotated_assets", 0) or 0)
@@ -1075,14 +1322,21 @@ class InferenceLogic:
         if batch_id:
             query["batch_id"] = str(batch_id)
         assets = list(db.assets.find(query))
+        project = db.projects.find_one({"_id": to_object_id(project_id)}) if to_object_id(project_id) else None
+        label_queries = InferenceLogic._project_annotation_queries(project)
         result = InferenceLogic.run_assets_yolo_labeling(
             [str(asset["_id"]) for asset in assets],
             model_name=model_name,
             confidence=confidence,
+            label_queries=label_queries,
         )
         result["project_id"] = str(project_id)
         if batch_id:
             result["batch_id"] = str(batch_id)
+        if label_queries:
+            result["label_queries"] = label_queries
+        else:
+            result["label_queries"] = []
         return result
 
     @staticmethod
@@ -1097,6 +1351,8 @@ class InferenceLogic:
 
         project_id = asset.get("project_id")
         project = db.projects.find_one({"_id": to_object_id(project_id)}) if to_object_id(project_id) else None
+        if label_queries is None:
+            label_queries = InferenceLogic._project_annotation_queries(project)
         source_input = InferenceLogic._resolve_asset_source(asset)
         if source_input is None:
             return {"success": False, "error": f"File not found for asset {asset_id}", "annotated_assets": 0}

@@ -79,6 +79,7 @@ export default defineConfig({
       
       // Dataset Service
       '^/api/projects/[^/]+/(versions|annotation-status|dataset|analytics)(?:$|[/?])': createProxy(datasetTarget),
+      '^/api/versions(?:$|[/?])': createProxy(datasetTarget),
       '^/api/annotations(?:$|[/?])': createProxy(datasetTarget),
       '^/api/batches/[^/]+/export(?:$|[/?])': createProxy(datasetTarget),
       '^/api/projects/[^/]+/dataset/export(?:$|[/?])': createProxy(datasetTarget),
@@ -86,6 +87,7 @@ export default defineConfig({
       '^/api/dataset/exports(?:$|[/?])': createProxy(datasetTarget),
       
       // Project Service (Node)
+      '^/api/annotation-groups(?:$|[/?])': createProxy(projectTarget),
       '^/api/(projects|assets|folders|workspace-overview|jobs|batches|deployments|workflows)(?:$|[/?])': createProxy(projectTarget),
       '/uploads': createProxy(projectTarget),
       '/datasets': createProxy(datasetTarget),

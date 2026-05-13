@@ -124,6 +124,25 @@ export default function TrainTab({ projectId, onOpenModels }) {
     load();
   }, [projectId]);
 
+  useEffect(() => {
+    const hasActiveJobs = jobs.some((j) => !["Completed", "Failed", "Cancelled"].includes(String(j.status || "")));
+    if (!hasActiveJobs) return undefined;
+
+    const timer = setInterval(async () => {
+      try {
+        const jRes = await fetch(`/api/projects/${projectId}/jobs`);
+        if (jRes.ok) {
+          const nextJobs = await safeJson(jRes);
+          setJobs(Array.isArray(nextJobs) ? nextJobs : []);
+        }
+      } catch {
+        // Keep existing UI state if refresh fails transiently.
+      }
+    }, 2500);
+
+    return () => clearInterval(timer);
+  }, [jobs, projectId]);
+
   const startTraining = async () => {
     if (!versionId) {
       setMessage({ type: "error", text: "Please select a dataset version." });
@@ -162,8 +181,13 @@ export default function TrainTab({ projectId, onOpenModels }) {
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Failed to start training");
       setMessage({ type: "success", text: `Training started. Job: ${data.job_id?.slice(0, 8) || "created"}` });
-      const jRes = await fetch(`/api/projects/${projectId}/jobs`);
-      if (jRes.ok) setJobs(await safeJson(jRes));
+      const refreshJobs = async () => {
+        const jRes = await fetch(`/api/projects/${projectId}/jobs`);
+        if (jRes.ok) setJobs(await safeJson(jRes));
+      };
+      await refreshJobs();
+      setTimeout(refreshJobs, 1200);
+      setTimeout(refreshJobs, 3000);
     } catch (e) {
       setMessage({ type: "error", text: e.message || "Failed to start training." });
     } finally {

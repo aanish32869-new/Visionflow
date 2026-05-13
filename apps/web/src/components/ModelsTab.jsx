@@ -153,7 +153,8 @@ export default function ModelsTab({ projectId, onTrainModel }) {
   }, [fetchModels]);
 
   const handleDelete = async (model) => {
-    if (!window.confirm(`Are you sure you want to delete model "${model.name}"?`)) return;
+    const confirmText = `Delete model "${model.name}" permanently?\n\nThis removes it from the database and related deployment/inference records.`;
+    if (!window.confirm(confirmText)) return;
     try {
       const res = await fetch(`/api/models/${model.model_id}`, { method: 'DELETE' });
       if (res.ok) {

@@ -76,6 +76,182 @@ def _find_project(project_id):
     return db.projects.find_one({"_id": project_id})
 
 
+def _snippet_format_alias(format_id):
+    fmt = str(format_id or "yolov8").strip().lower()
+    mapping = {
+        "coco": "coco_json",
+        "voc": "pascal_voc_xml",
+        "darknet": "darknet_yolo",
+        "classification": "folder_classification",
+    }
+    return mapping.get(fmt, fmt)
+
+
+def _infer_task_type(project, version):
+    project_type = str((project or {}).get("project_type") or "").strip().lower()
+    if "classification" in project_type:
+        return "classification"
+    if "detect" in project_type or "object" in project_type:
+        return "object-detection"
+
+    options = (version or {}).get("options") or {}
+    version_task = str(options.get("task") or options.get("project_type") or "").strip().lower()
+    if "classification" in version_task:
+        return "classification"
+    return "object-detection"
+
+
+def _supported_formats_for_task(task_type):
+    if task_type == "classification":
+        return {
+            "folder_classification",
+            "tensorflow_classification",
+            "multi_label_classification",
+        }
+    return {
+        "yolov5",
+        "yolov8",
+        "yolov11",
+        "coco_json",
+        "pascal_voc_xml",
+        "tensorflow_tfrecord",
+        "createml",
+        "darknet_yolo",
+        "rf_detr",
+        "ssd_mobilenet",
+    }
+
+
+SNIPPET_TEMPLATES = {
+    "python": """import time
+from pathlib import Path
+import requests
+
+BASE_URL = "{BASE_URL}"
+PROJECT_ID = "{PROJECT_ID}"
+VERSION_ID = "{VERSION}"
+EXPORT_FORMAT = "{FORMAT}"
+OUT_ZIP = Path("{PROJECT}-v{VERSION}-{FORMAT}.zip")
+
+# 1) Start version export job
+start_res = requests.post(
+    f"{{BASE_URL}}/api/projects/{{PROJECT_ID}}/export-dataset",
+    json={{
+        "source": "version",
+        "version_id": VERSION_ID,
+        "format": EXPORT_FORMAT
+    }},
+    timeout=30
+)
+start_res.raise_for_status()
+start_data = start_res.json()
+export_id = start_data["export_id"]
+print(f"Export queued: {{export_id}}")
+
+# 2) Poll job status until ready
+status_url = f"{{BASE_URL}}/api/projects/{{PROJECT_ID}}/dataset/exports/{{export_id}}"
+while True:
+    status_res = requests.get(status_url, timeout=30)
+    status_res.raise_for_status()
+    status_data = status_res.json()
+    status = status_data.get("status")
+    progress = int(status_data.get("progress", 0))
+    print(f"Status: {{status}} | Progress: {{progress}}%")
+
+    if status == "Ready":
+        download_url = status_data.get("download_url")
+        break
+    if status == "Failed":
+        raise RuntimeError(status_data.get("error") or "Export failed")
+    time.sleep(2)
+
+# 3) Download export zip
+download_res = requests.get(f"{{BASE_URL}}{{download_url}}", stream=True, timeout=120)
+download_res.raise_for_status()
+with open(OUT_ZIP, "wb") as f:
+    for chunk in download_res.iter_content(chunk_size=1024 * 128):
+        if chunk:
+            f.write(chunk)
+
+print(f"Downloaded: {{OUT_ZIP.resolve()}}")
+""",
+    "curl": """# 1) Start export
+curl -s -X POST "{BASE_URL}/api/projects/{PROJECT_ID}/export-dataset" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"source\":\"version\",\"version_id\":\"{VERSION}\",\"format\":\"{FORMAT}\"}"
+
+# 2) Poll status
+curl -s "{BASE_URL}/api/projects/{PROJECT_ID}/dataset/exports/<EXPORT_ID>"
+
+# 3) Download zip
+curl -L "{BASE_URL}/api/projects/{PROJECT_ID}/dataset/exports/<EXPORT_ID>/download" -o "{PROJECT}-v{VERSION}-{FORMAT}.zip"
+""",
+    "javascript": """import fs from "fs";
+import axios from "axios";
+
+const BASE_URL = "{BASE_URL}";
+const PROJECT_ID = "{PROJECT_ID}";
+const VERSION_ID = "{VERSION}";
+const EXPORT_FORMAT = "{FORMAT}";
+
+const start = await axios.post(`${BASE_URL}/api/projects/${PROJECT_ID}/export-dataset`, {
+  source: "version",
+  version_id: VERSION_ID,
+  format: EXPORT_FORMAT
+});
+
+const exportId = start.data.export_id;
+let downloadUrl = null;
+
+while (!downloadUrl) {
+  const status = await axios.get(`${BASE_URL}/api/projects/${PROJECT_ID}/dataset/exports/${exportId}`);
+  if (status.data.status === "Ready") {
+    downloadUrl = status.data.download_url;
+    break;
+  }
+  if (status.data.status === "Failed") {
+    throw new Error(status.data.error || "Export failed");
+  }
+  await new Promise((r) => setTimeout(r, 2000));
+}
+
+const out = fs.createWriteStream("{PROJECT}-v{VERSION}-{FORMAT}.zip");
+const response = await axios.get(`${BASE_URL}${downloadUrl}`, { responseType: "stream" });
+response.data.pipe(out);
+""",
+}
+
+
+def _render_snippet(language, values):
+    template = SNIPPET_TEMPLATES.get(language, SNIPPET_TEMPLATES["python"])
+    return (
+        template
+        .replace("{API_KEY}", values["api_key"])
+        .replace("{WORKSPACE}", values["workspace"])
+        .replace("{PROJECT}", values["project"])
+        .replace("{PROJECT_ID}", values["project_id"])
+        .replace("{BASE_URL}", values["base_url"])
+        .replace("{VERSION}", values["version"])
+        .replace("{FORMAT}", values["format"])
+    )
+
+
+def _workspace_name(project):
+    for key in ("workspace", "workspace_name", "workspace_slug"):
+        value = str(project.get(key) or "").strip() if project else ""
+        if value:
+            return value
+    return "YOUR_WORKSPACE"
+
+
+def _project_slug(project):
+    for key in ("slug", "project_slug", "name"):
+        value = str(project.get(key) or "").strip() if project else ""
+        if value:
+            return _slugify(value)
+    return "YOUR_PROJECT"
+
+
 def _annotation_status(project_id):
     assets = list(db.assets.find({"project_id": project_id}, {"_id": 1, "is_annotated": 1}))
     asset_ids = [str(asset["_id"]) for asset in assets]
@@ -274,6 +450,16 @@ def delete_version(version_id):
     except Exception as error:
         return jsonify({"error": str(error)}), 500
 
+
+@version_bp.route("/api/projects/<project_id>/versions/<version_id>", methods=["DELETE"])
+def delete_project_version(project_id, version_id):
+    try:
+        VersionManager.delete_version(version_id, project_id=project_id)
+        return jsonify({"success": True})
+    except Exception as error:
+        logger.error(f"Error deleting version {version_id} for project {project_id}: {error}")
+        return jsonify({"error": str(error)}), 500
+
 @version_bp.route("/api/projects/<project_id>/versions/<version_id>/download", methods=["GET"])
 def download_version(project_id, version_id):
     try:
@@ -291,6 +477,66 @@ def download_version(project_id, version_id):
         return send_from_directory(Config.DATASET_DIR, f"{archive_id}.zip", as_attachment=True, download_name=f"{version.get('project_slug', 'dataset')}_v{version.get('version_number', 0)}.zip")
     except Exception as error:
         logger.error(f"Error downloading version {version_id}: {error}")
+        return jsonify({"error": str(error)}), 500
+
+
+@version_bp.route("/api/projects/<project_id>/versions/<version_id>/code-snippet", methods=["GET"])
+def get_version_code_snippet(project_id, version_id):
+    try:
+        requested_format = str(request.args.get("format", "yolov8")).strip().lower()
+        language = str(request.args.get("language", "python")).strip().lower()
+        framework = str(request.args.get("framework", "")).strip().lower()
+        version = db.versions.find_one({"project_id": project_id, "version_id": version_id})
+        if not version:
+            return jsonify({"error": "Version not found"}), 404
+
+        project = _find_project(project_id) or {}
+        task_type = _infer_task_type(project, version)
+        supported_formats = _supported_formats_for_task(task_type)
+        if requested_format not in supported_formats:
+            return jsonify({
+                "error": f"Format '{requested_format}' is not supported for task '{task_type}'.",
+                "task": task_type,
+                "supported_formats": sorted(list(supported_formats)),
+            }), 400
+
+        workspace = _workspace_name(project)
+        project_slug = _project_slug(project)
+        sdk_format = _snippet_format_alias(requested_format)
+        values = {
+            "api_key": "YOUR_API_KEY",
+            "workspace": workspace,
+            "project": project_slug,
+            "project_id": str(project_id),
+            "base_url": "http://localhost:5000",
+            "version": str(version_id),
+            "format": sdk_format,
+        }
+        snippet = _render_snippet(language, values)
+
+        install_lines = []
+        if language == "python":
+            install_lines.append("pip install requests")
+            if framework == "ultralytics":
+                install_lines.append("pip install ultralytics")
+            elif framework == "tensorflow":
+                install_lines.append("pip install tensorflow")
+
+        return jsonify({
+            "workspace": workspace,
+            "project": project_slug,
+            "version_id": version_id,
+            "task": task_type,
+            "language": language,
+            "framework": framework or None,
+            "requested_format": requested_format,
+            "sdk_format": sdk_format,
+            "supported_formats": sorted(list(supported_formats)),
+            "install": install_lines,
+            "snippet": snippet,
+        })
+    except Exception as error:
+        logger.error(f"Error generating code snippet for version {version_id}: {error}")
         return jsonify({"error": str(error)}), 500
 
 @version_bp.route("/api/projects/<project_id>/augment/preview", methods=["POST"])

@@ -2,26 +2,64 @@ import React, { useState, useEffect } from "react";
 import { X, Download, CheckCircle, AlertTriangle, Box, ChevronRight } from "lucide-react";
 import logger from "../utils/logger";
 
-const FORMATS = [
-  { id: "yolo", name: "YOLO" },
-  { id: "coco", name: "COCO" },
+const FORMAT_GROUPS = [
+  {
+    heading: "Object Detection",
+    formats: [
+      { id: "yolov5", name: "YOLOv5 / YOLOv8 / YOLOv11", backend: "yolo" },
+      { id: "coco_json", name: "COCO JSON", backend: "coco" },
+      { id: "pascal_voc_xml", name: "Pascal VOC XML", backend: "yolo" },
+      { id: "tensorflow_tfrecord", name: "TensorFlow TFRecord", backend: "coco" },
+      { id: "createml", name: "CreateML", backend: "coco" },
+      { id: "darknet_yolo", name: "Darknet YOLO", backend: "yolo" },
+      { id: "rf_detr", name: "RF-DETR", backend: "coco" },
+      { id: "ssd_mobilenet", name: "SSD MobileNet", backend: "coco" },
+    ],
+  },
+  {
+    heading: "Classification",
+    formats: [
+      { id: "folder_classification", name: "Folder-based Classification", backend: "yolo" },
+      { id: "tensorflow_classification", name: "TensorFlow Classification", backend: "coco" },
+      { id: "multi_label_classification", name: "Multi-label Classification", backend: "coco" },
+    ],
+  },
 ];
 
 export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] }) {
-  const [selectedFormat, setSelectedFormat] = useState("yolo");
+  const [selectedFormat, setSelectedFormat] = useState("yolov5");
   const [exportId, setExportId] = useState(null);
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState(0);
+  const [displayProgress, setDisplayProgress] = useState(0);
+  const [pendingReady, setPendingReady] = useState(false);
   const [error, setError] = useState(null);
   const [exportData, setExportData] = useState(null);
 
   useEffect(() => {
     let interval;
     if (exportId && (status === "preparing" || status === "processing")) {
-      interval = setInterval(fetchStatus, 2000);
+      interval = setInterval(fetchStatus, 500);
     }
     return () => clearInterval(interval);
   }, [exportId, status]);
+
+  useEffect(() => {
+    if (!(status === "preparing" || status === "processing")) return undefined;
+    const interval = setInterval(() => {
+      setDisplayProgress((prev) => {
+        if (prev >= progress) return prev;
+        const step = Math.max(1, Math.ceil((progress - prev) / 4));
+        const next = Math.min(progress, prev + step);
+        if (pendingReady && next >= 100) {
+          setPendingReady(false);
+          setStatus("ready");
+        }
+        return next;
+      });
+    }, 150);
+    return () => clearInterval(interval);
+  }, [progress, pendingReady, status]);
 
   const fetchStatus = async () => {
     try {
@@ -30,8 +68,9 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
       const data = await res.json();
       setProgress(data.progress || 0);
       if (data.status === "Ready") {
-        setStatus("ready");
+        setProgress(100);
         setExportData(data);
+        setPendingReady(true);
       } else if (data.status === "Failed") {
         setStatus("failed");
         setError(data.error || "Export failed unexpectedly.");
@@ -45,6 +84,9 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
 
   const handleStartExport = async () => {
     setStatus("preparing");
+    setProgress(0);
+    setDisplayProgress(0);
+    setPendingReady(false);
     setError(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/export-dataset`, {
@@ -57,7 +99,10 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
         }),
       });
       const data = await res.json();
-      if (res.ok) setExportId(data.export_id);
+      if (res.ok) {
+        setExportId(data.export_id);
+        fetchStatus();
+      }
       else {
         setStatus("failed");
         setError(data.error || "Failed to start export.");
@@ -88,11 +133,18 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
               <div className="flex flex-col items-center justify-center h-full py-10 text-center">
                 <div className="w-20 h-20 bg-violet-50 rounded-full flex items-center justify-center mb-6"><Box size={40} className="text-violet-600" /></div>
                 <h3 className="text-xl font-black text-gray-900 mb-2">Choose Format</h3>
-                <div className="mb-4 grid grid-cols-2 gap-2 w-full max-w-xs">
-                  {FORMATS.map((format) => (
-                    <button key={format.id} onClick={() => setSelectedFormat(format.id)} className={`px-3 py-2 rounded-xl border text-sm font-bold ${selectedFormat === format.id ? "border-violet-600 bg-violet-50 text-violet-700" : "border-gray-200 text-gray-600"}`}>
-                      {format.name}
-                    </button>
+                <div className="mb-4 w-full max-w-2xl space-y-4">
+                  {FORMAT_GROUPS.map((group) => (
+                    <div key={group.heading}>
+                      <p className="text-xs font-black uppercase tracking-wide text-gray-500 mb-2 text-left">{group.heading}</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {group.formats.map((format) => (
+                          <button key={format.id} onClick={() => setSelectedFormat(format.id)} className={`px-3 py-2 rounded-xl border text-sm font-bold text-left ${selectedFormat === format.id ? "border-violet-600 bg-violet-50 text-violet-700" : "border-gray-200 text-gray-600"}`}>
+                            {format.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -100,7 +152,7 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
 
             {(status === "preparing" || status === "processing" || status === "ready" || status === "failed") && (
               <div className="flex flex-col items-center justify-center h-full max-w-sm mx-auto text-center py-10">
-                {(status === "preparing" || status === "processing") && <div className="relative mb-8"><div className="w-24 h-24 rounded-full border-4 border-gray-100 border-t-violet-600 animate-spin" /><div className="absolute inset-0 flex items-center justify-center font-black text-violet-600">{progress}%</div></div>}
+                {(status === "preparing" || status === "processing") && <div className="relative mb-8"><div className="w-24 h-24 rounded-full border-4 border-gray-100 border-t-violet-600 animate-spin" /><div className="absolute inset-0 flex items-center justify-center font-black text-violet-600">{displayProgress}%</div></div>}
                 {status === "ready" && <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-6"><CheckCircle size={40} className="text-emerald-500" /></div>}
                 {status === "failed" && <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center mb-6"><AlertTriangle size={40} className="text-rose-500" /></div>}
 

@@ -53,6 +53,45 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
   const [previews, setPreviews] = useState([]);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
+  const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
+
+  const updateSplitValue = (key, value) => {
+    const nextValue = clampPercent(value);
+    setConfig((prev) => {
+      const current = {
+        train: clampPercent(prev.split.train),
+        valid: clampPercent(prev.split.valid),
+        test: clampPercent(prev.split.test),
+      };
+      const otherKeys = ["train", "valid", "test"].filter((k) => k !== key);
+      const first = otherKeys[0];
+      const second = otherKeys[1];
+
+      const remaining = 100 - nextValue;
+      const currentOtherTotal = current[first] + current[second];
+
+      let firstVal;
+      let secondVal;
+      if (currentOtherTotal <= 0) {
+        firstVal = Math.floor(remaining / 2);
+        secondVal = remaining - firstVal;
+      } else {
+        firstVal = Math.round((current[first] / currentOtherTotal) * remaining);
+        secondVal = remaining - firstVal;
+      }
+
+      return {
+        ...prev,
+        split: {
+          ...prev.split,
+          [key]: nextValue,
+          [first]: firstVal,
+          [second]: secondVal,
+        },
+      };
+    });
+  };
+
   useEffect(() => {
     if (!isOpen) {
       setStep(1);
@@ -62,6 +101,15 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
   }, [isOpen]);
 
   const handleGenerate = async () => {
+    const splitTotal =
+      Number(config.split.train || 0) +
+      Number(config.split.valid || 0) +
+      Number(config.split.test || 0);
+    if (splitTotal !== 100) {
+      setError(`Train/Validation/Test split must total 100%. Current total: ${splitTotal}%.`);
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
     try {
@@ -266,9 +314,9 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
                   <div className="space-y-6">
-                    <SplitInput label="Train" value={config.split.train} color="bg-violet-600" onChange={v => setConfig({...config, split: {...config.split, train: v}})} />
-                    <SplitInput label="Validation" value={config.split.valid} color="bg-amber-600" onChange={v => setConfig({...config, split: {...config.split, valid: v}})} />
-                    <SplitInput label="Test" value={config.split.test} color="bg-emerald-600" onChange={v => setConfig({...config, split: {...config.split, test: v}})} />
+                    <SplitInput label="Train" value={config.split.train} color="bg-violet-600" onChange={v => updateSplitValue("train", v)} />
+                    <SplitInput label="Validation" value={config.split.valid} color="bg-amber-600" onChange={v => updateSplitValue("valid", v)} />
+                    <SplitInput label="Test" value={config.split.test} color="bg-emerald-600" onChange={v => updateSplitValue("test", v)} />
                     
                     <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between border border-gray-100">
                       <span className="text-xs font-black text-gray-400 uppercase">Total Distribution</span>
@@ -423,7 +471,7 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
             ) : (
               <button 
                 onClick={handleGenerate}
-                disabled={isSubmitting || (config.split.train + config.split.valid + config.split.test !== 100)}
+                disabled={isSubmitting}
                 className="px-10 py-3 bg-violet-600 text-white rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-violet-700 transition shadow-lg shadow-violet-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}

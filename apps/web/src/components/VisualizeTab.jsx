@@ -14,6 +14,7 @@ import {
   Maximize2,
   Activity
 } from 'lucide-react';
+import logger from "../utils/logger";
 
 export default function VisualizeTab({ projectId, onTrainModel }) {
   const [models, setModels] = useState([]);
@@ -26,10 +27,85 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
   const [threshold, setThreshold] = useState(0.5);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [isClassificationResult, setIsClassificationResult] = useState(false);
+  const [inferenceMeta, setInferenceMeta] = useState({ threshold: 0.5 });
+  const [inferenceError, setInferenceError] = useState("");
+  const [debugCounts, setDebugCounts] = useState({ raw: 0, mapped: 0 });
+  const [suppressedCount, setSuppressedCount] = useState(0);
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const isFiniteNumber = (value) => Number.isFinite(Number(value));
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const normalizeBox = (prediction, naturalWidth, naturalHeight) => {
+    if (!prediction) return null;
+    if (Array.isArray(prediction.box) && prediction.box.length >= 4) {
+      const [aRaw, bRaw, cRaw, dRaw] = prediction.box;
+      if (![aRaw, bRaw, cRaw, dRaw].every(isFiniteNumber)) return null;
+      const a = toNumber(aRaw), b = toNumber(bRaw), c = toNumber(cRaw), d = toNumber(dRaw);
+      const xyxyLike = prediction.box_mode === "xyxy" || (c > a && d > b);
+      if (xyxyLike) {
+        let x1 = a, y1 = b, x2 = c, y2 = d;
+        if (!prediction.normalized && naturalWidth > 0 && naturalHeight > 0) {
+          x1 /= naturalWidth; x2 /= naturalWidth;
+          y1 /= naturalHeight; y2 /= naturalHeight;
+        }
+        x1 = clamp01(x1); y1 = clamp01(y1); x2 = clamp01(x2); y2 = clamp01(y2);
+        const w = Math.max(0, x2 - x1);
+        const h = Math.max(0, y2 - y1);
+        if (w <= 0 || h <= 0) return null;
+        return { x: x1 + w / 2, y: y1 + h / 2, width: w, height: h };
+      }
+      // Assume xywh (normalized)
+      const x = clamp01(a);
+      const y = clamp01(b);
+      const w = clamp01(c);
+      const h = clamp01(d);
+      if (w <= 0 || h <= 0) return null;
+      return { x, y, width: w, height: h };
+    }
+
+    let x = prediction?.x ?? prediction?.x_center ?? prediction?.cx;
+    let y = prediction?.y ?? prediction?.y_center ?? prediction?.cy;
+    let w = prediction?.width ?? prediction?.w;
+    let h = prediction?.height ?? prediction?.h;
+
+    // Optional xyxy style fields
+    if ((!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(w) || !isFiniteNumber(h)) &&
+        [prediction?.x1, prediction?.y1, prediction?.x2, prediction?.y2].every(isFiniteNumber)) {
+      const x1 = toNumber(prediction.x1);
+      const y1 = toNumber(prediction.y1);
+      const x2 = toNumber(prediction.x2);
+      const y2 = toNumber(prediction.y2);
+      x = (x1 + x2) / 2;
+      y = (y1 + y2) / 2;
+      w = Math.max(0, x2 - x1);
+      h = Math.max(0, y2 - y1);
+    }
+
+    if (![x, y, w, h].every(isFiniteNumber)) return null;
+    x = toNumber(x); y = toNumber(y); w = toNumber(w); h = toNumber(h);
+    if (w <= 0 || h <= 0) return null;
+    if (naturalWidth > 0 && naturalHeight > 0 && (w > 1.5 || h > 1.5 || x > 1.5 || y > 1.5)) {
+      x /= naturalWidth; y /= naturalHeight;
+      w /= naturalWidth; h /= naturalHeight;
+    }
+    x = clamp01(x); y = clamp01(y); w = clamp01(w); h = clamp01(h);
+    if (w <= 0 || h <= 0) return null;
+    return { x, y, width: w, height: h };
+  };
+  const isFullFrameLike = (box) => {
+    if (!box) return false;
+    const { x, y, width, height } = box;
+    return width >= 0.92 && height >= 0.92 && Math.abs(x - 0.5) <= 0.1 && Math.abs(y - 0.5) <= 0.1;
+  };
   
   const fileInputRef = useRef(null);
   const imageRef = useRef(null);
-  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const imageFrameRef = useRef(null);
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const modelRef = (m) => String(m?.model_id || m?.id || m?._id || "");
+  const selectionKey = `visionflow_visualize_selected_model_${projectId}`;
 
   const fetchModels = useCallback(async () => {
     setIsLoadingModels(true);
@@ -37,22 +113,40 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
       const response = await fetch(`/api/projects/${projectId}/models`);
       if (response.ok) {
         const data = await response.json();
-        const projectType = projectMeta?.project_type || "Object Detection";
-        const readyModels = Array.isArray(data) ? data
-          .filter(m => m.deployment_status === 'ready' || m.status === 'Completed')
-          .filter(m => {
-            const arch = String(m.architecture || "").toLowerCase();
-            const classify = arch.includes("resnet") || arch.includes("vit") || arch.includes("dinov3") || arch.includes("simplecnn");
-            return projectType === "Classification" ? classify : !classify;
-          }) : [];
+        const allModels = Array.isArray(data)
+          ? data.filter((m) => m.deployment_status === "ready" || m.deployment_status === "deployed" || m.status === "Completed")
+          : [];
+        const projectTypeNow = projectMeta?.project_type || "Object Detection";
+        const taskFiltered = allModels.filter((m) => {
+          const arch = String(m.architecture || "").toLowerCase();
+          const isClassify = arch.includes("resnet") || arch.includes("vit") || arch.includes("dinov3") || arch.includes("simplecnn");
+          return projectTypeNow === "Object Detection" ? !isClassify : isClassify;
+        });
+        const deployedModels = taskFiltered.filter((m) => m.deployment_status === "deployed" || m.deployment_id);
+        const fallbackDeployed = allModels.filter((m) => m.deployment_status === "deployed" || m.deployment_id);
+        const readyModels =
+          deployedModels.length > 0
+            ? deployedModels
+            : (taskFiltered.length > 0 ? taskFiltered : fallbackDeployed);
         setModels(readyModels);
         if (readyModels.length > 0) {
           const preferred = localStorage.getItem("visionflow_selected_model_id");
-          const preferredExists = preferred && readyModels.some((m) => String(m.model_id) === String(preferred));
-          setSelectedModelId(preferredExists ? preferred : readyModels[0].model_id);
+          const sticky = localStorage.getItem(selectionKey);
+          const preferredExists = preferred && readyModels.some((m) => modelRef(m) === String(preferred));
+          const stickyExists = sticky && readyModels.some((m) => modelRef(m) === String(sticky));
+          const yoloPreferred = readyModels.find((m) => String(m.architecture || "").toLowerCase().includes("yolo"));
+          const fallback = projectTypeNow === "Object Detection" ? (yoloPreferred || readyModels[0]) : readyModels[0];
+
           if (preferredExists) {
+            setSelectedModelId(preferred);
             localStorage.removeItem("visionflow_selected_model_id");
+          } else if (stickyExists) {
+            setSelectedModelId(String(sticky));
+          } else {
+            setSelectedModelId(modelRef(fallback));
           }
+        } else {
+          setSelectedModelId("");
         }
       }
     } catch (error) {
@@ -60,7 +154,14 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
     } finally {
       setIsLoadingModels(false);
     }
-  }, [projectId, projectMeta]);
+  }, [projectId, projectMeta, selectionKey]);
+
+  useEffect(() => {
+    if (!selectedModelId) return;
+    try {
+      localStorage.setItem(selectionKey, String(selectedModelId));
+    } catch {}
+  }, [selectedModelId, selectionKey]);
 
   useEffect(() => {
     fetchModels();
@@ -69,12 +170,24 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
   useEffect(() => {
     const run = async () => {
       try {
-        const res = await fetch("/api/projects");
-        if (!res.ok) return;
-        const projects = await res.json();
-        const me = Array.isArray(projects) ? projects.find((p) => String(p.id) === String(projectId)) : null;
+        const pid = typeof projectId === "object" && projectId !== null ? (projectId.id || projectId._id) : projectId;
+        let me = null;
+        const direct = await fetch(`/api/projects/${pid}`);
+        if (direct.ok) {
+          me = await direct.json();
+        } else {
+          const res = await fetch("/api/projects");
+          if (res.ok) {
+            const projects = await res.json();
+            me = Array.isArray(projects)
+              ? projects.find((p) => String(p.id || p._id) === String(pid))
+              : null;
+          }
+        }
         if (me) setProjectMeta({ project_type: me.project_type || "Object Detection" });
-      } catch {}
+      } catch (err) {
+        logger.error("Failed to load project metadata for visualize", err);
+      }
     };
     run();
   }, [projectId]);
@@ -85,6 +198,8 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
       setImage(file);
       setPreviewUrl(URL.createObjectURL(file));
       setResults(null);
+      setDebugCounts({ raw: 0, mapped: 0 });
+      setSuppressedCount(0);
     }
   };
 
@@ -92,6 +207,7 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
     if (!selectedModelId || !image) return;
 
     setIsInferring(true);
+    setInferenceError("");
     const formData = new FormData();
     formData.append('file', image);
 
@@ -103,23 +219,32 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
 
       if (response.ok) {
         const data = await response.json();
+        if (data?.success === false) {
+          throw new Error(data?.error || "Inference failed");
+        }
         const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+        setInferenceMeta({ threshold: Number(data.confidence_threshold ?? threshold) });
         const classification = predictions.some((p) => String(p.type || "").toLowerCase() === "classification");
         setIsClassificationResult(classification);
-        setResults(predictions.map((prediction) => {
+        let suppressed = 0;
+        const mapped = predictions.map((prediction) => {
           if (String(prediction.type || "").toLowerCase() === "classification") {
             return {
-              box: [0.05, 0.05, 0.95, 0.2],
               label: prediction.label || prediction.class || "Class",
               confidence: Number(prediction.confidence ?? 1),
-              normalized: true,
               type: "classification",
             };
           }
-          const x = Number(prediction.x ?? prediction.x_center ?? 0.5);
-          const y = Number(prediction.y ?? prediction.y_center ?? 0.5);
-          const width = Number(prediction.width ?? 0);
-          const height = Number(prediction.height ?? 0);
+          const nw = imageRef.current?.naturalWidth || 0;
+          const nh = imageRef.current?.naturalHeight || 0;
+          const box = normalizeBox(prediction, nw, nh);
+          if (!box) return null;
+          if (isFullFrameLike(box)) {
+            suppressed += 1;
+            return null;
+          }
+          const { x, y, width, height } = box;
+
           return {
             box: [
               Math.max(0, x - width / 2),
@@ -131,7 +256,11 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
             confidence: Number(prediction.confidence || 0),
             normalized: true,
           };
-        }));
+        });
+        const cleaned = mapped.filter(Boolean);
+        setDebugCounts({ raw: predictions.length, mapped: cleaned.length });
+        setSuppressedCount(suppressed);
+        setResults(cleaned);
       } else {
         const errorBody = await response.json().catch(() => ({}));
         throw new Error(errorBody.error || "Inference failed");
@@ -139,26 +268,29 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
     } catch (error) {
       console.error("Inference failed:", error);
       setResults([]);
+      setDebugCounts({ raw: 0, mapped: 0 });
+      setSuppressedCount(0);
+      setInferenceError(error?.message || "Inference failed");
     } finally {
       setIsInferring(false);
     }
   };
 
-  const updateContainerSize = () => {
-    if (imageRef.current) {
-      setContainerSize({
-        width: imageRef.current.clientWidth,
-        height: imageRef.current.clientHeight
-      });
-    }
+  const updateImageSize = () => {
+    if (!imageRef.current) return;
+    const rect = imageRef.current.getBoundingClientRect();
+    setImageSize({
+      width: rect.width,
+      height: rect.height,
+    });
   };
 
   useEffect(() => {
-    window.addEventListener('resize', updateContainerSize);
-    return () => window.removeEventListener('resize', updateContainerSize);
+    window.addEventListener('resize', updateImageSize);
+    return () => window.removeEventListener('resize', updateImageSize);
   }, []);
 
-  const selectedModel = models.find(m => m.model_id === selectedModelId);
+  const selectedModel = models.find((m) => modelRef(m) === String(selectedModelId));
 
   return (
     <div className="w-full animate-page-enter space-y-8 pb-20">
@@ -175,7 +307,7 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
                className="appearance-none bg-white border border-gray-100 rounded-xl px-4 py-2.5 pr-10 text-[13px] font-black text-gray-900 focus:border-violet-300 outline-none shadow-sm transition-all"
              >
                 {models.map(m => (
-                  <option key={m.model_id} value={m.model_id}>{m.name}</option>
+                  <option key={modelRef(m)} value={modelRef(m)}>{m.name}</option>
                 ))}
                 {models.length === 0 && <option value="">No models available</option>}
              </select>
@@ -215,27 +347,35 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
         </div>
       ) : (
         <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
+           {inferenceError && (
+             <div className="lg:col-span-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-bold flex items-center gap-2">
+               <AlertCircle size={16} /> {inferenceError}
+             </div>
+           )}
            {/* Inference Viewport */}
            <div className="bg-white rounded-[40px] border border-gray-100 p-8 shadow-sm flex flex-col items-center justify-center min-h-[600px] relative overflow-hidden">
               {previewUrl ? (
                 <div className="relative w-full h-full flex items-center justify-center group">
-                   <img 
-                     ref={imageRef}
-                     src={previewUrl} 
-                     onLoad={updateContainerSize}
-                     alt="Preview" 
-                     className="max-w-full max-h-[700px] rounded-[24px] shadow-2xl border border-gray-100"
-                   />
+                   <div ref={imageFrameRef} className="relative inline-block">
+                     <img 
+                       ref={imageRef}
+                       src={previewUrl} 
+                       onLoad={updateImageSize}
+                       alt="Preview" 
+                       className="block max-w-full max-h-[700px] rounded-[24px] shadow-2xl border border-gray-100"
+                     />
                    
                    {/* Results Overlay */}
-                   {results && containerSize.width > 0 && results.map((res, i) => {
+                    {results && imageSize.width > 0 && results.map((res, i) => {
+                     if (!res || !Array.isArray(res.box)) return null;
+                     if (String(res.type || "").toLowerCase() === "classification") return null;
                      const isNorm = res.normalized;
-                     const left = isNorm ? res.box[0] * containerSize.width : (res.box[0] / imageRef.current.naturalWidth) * containerSize.width;
-                     const top = isNorm ? res.box[1] * containerSize.height : (res.box[1] / imageRef.current.naturalHeight) * containerSize.height;
-                     const width = isNorm ? (res.box[2] - res.box[0]) * containerSize.width : ((res.box[2] - res.box[0]) / imageRef.current.naturalWidth) * containerSize.width;
-                     const height = isNorm ? (res.box[3] - res.box[1]) * containerSize.height : ((res.box[3] - res.box[1]) / imageRef.current.naturalHeight) * containerSize.height;
+                     const left = isNorm ? res.box[0] * imageSize.width : (res.box[0] / imageRef.current.naturalWidth) * imageSize.width;
+                     const top = isNorm ? res.box[1] * imageSize.height : (res.box[1] / imageRef.current.naturalHeight) * imageSize.height;
+                     const width = isNorm ? (res.box[2] - res.box[0]) * imageSize.width : ((res.box[2] - res.box[0]) / imageRef.current.naturalWidth) * imageSize.width;
+                     const height = isNorm ? (res.box[3] - res.box[1]) * imageSize.height : ((res.box[3] - res.box[1]) / imageRef.current.naturalHeight) * imageSize.height;
                      
-                     if (res.confidence < threshold) return null;
+                     if (Number(res.confidence || 0) < threshold) return null;
                      if (isClassificationResult && res.type === "classification") {
                        return (
                          <div key={i} className="absolute top-4 left-4 bg-violet-600 text-white px-3 py-2 rounded-xl text-[12px] font-black shadow-lg">
@@ -256,6 +396,7 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
                        </div>
                      );
                    })}
+                   </div>
 
                    {isInferring && (
                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px] flex flex-col items-center justify-center rounded-[24px] animate-in fade-in duration-300">
@@ -352,12 +493,14 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
                     {results ? (
                        <div className="space-y-3">
                           <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                             <div className="text-[20px] font-black text-emerald-700">{results.filter(r => r.confidence >= threshold).length}</div>
+                             <div className="text-[20px] font-black text-emerald-700">{results.filter(r => Number(r?.confidence || 0) >= threshold).length}</div>
                              <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Objects Detected</div>
                           </div>
                           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                             <div className="text-[20px] font-black text-gray-950">{results.length > 0 ? (Math.max(...results.map(r => r.confidence)) * 100).toFixed(1) : "0"}%</div>
+                             <div className="text-[20px] font-black text-gray-950">{results.length > 0 ? (Math.max(...results.map(r => Number(r?.confidence || 0))) * 100).toFixed(1) : "0"}%</div>
                              <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Peak Confidence</div>
+                             <div className="text-[10px] font-bold uppercase tracking-widest text-violet-500 mt-2">Server Threshold {(Number(inferenceMeta.threshold || threshold) * 100).toFixed(0)}%</div>
+                             <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mt-2">Raw {debugCounts.raw} | Mapped {debugCounts.mapped} | Suppressed {suppressedCount}</div>
                           </div>
                        </div>
                     ) : (

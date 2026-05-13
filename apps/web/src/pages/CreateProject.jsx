@@ -11,6 +11,10 @@ export default function CreateProject() {
   const [annotationGroupError, setAnnotationGroupError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const buttonText = "Create Project";
+  const isGenericObjectGroup = (value) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return ["object", "objects", "all", "any"].includes(normalized);
+  };
 
   const handleCreateProject = async () => {
     const trimmedName = projectName.trim();
@@ -19,7 +23,7 @@ export default function CreateProject() {
       return;
     }
 
-    if (projectType === "Object Detection") {
+    if (projectType === "Object Detection" && !isGenericObjectGroup(annotationGroup)) {
       try {
         const validateRes = await fetch("/api/annotation-groups/validate", {
           method: "POST",
@@ -27,15 +31,18 @@ export default function CreateProject() {
           body: JSON.stringify({ project_type: projectType, annotation_group: annotationGroup }),
         });
         const validate = await validateRes.json().catch(() => ({}));
-        if (!validateRes.ok || validate?.ok === false) {
-          setAnnotationGroupError(validate?.message || "Annotation group is invalid. Check spelling and try again.");
-          return;
+        // Validation endpoint should be advisory; don't hard-block creation for custom object groups.
+        if (validateRes.ok && validate?.ok === false) {
+          setAnnotationGroupError(validate?.message || "Using custom object group. Auto-label will use your provided labels.");
+        } else {
+          setAnnotationGroupError("");
         }
-        setAnnotationGroupError("");
       } catch {
-        setAnnotationGroupError("Unable to validate annotation group right now.");
-        return;
+        // Validation service can be unavailable during local dev; do not block create.
+        setAnnotationGroupError("");
       }
+    } else if (projectType === "Object Detection" && isGenericObjectGroup(annotationGroup)) {
+      setAnnotationGroupError("");
     }
 
     setIsCreating(true);
@@ -133,6 +140,10 @@ export default function CreateProject() {
               }}
               onBlur={async () => {
                 if (projectType !== "Object Detection" || !annotationGroup.trim()) return;
+                if (isGenericObjectGroup(annotationGroup)) {
+                  setAnnotationGroupError("");
+                  return;
+                }
                 try {
                   const res = await fetch("/api/annotation-groups/validate", {
                     method: "POST",
@@ -140,7 +151,7 @@ export default function CreateProject() {
                     body: JSON.stringify({ project_type: projectType, annotation_group: annotationGroup }),
                   });
                   const data = await res.json().catch(() => ({}));
-                  setAnnotationGroupError(data?.ok === false ? (data?.message || "Invalid annotation group.") : "");
+                  setAnnotationGroupError(data?.ok === false ? "" : "");
                 } catch {
                   setAnnotationGroupError("");
                 }

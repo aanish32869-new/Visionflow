@@ -58,11 +58,14 @@ def get_target_port(path):
     # Dataset service
     if path.startswith('api/projects') and ('/versions' in path or '/annotation-status' in path or '/dataset' in path or '/analytics' in path):
         return DATASET_PORT
+    if path.startswith('api/versions'):
+        return DATASET_PORT
     if path.startswith('api/batches') and path.endswith('/export'):
         return DATASET_PORT
     # Project service (Node)
     if (
-        path.startswith('api/projects')
+        path.startswith('api/annotation-groups')
+        or path.startswith('api/projects')
         or path.startswith('api/assets')
         or path.startswith('api/folders')
         or path.startswith('api/workspace-overview')

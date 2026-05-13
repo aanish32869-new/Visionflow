@@ -3,6 +3,7 @@ import uuid
 import json
 import random
 import threading
+import shutil
 from datetime import datetime
 from io import BytesIO
 
@@ -11,6 +12,7 @@ from models.db import db
 from utils.logger import logger
 from dataset_exporter import generate_dataset_archive, _transform_annotation
 from services.tag_service import TagService
+from config import Config
 
 class VersionManager:
     _active_jobs = {}
@@ -336,8 +338,42 @@ class VersionManager:
         return True
 
     @classmethod
-    def delete_version(cls, version_id):
-        db.versions.delete_one({"version_id": version_id})
+    def delete_version(cls, version_id, project_id=None):
+        query = {"version_id": version_id}
+        if project_id is not None:
+            query["project_id"] = project_id
+
+        version_doc = db.versions.find_one(query)
+        if not version_doc:
+            raise ValueError("Version not found")
+
+        archive_ids = set()
+        if version_doc.get("archive_id"):
+            archive_ids.add(str(version_doc["archive_id"]))
+
+        # Also remove export jobs generated for this version.
+        version_exports = list(db.exports.find({"options.version_id": version_id}))
+        for export_doc in version_exports:
+            if export_doc.get("archive_id"):
+                archive_ids.add(str(export_doc["archive_id"]))
+
+        # Delete zip artifacts from disk.
+        for archive_id in archive_ids:
+            zip_path = os.path.join(Config.DATASET_DIR, f"{archive_id}.zip")
+            if os.path.exists(zip_path):
+                try:
+                    os.remove(zip_path)
+                except Exception:
+                    logger.warning(f"Failed to remove archive zip: {zip_path}")
+
+        # Delete version-scoped data from DB.
         db.version_assets.delete_many({"version_id": version_id})
         db.version_annotations.delete_many({"version_id": version_id})
+        db.exports.delete_many({"options.version_id": version_id})
+
+        # Best-effort cleanup of training artifacts linked to this version id.
+        db.models.delete_many({"version_id": version_id})
+        db.training_jobs.delete_many({"version_id": version_id})
+
+        db.versions.delete_one({"_id": version_doc["_id"]})
         return True

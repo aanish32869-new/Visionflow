@@ -149,6 +149,13 @@ def _resolve_weights_from_job(job):
 
 def _backfill_models_for_project(project_id: str):
     db = _get_db()
+    deleted_markers = list(db.deleted_models.find({"project_id": str(project_id)}))
+    deleted_job_ids = {str(item.get("source_job_id")) for item in deleted_markers if item.get("source_job_id")}
+    deleted_arch_version = {
+        (str(item.get("version_id") or ""), str(item.get("architecture") or ""))
+        for item in deleted_markers
+        if item.get("version_id") and item.get("architecture")
+    }
     jobs = list(db.training_jobs.find({
         "project_id": str(project_id),
         "status": "Completed",
@@ -156,6 +163,10 @@ def _backfill_models_for_project(project_id: str):
     for job in jobs:
         job_id = job.get("job_id")
         if not job_id:
+            continue
+        if str(job_id) in deleted_job_ids:
+            continue
+        if (str(job.get("version_id") or ""), str(job.get("architecture") or "")) in deleted_arch_version:
             continue
         existing = db.models.find_one({
             "project_id": str(project_id),
@@ -191,6 +202,26 @@ def _backfill_models_for_project(project_id: str):
             "updated_at": _utc_now(),
         }
         db.models.insert_one(model_doc)
+
+def _purge_deleted_models_for_project(project_id: str):
+    db = _get_db()
+    deleted_markers = list(db.deleted_models.find({"project_id": str(project_id)}))
+    if not deleted_markers:
+        return
+    deleted_job_ids = {str(item.get("source_job_id")) for item in deleted_markers if item.get("source_job_id")}
+    deleted_arch_version = {
+        (str(item.get("version_id") or ""), str(item.get("architecture") or ""))
+        for item in deleted_markers
+        if item.get("version_id") and item.get("architecture")
+    }
+    doomed_ids = []
+    for model in db.models.find({"project_id": str(project_id)}):
+        source_job_id = str(model.get("source_job_id") or "")
+        arch_ver = (str(model.get("version_id") or ""), str(model.get("architecture") or ""))
+        if source_job_id in deleted_job_ids or arch_ver in deleted_arch_version:
+            doomed_ids.append(model["_id"])
+    if doomed_ids:
+        db.models.delete_many({"_id": {"$in": doomed_ids}})
 
 def _resolve_model_doc(model_ref: str):
     db = _get_db()
@@ -382,6 +413,31 @@ def _collect_train_class_counts(version_dir: Path):
             continue
     return counts
 
+def _collect_full_frame_box_ratio(version_dir: Path):
+    labels_dir = version_dir / "train" / "labels"
+    if not labels_dir.exists():
+        return 0.0
+    total = 0
+    full_frame = 0
+    for label_file in labels_dir.glob("*.txt"):
+        try:
+            for line in label_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                try:
+                    x = float(parts[1]); y = float(parts[2]); w = float(parts[3]); h = float(parts[4])
+                except Exception:
+                    continue
+                total += 1
+                if abs(x - 0.5) <= 1e-6 and abs(y - 0.5) <= 1e-6 and w >= 0.99 and h >= 0.99:
+                    full_frame += 1
+        except Exception:
+            continue
+    if total == 0:
+        return 0.0
+    return float(full_frame) / float(total)
+
 def _get_training_precheck(project_id: str, version_id: str, architecture: str, conf: dict):
     db = _get_db()
     project = db.projects.find_one({"_id": to_object_id(project_id)}) or db.projects.find_one({"id": project_id}) or {}
@@ -411,6 +467,17 @@ def _get_training_precheck(project_id: str, version_id: str, architecture: str, 
             issues.append("Detection training requires at least 1 train image.")
         if valid_count < 1:
             issues.append("Detection training requires at least 1 validation image.")
+        version_dir, _ = _resolve_version_dir(version_id, conf)
+        full_frame_ratio = _collect_full_frame_box_ratio(version_dir)
+        if full_frame_ratio >= 0.7:
+            issues.append(
+                "Detection labels appear to be full-image boxes for most samples. "
+                "Please annotate real object bounding boxes before training detection."
+            )
+        elif full_frame_ratio >= 0.3:
+            warnings.append(
+                "Many labels are near full-image boxes. Detection quality may be poor unless boxes are tightened."
+            )
     else:
         minimums = {"train_images_min": 4, "valid_images_min": 1, "classes_min": 2, "min_labels_per_class": 2}
         if train_count < 4:
@@ -578,6 +645,7 @@ def list_jobs(project_id):
 
 @app.route("/api/projects/<project_id>/models", methods=["GET"])
 def list_models(project_id):
+    _purge_deleted_models_for_project(project_id)
     _backfill_models_for_project(project_id)
     db = _get_db()
     models = list(db.models.find({"project_id": str(project_id)}).sort("created_at", -1))
@@ -605,6 +673,28 @@ def delete_model(model_id):
     model = _resolve_model_doc(model_id)
     if not model:
         return jsonify({"error": "Model not found"}), 404
+
+    model_ref = str(model.get("model_id") or model_id)
+    db.deleted_models.update_one(
+        {"project_id": str(model.get("project_id")), "model_id": model_ref},
+        {"$set": {
+            "project_id": str(model.get("project_id")),
+            "model_id": model_ref,
+            "source_job_id": model.get("source_job_id"),
+            "version_id": model.get("version_id"),
+            "architecture": model.get("architecture"),
+            "deleted_at": _utc_now(),
+        }},
+        upsert=True,
+    )
+    # Cascade cleanup across related collections so delete is permanent.
+    db.inference_history.delete_many({"model_id": model_ref})
+    db.deployments.delete_many({
+        "$or": [
+            {"model_id": model_ref},
+            {"model_name": model.get("name")},
+        ]
+    })
 
     deleted = db.models.delete_one({"_id": model["_id"]})
     if deleted.deleted_count != 1:
