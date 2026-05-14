@@ -94,6 +94,16 @@ class InferenceLogic:
         cls._device_cache = "cpu"
         return cls._device_cache
 
+    @staticmethod
+    def _inference_runtime_options():
+        device = InferenceLogic.get_inference_device()
+        return {
+            "device": device,
+            "batch": max(1, int(os.getenv("INFERENCE_BATCH", "1"))),
+            "imgsz": int(os.getenv("INFERENCE_IMGSZ", "768")),
+            "half": str(os.getenv("INFERENCE_FP16", "true")).strip().lower() in {"1", "true", "yes", "on"} and str(device).startswith("cuda"),
+        }
+
     @classmethod
     def get_model(cls, model_name=None):
         resolved_model = cls.resolve_model_name(model_name)
@@ -375,6 +385,22 @@ class InferenceLogic:
         return None
 
     @staticmethod
+    def _resolve_runtime_model_from_doc(model_doc):
+        artifacts = model_doc.get("runtime_artifacts") or {}
+        if isinstance(artifacts, dict):
+            for key in ("engine", "onnx", "pt"):
+                candidate = str(artifacts.get(key) or "").strip()
+                if not candidate:
+                    continue
+                p = Path(candidate)
+                if p.exists():
+                    return str(p.resolve())
+                rooted = (REPO_ROOT / candidate).resolve()
+                if rooted.exists():
+                    return str(rooted)
+        return str(model_doc.get("weights_path") or model_doc.get("runtime_model") or Config.YOLO_AUTO_LABEL_MODEL)
+
+    @staticmethod
     def _generate_training_metrics(project_id, version_doc, architecture, model_size, checkpoint):
         version_id = version_doc.get('version_id') if version_doc else "raw"
         seed_input = (
@@ -642,11 +668,15 @@ class InferenceLogic:
         resolved_model_name = InferenceLogic.resolve_model_name(model_name)
         model = InferenceLogic.get_auto_label_model(model_name=model_name, classes=normalized_queries)
 
+        runtime = InferenceLogic._inference_runtime_options()
         results = model.predict(
             resolved_source,
             verbose=False,
             conf=InferenceLogic._parse_confidence(confidence),
-            device=InferenceLogic.get_inference_device(),
+            device=runtime["device"],
+            batch=runtime["batch"],
+            imgsz=runtime["imgsz"],
+            half=runtime["half"],
         )
         # Always enforce query-locked filtering so only requested objects are returned.
         detections, classes = InferenceLogic._extract_box_detections(results, model, label_queries=normalized_queries)
@@ -668,11 +698,15 @@ class InferenceLogic:
         threshold = InferenceLogic._parse_confidence(confidence)
         resolved_model_name = InferenceLogic.resolve_model_name(model_name)
         model = InferenceLogic.get_model(model_name)
+        runtime = InferenceLogic._inference_runtime_options()
         results = model.predict(
             resolved_source,
             verbose=False,
             conf=threshold,
-            device=InferenceLogic.get_inference_device(),
+            device=runtime["device"],
+            batch=runtime["batch"],
+            imgsz=runtime["imgsz"],
+            half=runtime["half"],
         )
 
         labels = []
@@ -1012,7 +1046,7 @@ class InferenceLogic:
         threshold = InferenceLogic._parse_confidence(confidence, default=0.25)
         
         # Resolve the model name/path
-        runtime_model = model_doc.get("weights_path") or model_doc.get("runtime_model") or Config.YOLO_AUTO_LABEL_MODEL
+        runtime_model = InferenceLogic._resolve_runtime_model_from_doc(model_doc)
         
         architecture = str(model_doc.get("architecture") or "").lower()
         is_classification_arch = (
@@ -1163,11 +1197,15 @@ class InferenceLogic:
         try:
             threshold = InferenceLogic._parse_confidence(confidence, default=0.75)
             model = InferenceLogic.get_model(model_name)
+            runtime = InferenceLogic._inference_runtime_options()
             results = model.predict(
                 source_input,
                 verbose=False,
                 conf=threshold,
-                device=InferenceLogic.get_inference_device(),
+                device=runtime["device"],
+                batch=runtime["batch"],
+                imgsz=runtime["imgsz"],
+                half=runtime["half"],
             )
             names = model.names
 

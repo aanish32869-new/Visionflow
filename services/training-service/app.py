@@ -268,7 +268,7 @@ ARCH_TRAINING_PROFILES = {
 def _resolve_architecture_variant(architecture, model_size):
     family = str(architecture or "").strip().lower()
     size = str(model_size or "").strip().lower()
-    defaults = {"dinov3": "base", "vit": "base", "resnet": "resnet18", "yolov8": "nano"}
+    defaults = {"dinov3": "base", "vit": "base", "resnet": "resnet18", "yolov8": "small"}
     allowed = {
         "dinov3": {"small", "base", "large"},
         "vit": {"tiny", "base", "large"},
@@ -505,12 +505,20 @@ def _calculate_auto_params(project_id, version_id, architecture):
     
     img_count = version.get("images_count", 0)
     
-    if img_count < 500:
-        epochs = 100
-    elif img_count < 2000:
-        epochs = 50
+    if str(architecture).lower().startswith("yolov8"):
+        if img_count < 500:
+            epochs = 180
+        elif img_count < 2000:
+            epochs = 140
+        else:
+            epochs = 100
     else:
-        epochs = 25
+        if img_count < 500:
+            epochs = 100
+        elif img_count < 2000:
+            epochs = 50
+        else:
+            epochs = 25
         
     if hw["gpu_available"]:
         batch_size = 16
@@ -519,7 +527,7 @@ def _calculate_auto_params(project_id, version_id, architecture):
     else:
         batch_size = 4
         
-    img_size = 640
+    img_size = 768 if str(architecture).lower().startswith("yolov8") else 640
     import multiprocessing
     cpu_cores = multiprocessing.cpu_count()
     workers = min(cpu_cores, 8)
@@ -892,11 +900,30 @@ def _dispatch_training(project_id, data):
     output_dir = ROOT_DIR / "storage" / "training" / job_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    export_formats = params.get("export_formats")
+    if not isinstance(export_formats, list):
+        export_formats = ["onnx"]
+        if device == "gpu":
+            export_formats.append("engine")
+    export_cfg = {
+        "formats": [str(item).strip().lower() for item in export_formats if str(item).strip()],
+        "half": bool(params.get("export_fp16", device == "gpu")),
+        "int8": bool(params.get("export_int8", False)),
+        "batch": int(params.get("inference_batch", max(1, batch_size))),
+    }
+
     job_doc = {
         "job_id": job_id, "project_id": project_id, "version_id": version_id,
         "architecture": architecture, "architecture_label": arch_info["label"],
         "mode": "local", "device": device,
-        "params": {"epochs": epochs, "batch_size": batch_size, "img_size": img_size, "workers": workers, "device": device},
+        "params": {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "img_size": img_size,
+            "workers": workers,
+            "device": device,
+            "export": export_cfg,
+        },
         "status": "Preparing", "progress": 0, "created_at": _utc_now(), "updated_at": _utc_now(),
     }
 
@@ -965,7 +992,7 @@ def _run_training(job_id, project_id, version_id, architecture, arch_info, param
     except Exception as e:
         _update({"status": "Failed", "error": str(e)})
 
-def _register_model(job_id, project_id, version_id, architecture, arch_info, metrics, weights_path, output_dir):
+def _register_model(job_id, project_id, version_id, architecture, arch_info, metrics, weights_path, output_dir, runtime_artifacts=None):
     try:
         db = _get_db()
         version = db.versions.find_one({"version_id": version_id}) or {}
@@ -973,6 +1000,7 @@ def _register_model(job_id, project_id, version_id, architecture, arch_info, met
             "model_id": uuid.uuid4().hex, "name": f"{arch_info['label']} â€” {version.get('display_id', version_id[:8])}",
             "project_id": project_id, "version_id": version_id, "architecture": architecture,
             "architecture_label": arch_info["label"], "metrics": metrics, "weights_path": str(weights_path),
+            "runtime_artifacts": runtime_artifacts or {"pt": str(weights_path)},
             "source_job_id": job_id, "status": "Completed", "deployment_status": "ready",
             "created_at": _utc_now(),
         }

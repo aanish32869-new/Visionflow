@@ -26,11 +26,11 @@ const ARCHITECTURES = [
     id: "yolov8",
     name: "YOLOv8",
     description: "State-of-the-art object detection. Fast, accurate, and easy to use.",
-    sizes: ["nano", "small", "medium"],
+    sizes: ["small", "nano", "medium"],
     flow: "Image -> Backbone -> Neck (FPN/PAN) -> Head (Detection)",
     strengths: ["SOTA Accuracy", "Extremely fast", "Real-time performance"],
     caveats: ["Primarily for detection", "Heavier than classification-only models"],
-    defaults: { epochs: 50, batch: 16, image: 640, workers: 4 },
+    defaults: { epochs: 140, batch: 16, image: 768, workers: 4 },
   },
   {
     id: "dinov3",
