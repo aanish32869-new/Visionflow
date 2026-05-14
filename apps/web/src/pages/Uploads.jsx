@@ -170,7 +170,7 @@ export default function Uploads() {
               <input 
                 type="file" 
                 multiple 
-                accept="image/*,video/mp4,video/quicktime"
+                accept="image/*,.jfif,video/mp4,video/quicktime"
                 ref={fileInputRef} 
                 style={{ display: 'none' }} 
                 onChange={handleFileChange} 

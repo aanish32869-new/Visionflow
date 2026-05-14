@@ -1081,7 +1081,7 @@ export default function ProjectUpload() {
                          <input 
                            type="file" 
                            multiple 
-                           accept="image/*,video/*,.jpeg,.jpg,.png,.heic,.hevc,.mov,.mp4"
+                           accept="image/*,video/*,.jpeg,.jpg,.png,.heic,.hevc,.webp,.jfif,.mov,.mp4"
                            ref={fileInputRef} 
                            style={{ display: 'none' }} 
                            onChange={handleFileChange} 
@@ -1103,9 +1103,8 @@ export default function ProjectUpload() {
                        {/* Supported Formats info box */}
                        <div className="bg-white border border-gray-200 rounded-xl p-4 w-full flex flex-wrap gap-8 items-start shadow-sm max-w-[550px]">
                           <div>
-                            <h4 className="text-[13px] text-gray-800 font-bold flex items-center gap-2 mb-1"><FileImage size={14}/> Images</h4>
-                            <p className="text-[12px] text-gray-400 font-mono tracking-tighter">.jpeg, .png, .heic, .hevc, .webp</p>
-                            <p className="text-[10px] text-gray-400 mt-2">*Max size of 500GB and infinite pixels.</p>
+                            <h4 className="text-[13px] text-gray-800 font-bold flex items-center gap-2 mb-1"><FileImage size={14}/> Image Formats</h4>
+                            <p className="text-[12px] text-gray-400 font-mono tracking-tighter">.jpeg, .png, .heic, .hevc, .webp, .jfif</p>
                           </div>
                        </div>
                     </div>

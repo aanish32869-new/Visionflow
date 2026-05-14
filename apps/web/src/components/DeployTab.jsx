@@ -17,6 +17,7 @@ export default function DeployTab({ projectId }) {
   const [threshold, setThreshold] = useState(0.5);
   const [inferenceError, setInferenceError] = useState("");
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [inferenceMeta, setInferenceMeta] = useState({ threshold: 0.5, peak_confidence: 0, raw_prediction_count: 0, suggested_threshold: 0.5 });
   const clamp01 = (value) => Math.min(1, Math.max(0, value));
   const isFiniteNumber = (value) => Number.isFinite(Number(value));
   const toNumber = (value, fallback = 0) => {
@@ -70,11 +71,6 @@ export default function DeployTab({ projectId }) {
 
     if (w <= 0 || h <= 0) return null;
     return { x, y, width: w, height: h };
-  };
-  const isFullFrameLike = (box) => {
-    if (!box) return false;
-    const { x, y, width: w, height: h } = box;
-    return w >= 0.9 && h >= 0.9 && Math.abs(x - 0.5) <= 0.12 && Math.abs(y - 0.5) <= 0.12;
   };
   
   const fileInputRef = useRef(null);
@@ -180,6 +176,12 @@ export default function DeployTab({ projectId }) {
           throw new Error(data?.error || "Inference failed");
         }
         const preds = Array.isArray(data.predictions) ? data.predictions : [];
+        setInferenceMeta({
+          threshold: Number(data.confidence_threshold ?? threshold),
+          peak_confidence: Number(data.peak_confidence ?? 0),
+          raw_prediction_count: Number(data.raw_prediction_count ?? preds.length),
+          suggested_threshold: Number(data.suggested_threshold ?? threshold),
+        });
         const naturalWidth = imgRef.current?.naturalWidth || 0;
         const naturalHeight = imgRef.current?.naturalHeight || 0;
         setIsClassificationResult(preds.some((p) => String(p.type || "").toLowerCase() === "classification"));
@@ -192,9 +194,8 @@ export default function DeployTab({ projectId }) {
             })
             .filter(Boolean);
         const detectionPreds = normalizedPreds.filter((p) => String(p?.type || "").toLowerCase() !== "classification");
-        const keepDetections = detectionPreds.filter((p) => !isFullFrameLike(p));
         const classificationPreds = normalizedPreds.filter((p) => String(p?.type || "").toLowerCase() === "classification");
-        const thresholdedDetections = keepDetections.filter((p) => Number(p?.confidence ?? 0) >= threshold);
+        const thresholdedDetections = detectionPreds.filter((p) => Number(p?.confidence ?? 0) >= threshold);
         setPredictions([...classificationPreds, ...thresholdedDetections]);
         setInferenceTime(data.time);
       }
@@ -240,6 +241,18 @@ Request request = new Request.Builder()
 
 Response response = client.newCall(request).execute();
 System.out.println(response.body().string());`;
+
+  const thresholdedPredictions = Array.isArray(predictions)
+    ? predictions.filter((p) => String(p?.type || "").toLowerCase() !== "classification")
+    : [];
+  const confidenceSeries = thresholdedPredictions
+    .map((p) => Number(p?.confidence ?? 0))
+    .filter((v) => Number.isFinite(v));
+  const peakConfidencePct = confidenceSeries.length ? (Math.max(...confidenceSeries) * 100).toFixed(1) : "0.0";
+  const avgConfidencePct = confidenceSeries.length
+    ? ((confidenceSeries.reduce((a, b) => a + b, 0) / confidenceSeries.length) * 100).toFixed(1)
+    : "0.0";
+  const backendPeakPct = (Number(inferenceMeta.peak_confidence || 0) * 100).toFixed(1);
 
   const handleCopySnippet = async () => {
     try {
@@ -383,14 +396,28 @@ System.out.println(response.body().string());`;
                   </div>
                )}
 
+               {Array.isArray(predictions) && (
+                 <div className="mb-4 bg-gray-50 p-3 rounded border border-gray-100">
+                   <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Inference Diagnostics</div>
+                   <div className="mt-2 text-xs font-bold text-gray-700">Objects Detected: {thresholdedPredictions.length}</div>
+                   <div className="mt-1 text-xs font-bold text-gray-700">Peak Confidence: {thresholdedPredictions.length > 0 ? peakConfidencePct : backendPeakPct}%</div>
+                   <div className="mt-1 text-xs font-bold text-gray-700">Avg Confidence (Accuracy): {avgConfidencePct}%</div>
+                   {thresholdedPredictions.length === 0 && Number(inferenceMeta.raw_prediction_count || 0) > 0 && (
+                     <div className="mt-1 text-xs font-bold text-amber-700">
+                       No boxes above current threshold. Try {(Number(inferenceMeta.suggested_threshold || 0.01) * 100).toFixed(1)}%
+                     </div>
+                   )}
+                 </div>
+               )}
+
                <label className="text-[11px] font-bold tracking-widest uppercase text-gray-400 mb-2 block mt-2">
                  Confidence Threshold {(threshold * 100).toFixed(0)}%
                </label>
                <input
                  type="range"
-                 min="0.05"
+                 min="0.001"
                  max="0.99"
-                 step="0.01"
+                 step="0.001"
                  value={threshold}
                  onChange={(e) => setThreshold(Number(e.target.value))}
                  className="w-full h-1.5 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-violet-600 mb-4"

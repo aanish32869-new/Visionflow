@@ -1059,10 +1059,13 @@ class InferenceLogic:
                 for label in labels
             ]
         else:
+            # Capture detections at a permissive confidence floor so UI threshold
+            # can be adjusted interactively without needing repeated model passes.
+            capture_confidence = min(threshold, 0.01)
             result = InferenceLogic.run_auto_label(
                 source,
                 model_name=runtime_model,
-                confidence=threshold,
+                confidence=capture_confidence,
             )
             if not result.get("success"):
                 return {
@@ -1087,6 +1090,16 @@ class InferenceLogic:
                 for detection in result.get("detections", [])
             ]
 
+        peak_confidence = 0.0
+        if predictions:
+            confidences = [
+                float(p.get("confidence", 0) or 0)
+                for p in predictions
+                if p.get("confidence") is not None
+            ]
+            if confidences:
+                peak_confidence = max(confidences)
+
         # Log inference for analytics
         inference_log = {
             "project_id": str(project_id),
@@ -1105,6 +1118,9 @@ class InferenceLogic:
             "predictions": predictions,
             "model": model_doc.get("name"),
             "confidence_threshold": threshold,
+            "raw_prediction_count": len(predictions),
+            "peak_confidence": peak_confidence,
+            "suggested_threshold": round(max(0.001, min(0.999, peak_confidence * 0.9)), 3) if peak_confidence > 0 else threshold,
         }
 
     @staticmethod

@@ -30,7 +30,6 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
   const [inferenceMeta, setInferenceMeta] = useState({ threshold: 0.5 });
   const [inferenceError, setInferenceError] = useState("");
   const [debugCounts, setDebugCounts] = useState({ raw: 0, mapped: 0 });
-  const [suppressedCount, setSuppressedCount] = useState(0);
   const clamp01 = (v) => Math.min(1, Math.max(0, v));
   const isFiniteNumber = (value) => Number.isFinite(Number(value));
   const toNumber = (value, fallback = 0) => {
@@ -93,11 +92,6 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
     x = clamp01(x); y = clamp01(y); w = clamp01(w); h = clamp01(h);
     if (w <= 0 || h <= 0) return null;
     return { x, y, width: w, height: h };
-  };
-  const isFullFrameLike = (box) => {
-    if (!box) return false;
-    const { x, y, width, height } = box;
-    return width >= 0.92 && height >= 0.92 && Math.abs(x - 0.5) <= 0.1 && Math.abs(y - 0.5) <= 0.1;
   };
   
   const fileInputRef = useRef(null);
@@ -199,7 +193,6 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
       setPreviewUrl(URL.createObjectURL(file));
       setResults(null);
       setDebugCounts({ raw: 0, mapped: 0 });
-      setSuppressedCount(0);
     }
   };
 
@@ -223,10 +216,15 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
           throw new Error(data?.error || "Inference failed");
         }
         const predictions = Array.isArray(data.predictions) ? data.predictions : [];
-        setInferenceMeta({ threshold: Number(data.confidence_threshold ?? threshold) });
+        setInferenceMeta({
+          threshold: Number(data.confidence_threshold ?? threshold),
+          time: Number(data.time ?? 0),
+          peak_confidence: Number(data.peak_confidence ?? 0),
+          raw_prediction_count: Number(data.raw_prediction_count ?? predictions.length),
+          suggested_threshold: Number(data.suggested_threshold ?? threshold),
+        });
         const classification = predictions.some((p) => String(p.type || "").toLowerCase() === "classification");
         setIsClassificationResult(classification);
-        let suppressed = 0;
         const mapped = predictions.map((prediction) => {
           if (String(prediction.type || "").toLowerCase() === "classification") {
             return {
@@ -239,10 +237,6 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
           const nh = imageRef.current?.naturalHeight || 0;
           const box = normalizeBox(prediction, nw, nh);
           if (!box) return null;
-          if (isFullFrameLike(box)) {
-            suppressed += 1;
-            return null;
-          }
           const { x, y, width, height } = box;
 
           return {
@@ -259,7 +253,6 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
         });
         const cleaned = mapped.filter(Boolean);
         setDebugCounts({ raw: predictions.length, mapped: cleaned.length });
-        setSuppressedCount(suppressed);
         setResults(cleaned);
       } else {
         const errorBody = await response.json().catch(() => ({}));
@@ -269,7 +262,6 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
       console.error("Inference failed:", error);
       setResults([]);
       setDebugCounts({ raw: 0, mapped: 0 });
-      setSuppressedCount(0);
       setInferenceError(error?.message || "Inference failed");
     } finally {
       setIsInferring(false);
@@ -291,6 +283,19 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
   }, []);
 
   const selectedModel = models.find((m) => modelRef(m) === String(selectedModelId));
+  const thresholdedResults = Array.isArray(results)
+    ? results.filter((r) => Number(r?.confidence || 0) >= threshold)
+    : [];
+  const confidenceSeries = thresholdedResults
+    .map((r) => Number(r?.confidence || 0))
+    .filter((v) => Number.isFinite(v));
+  const backendPeak = Number(inferenceMeta.peak_confidence || 0);
+  const peakConfidencePct = confidenceSeries.length
+    ? (Math.max(...confidenceSeries) * 100).toFixed(1)
+    : (backendPeak * 100).toFixed(1);
+  const avgConfidencePct = confidenceSeries.length
+    ? ((confidenceSeries.reduce((a, b) => a + b, 0) / confidenceSeries.length) * 100).toFixed(1)
+    : "0.0";
 
   return (
     <div className="w-full animate-page-enter space-y-8 pb-20">
@@ -493,14 +498,23 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
                     {results ? (
                        <div className="space-y-3">
                           <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                             <div className="text-[20px] font-black text-emerald-700">{results.filter(r => Number(r?.confidence || 0) >= threshold).length}</div>
+                             <div className="text-[20px] font-black text-emerald-700">{thresholdedResults.length}</div>
                              <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Objects Detected</div>
                           </div>
                           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                             <div className="text-[20px] font-black text-gray-950">{results.length > 0 ? (Math.max(...results.map(r => Number(r?.confidence || 0))) * 100).toFixed(1) : "0"}%</div>
+                             <div className="text-[20px] font-black text-gray-950">{peakConfidencePct}%</div>
                              <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Peak Confidence</div>
+                             <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 mt-2">Avg Confidence (Accuracy) {avgConfidencePct}%</div>
                              <div className="text-[10px] font-bold uppercase tracking-widest text-violet-500 mt-2">Server Threshold {(Number(inferenceMeta.threshold || threshold) * 100).toFixed(0)}%</div>
-                             <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mt-2">Raw {debugCounts.raw} | Mapped {debugCounts.mapped} | Suppressed {suppressedCount}</div>
+                             <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mt-2">Raw {debugCounts.raw} | Mapped {debugCounts.mapped}</div>
+                             {Number(inferenceMeta.time || 0) > 0 && (
+                               <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mt-2">Inference Time {(Number(inferenceMeta.time) * 1000).toFixed(0)} ms</div>
+                             )}
+                             {thresholdedResults.length === 0 && Number(inferenceMeta.raw_prediction_count || 0) > 0 && (
+                               <div className="text-[10px] font-bold uppercase tracking-widest text-amber-600 mt-2">
+                                 No boxes above current threshold. Try {(Number(inferenceMeta.suggested_threshold || 0.01) * 100).toFixed(1)}%
+                               </div>
+                             )}
                           </div>
                        </div>
                     ) : (
