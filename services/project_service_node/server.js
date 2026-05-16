@@ -339,6 +339,79 @@ app.post("/api/deployments", async (req, res) => {
   }
 });
 
+app.get("/api/deployments/snippets", async (req, res) => {
+  try {
+    const projectId = String(req.query?.project_id || "").trim();
+    const modelRef = String(req.query?.model_id || "").trim();
+    const deploymentKey = String(req.query?.deployment_key || "hosted_api").trim();
+    const language = String(req.query?.language || "python").trim().toLowerCase();
+
+    if (!projectId || !modelRef) {
+      return res.status(400).json({ error: "project_id and model_id are required" });
+    }
+
+    const modelQuery = ObjectId.isValid(modelRef)
+      ? { project_id: projectId, $or: [{ _id: new ObjectId(modelRef) }, { model_id: modelRef }] }
+      : { project_id: projectId, model_id: modelRef };
+    const model = await db.collection("models").findOne(modelQuery);
+    if (!model) {
+      return res.status(404).json({ error: "Model not found for project" });
+    }
+
+    const deployment = await db.collection("deployments").findOne({
+      project_id: projectId,
+      model_id: String(model.model_id || model._id),
+      deployment_key: deploymentKey,
+    });
+
+    const templateGroup = resolveSnippetTemplateGroup(deploymentKey);
+    const groupTemplates = SNIPPET_TEMPLATES[templateGroup] || SNIPPET_TEMPLATES.hosted_api;
+    const chosenLanguage = groupTemplates[language] ? language : "python";
+    const endpointBase = DEPLOYMENT_ENDPOINTS[deploymentKey] || DEPLOYMENT_ENDPOINTS.hosted_api;
+    const rawModelId = String(model.model_id || model._id);
+    const logicalModelId = `${String(model.project_slug || projectId)}/${String(model.version_display_id || model.version_id || "1")}`;
+    const values = {
+      api_url: deployment?.endpoint_url || endpointBase,
+      endpoint_base: endpointBase,
+      api_key: deployment?.api_key || "vf_your_api_key_here",
+      image: "YOUR_IMAGE.jpg",
+      project_id: projectId,
+      raw_model_id: rawModelId,
+      model_id: logicalModelId,
+      deployment_id: String(deployment?.deployment_id || ""),
+      deployment_key: deploymentKey,
+      architecture: String(model.architecture || ""),
+      runtime: String(model.runtime_model || model.architecture_label || "VisionFlow Runtime"),
+      version_id: String(model.version_id || ""),
+      version_display_id: String(model.version_display_id || model.version_canonical_id || "v1"),
+    };
+
+    const template = groupTemplates[chosenLanguage];
+    const code = renderSnippetTemplate(template, values);
+
+    return res.json({
+      success: true,
+      language: chosenLanguage,
+      deployment_key: deploymentKey,
+      template_group: templateGroup,
+      endpoint: values.api_url,
+      model: {
+        id: rawModelId,
+        logical_id: logicalModelId,
+        name: String(model.name || "Model"),
+        version_id: values.version_id,
+        version_display_id: values.version_display_id,
+        architecture: values.architecture,
+      },
+      code,
+      available_languages: Object.keys(groupTemplates),
+    });
+  } catch (error) {
+    logger.error("Failed to generate deployment snippet", error);
+    return res.status(500).json({ error: "Failed to generate deployment snippet" });
+  }
+});
+
 app.post("/api/deployments/:deploymentId/activate", async (req, res) => {
   try {
     const deployment = await findDeployment(req.params.deploymentId);
@@ -1824,6 +1897,111 @@ function buildDeploymentSdk(endpointUrl) {
     `response = requests.post("${endpointUrl}", files={"file": open("image.jpg", "rb")})`,
     "print(response.json())",
   ].join("\n");
+}
+
+const DEPLOYMENT_ENDPOINTS = {
+  hosted_api: "https://infer.visionflow.io",
+  dedicated_runtime: "https://dedicated.visionflow.io",
+  batch_processing: "https://batch.visionflow.io",
+  local_edge: "http://localhost:9001",
+};
+
+const SNIPPET_TEMPLATES = {
+  hosted_api: {
+    python: [
+      "from pathlib import Path",
+      "import requests",
+      "",
+      'api_url = "{api_url}"',
+      'model_id = "{model_id}"',
+      'api_key = "{api_key}"',
+      'image_path = Path("{image}")',
+      "",
+      "with image_path.open('rb') as f:",
+      "    response = requests.post(",
+      "        f\"{api_url}/api/projects/{project_id}/models/{raw_model_id}/infer?conf=0.25\",",
+      "        headers={\"Authorization\": f\"Bearer {api_key}\"},",
+      "        files={\"file\": f},",
+      "        timeout=60,",
+      "    )",
+      "",
+      "response.raise_for_status()",
+      "print(response.json())",
+    ].join("\n"),
+    curl: [
+      "curl -X POST \\",
+      "  -H \"Authorization: Bearer {api_key}\" \\",
+      "  -F \"file=@{image}\" \\",
+      "  \"{api_url}/api/projects/{project_id}/models/{raw_model_id}/infer?conf=0.25\"",
+    ].join("\n"),
+    javascript: [
+      "const formData = new FormData();",
+      "formData.append(\"file\", fileInput.files[0]);",
+      "",
+      "const response = await fetch(",
+      "  \"{api_url}/api/projects/{project_id}/models/{raw_model_id}/infer?conf=0.25\",",
+      "  {",
+      "    method: \"POST\",",
+      "    headers: { Authorization: \"Bearer {api_key}\" },",
+      "    body: formData,",
+      "  }",
+      ");",
+      "",
+      "const result = await response.json();",
+      "console.log(result);",
+    ].join("\n"),
+    java: [
+      "import java.io.File;",
+      "import okhttp3.*;",
+      "",
+      "OkHttpClient client = new OkHttpClient();",
+      "RequestBody body = new MultipartBody.Builder()",
+      "  .setType(MultipartBody.FORM)",
+      "  .addFormDataPart(\"file\", \"{image}\",",
+      "    RequestBody.create(new File(\"{image}\"), MediaType.parse(\"image/jpeg\")))",
+      "  .build();",
+      "",
+      "Request request = new Request.Builder()",
+      "  .url(\"{api_url}/api/projects/{project_id}/models/{raw_model_id}/infer?conf=0.25\")",
+      "  .header(\"Authorization\", \"Bearer {api_key}\")",
+      "  .post(body)",
+      "  .build();",
+      "",
+      "try (Response response = client.newCall(request).execute()) {",
+      "  System.out.println(response.body().string());",
+      "}",
+    ].join("\n"),
+  },
+  dedicated_runtime: {
+    python: "from inference_sdk import InferenceHTTPClient\n\nCLIENT = InferenceHTTPClient(api_url=\"{api_url}\", api_key=\"{api_key}\")\nresult = CLIENT.infer(\"{image}\", model_id=\"{model_id}\")\nprint(result)",
+    curl: "curl -X POST -H \"Authorization: Bearer {api_key}\" -F \"file=@{image}\" \"{api_url}/v1/models/{model_id}/infer\"",
+    javascript: "const fd = new FormData(); fd.append(\"file\", fileInput.files[0]);\nconst res = await fetch(\"{api_url}/v1/models/{model_id}/infer\", { method: \"POST\", headers: { Authorization: \"Bearer {api_key}\" }, body: fd });\nconsole.log(await res.json());",
+    java: "OkHttpClient client = new OkHttpClient();\n// POST {api_url}/v1/models/{model_id}/infer with Bearer {api_key}",
+  },
+  batch_processing: {
+    python: "import requests\npayload = {\"model_id\": \"{model_id}\", \"source\": \"s3://bucket/images/\"}\nr = requests.post(\"{api_url}/v1/batch/jobs\", json=payload, headers={\"Authorization\": \"Bearer {api_key}\"})\nprint(r.json())",
+    curl: "curl -X POST \"{api_url}/v1/batch/jobs\" -H \"Authorization: Bearer {api_key}\" -H \"Content-Type: application/json\" -d '{\"model_id\":\"{model_id}\",\"source\":\"s3://bucket/images/\"}'",
+    javascript: "const res = await fetch(\"{api_url}/v1/batch/jobs\", { method: \"POST\", headers: { \"Content-Type\": \"application/json\", Authorization: \"Bearer {api_key}\" }, body: JSON.stringify({ model_id: \"{model_id}\", source: \"s3://bucket/images/\" })});\nconsole.log(await res.json());",
+    java: "OkHttpClient client = new OkHttpClient();\n// POST JSON batch job to {api_url}/v1/batch/jobs",
+  },
+  local_edge: {
+    python: "import requests\nr = requests.post(\"{api_url}/infer/{model_id}\", files={\"file\": open(\"{image}\", \"rb\")})\nprint(r.json())",
+    curl: "curl -X POST -F \"file=@{image}\" \"{api_url}/infer/{model_id}\"",
+    javascript: "const fd = new FormData(); fd.append(\"file\", fileInput.files[0]);\nconst res = await fetch(\"{api_url}/infer/{model_id}\", { method: \"POST\", body: fd });\nconsole.log(await res.json());",
+    java: "OkHttpClient client = new OkHttpClient();\n// POST local edge inference to {api_url}/infer/{model_id}",
+  },
+};
+
+function resolveSnippetTemplateGroup(deploymentKey) {
+  const key = String(deploymentKey || "hosted_api").trim();
+  return SNIPPET_TEMPLATES[key] ? key : "hosted_api";
+}
+
+function renderSnippetTemplate(template, values) {
+  return String(template || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, token) => {
+    const value = values[token];
+    return value === undefined || value === null ? "" : String(value);
+  });
 }
 
 async function collectProjectClassCounts(projectId) {

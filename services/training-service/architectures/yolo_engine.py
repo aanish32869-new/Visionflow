@@ -39,14 +39,22 @@ def train_yolo(job_id, project_id, version_id, architecture, arch_info, params, 
     def on_train_epoch_end(trainer):
         current_epoch = trainer.epoch + 1
         progress = 10 + int((current_epoch / epochs) * 85)
+        box_loss = float(trainer.loss_items[0]) if hasattr(trainer, "loss_items") else 0
+        cls_loss = float(trainer.loss_items[1]) if hasattr(trainer, "loss_items") and len(trainer.loss_items) > 1 else 0
+        previous_logs = []
+        if isinstance(getattr(trainer, "visionflow_logs", None), list):
+            previous_logs = list(trainer.visionflow_logs)
+        previous_logs.append(f"[EPOCH {current_epoch}/{epochs}] box_loss={box_loss:.4f} cls_loss={cls_loss:.4f}")
+        trainer.visionflow_logs = previous_logs[-200:]
         update_func(
             {
                 "progress": min(95, progress),
                 "current_epoch": current_epoch,
                 "metrics": {
-                    "box_loss": float(trainer.loss_items[0]) if hasattr(trainer, "loss_items") else 0,
-                    "cls_loss": float(trainer.loss_items[1]) if hasattr(trainer, "loss_items") and len(trainer.loss_items) > 1 else 0,
+                    "box_loss": box_loss,
+                    "cls_loss": cls_loss,
                 },
+                "terminal_logs": trainer.visionflow_logs,
             }
         )
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2 } from "lucide-react";
+import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2, Download } from "lucide-react";
 
 const ARCHITECTURES = [
   {
@@ -81,6 +81,8 @@ export default function TrainTab({ projectId, onOpenModels }) {
   const [batchSize, setBatchSize] = useState("16");
   const [imageSize, setImageSize] = useState("224");
   const [workers, setWorkers] = useState("4");
+  const [jobDetails, setJobDetails] = useState({});
+  const [activeLogJob, setActiveLogJob] = useState(null);
 
   const currentArch = useMemo(() => ARCHITECTURES.find((a) => a.id === architecture) || ARCHITECTURES[0], [architecture]);
 
@@ -191,6 +193,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Failed to start training");
       setMessage({ type: "success", text: `Training started. Job: ${data.job_id?.slice(0, 8) || "created"}` });
+      if (data?.job_id) setActiveLogJob(data.job_id);
       const refreshJobs = async () => {
         const jRes = await fetch(`/api/projects/${projectId}/jobs`);
         if (jRes.ok) setJobs(await safeJson(jRes));
@@ -370,6 +373,28 @@ export default function TrainTab({ projectId, onOpenModels }) {
         </div>
       </section>
 
+      <section className="bg-white border border-gray-200 rounded-2xl p-5">
+        <h3 className="text-lg font-black text-gray-900 mb-3">Custom Code Training</h3>
+        <p className="text-xs font-semibold text-gray-500 mb-3">
+          For mentor review: this is the direct local training command path used by VisionFlow training service.
+        </p>
+        <pre className="text-xs bg-gray-900 text-gray-100 p-3 rounded-xl overflow-x-auto">{`# Training service endpoint
+POST /api/projects/${projectId}/train
+
+# Example payload
+{
+  "version_id": "${versionId || "VERSION_ID"}",
+  "architecture": "${architecture}",
+  "model_size": "${modelSize}",
+  "params": {
+    "epochs": ${Number(epochs) || 0},
+    "batch_size": ${Number(batchSize) || 0},
+    "img_size": ${Number(imageSize) || 0},
+    "workers": ${Number(workers) || 0},
+    "device": "${device}"
+  }
+}`}</pre>
+      </section>
       <div className="bg-white border border-gray-200 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-black text-gray-900">Recent Training Jobs</h3>
@@ -396,6 +421,36 @@ export default function TrainTab({ projectId, onOpenModels }) {
                     {j.status} {j.status === "Completed" && <CheckCircle2 size={14} className="inline ml-1 text-emerald-500" />}
                   </div>
                 </div>
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="text-[11px] font-black text-violet-700 hover:text-violet-900"
+                    onClick={async () => {
+                      const jobId = j.job_id;
+                      setActiveLogJob((prev) => (prev === jobId ? null : jobId));
+                      if (jobDetails[jobId]) return;
+                      try {
+                        const res = await fetch(`/api/projects/${projectId}/jobs/${jobId}`);
+                        if (!res.ok) return;
+                        const detail = await safeJson(res);
+                        setJobDetails((prev) => ({ ...prev, [jobId]: detail }));
+                      } catch {
+                        // no-op
+                      }
+                    }}
+                  >
+                    {activeLogJob === j.job_id ? "Hide Logs" : "Show Logs"}
+                  </button>
+                  {j.status === "Completed" && (
+                    <button
+                      type="button"
+                      className="text-[11px] font-black text-emerald-700 hover:text-emerald-900 inline-flex items-center gap-1"
+                      onClick={() => window.open(`/api/projects/${projectId}/jobs/${j.job_id}/download-run`, "_blank")}
+                    >
+                      <Download size={12} /> Download Full Run Folder
+                    </button>
+                  )}
+                </div>
 
                 {isActiveJob(j.status) && (
                   <div className="mt-3">
@@ -410,6 +465,24 @@ export default function TrainTab({ projectId, onOpenModels }) {
                     </div>
                     <div className="mt-1 text-[11px] font-bold text-gray-500">
                       Processing state: {normalizeProgress(j)}% (1-100) • {j.eta_line || `ETA: ${j.estimated_time_remaining || "calculating..."}`}
+                    </div>
+                  </div>
+                )}
+                {activeLogJob === j.job_id && (
+                  <div className="mt-3 rounded-xl border border-gray-200 bg-gray-950 text-gray-100 p-3">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-violet-300 mb-2">Training Terminal Logs</div>
+                    <pre className="text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap">{((jobDetails[j.job_id]?.terminal_logs || j.terminal_logs || ["[INFO] Waiting for log output..."]).slice(-40)).join("\n")}</pre>
+                  </div>
+                )}
+                {j.status === "Completed" && (
+                  <div className="mt-3">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">Training Graphs</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {["results.png", "confusion_matrix.png", "PR_curve.png", "F1_curve.png"].map((graph) => (
+                        <a key={graph} href={`/api/projects/${projectId}/jobs/${j.job_id}/graphs/${graph}`} target="_blank" rel="noreferrer" className="rounded-lg border border-gray-200 bg-gray-50 p-2 text-[10px] font-bold text-gray-700 hover:border-violet-300 hover:text-violet-700">
+                          {graph}
+                        </a>
+                      ))}
                     </div>
                   </div>
                 )}

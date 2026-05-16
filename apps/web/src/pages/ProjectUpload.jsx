@@ -79,6 +79,7 @@ export default function ProjectUpload() {
   const [isBatchActionLoading, setIsBatchActionLoading] = useState(false);
   const [downloadDialog, setDownloadDialog] = useState({ open: false, batch: null, source: "unassigned" });
   const [downloadFormat, setDownloadFormat] = useState("yolo");
+  const [uiScale, setUiScale] = useState(1);
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
@@ -151,6 +152,21 @@ export default function ProjectUpload() {
       setAnnotateView(location.state.annotateView);
     }
   }, [location.state]);
+
+  useEffect(() => {
+    const updateUiScale = () => {
+      const designWidth = 1920;
+      const designHeight = 1080;
+      const widthScale = window.innerWidth / designWidth;
+      const heightScale = window.innerHeight / designHeight;
+      const nextScale = Math.min(1, Math.max(0.67, Math.min(widthScale, heightScale)));
+      setUiScale(nextScale);
+    };
+
+    updateUiScale();
+    window.addEventListener("resize", updateUiScale);
+    return () => window.removeEventListener("resize", updateUiScale);
+  }, []);
 
   useEffect(() => {
     if (detectedObject && detectedObject !== "related objects") {
@@ -903,7 +919,15 @@ export default function ProjectUpload() {
   const hasAssets = assets.length > 0;
 
   return (
-    <div className="h-screen overflow-y-auto bg-white flex font-sans animate-page-enter">
+    <div
+      className="h-screen overflow-y-auto bg-white flex font-sans animate-page-enter"
+      style={{
+        zoom: uiScale,
+        transformOrigin: "top left",
+        width: "100%",
+        minHeight: `${100 / uiScale}vh`,
+      }}
+    >
       
       {/* 1. Thin Dark Edge Sidebar */}
       <div className="w-[60px] bg-[#1a1423] flex flex-col items-center py-4 justify-between shrink-0 h-screen sticky top-0">

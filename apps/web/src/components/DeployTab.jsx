@@ -12,12 +12,65 @@ export default function DeployTab({ projectId }) {
   const [isInferencing, setIsInferencing] = useState(false);
   const [infereceTime, setInferenceTime] = useState(null);
   const [activeCodeTab, setActiveCodeTab] = useState('python');
+  const [deploymentKey, setDeploymentKey] = useState("hosted_api");
+  const [codeSnippet, setCodeSnippet] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [isClassificationResult, setIsClassificationResult] = useState(false);
   const [threshold, setThreshold] = useState(0.5);
   const [inferenceError, setInferenceError] = useState("");
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [inferenceMeta, setInferenceMeta] = useState({ threshold: 0.5, peak_confidence: 0, raw_prediction_count: 0, suggested_threshold: 0.5 });
+  const inferEndpoint = `https://infer.visionflow.io/api/projects/${projectId}/models/${selectedModel || "MODEL_ID"}/infer?conf=0.25`;
+  const fallbackSnippet = (language) => {
+    if (language === "curl") {
+      return `curl -X POST \\
+  -H "Authorization: Bearer vf_your_api_key_here" \\
+  -F "file=@YOUR_IMAGE.jpg" \\
+  "${inferEndpoint}"`;
+    }
+    if (language === "javascript") {
+      return `const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+
+const response = await fetch("${inferEndpoint}", {
+  method: "POST",
+  headers: { Authorization: "Bearer vf_your_api_key_here" },
+  body: formData
+});
+
+console.log(await response.json());`;
+    }
+    if (language === "java") {
+      return `import java.io.File;
+import okhttp3.*;
+
+OkHttpClient client = new OkHttpClient();
+RequestBody body = new MultipartBody.Builder()
+  .setType(MultipartBody.FORM)
+  .addFormDataPart("file", "YOUR_IMAGE.jpg",
+    RequestBody.create(new File("YOUR_IMAGE.jpg"), MediaType.parse("image/jpeg")))
+  .build();
+
+Request request = new Request.Builder()
+  .url("${inferEndpoint}")
+  .header("Authorization", "Bearer vf_your_api_key_here")
+  .post(body)
+  .build();
+
+try (Response response = client.newCall(request).execute()) {
+  System.out.println(response.body().string());
+}`;
+    }
+    return `import requests
+
+url = "${inferEndpoint}"
+headers = {"Authorization": "Bearer vf_your_api_key_here"}
+files = {"file": open("YOUR_IMAGE.jpg", "rb")}
+
+response = requests.post(url, headers=headers, files=files, timeout=60)
+response.raise_for_status()
+print(response.json())`;
+  };
   const clamp01 = (value) => Math.min(1, Math.max(0, value));
   const isFiniteNumber = (value) => Number.isFinite(Number(value));
   const toNumber = (value, fallback = 0) => {
@@ -215,32 +268,7 @@ export default function DeployTab({ projectId }) {
     });
   };
 
-  const currentCodeSnippet = activeCodeTab === 'python' ? `import requests
-
-url = "https://infer.visionflow.io/${projectId}/1"
-files = {"file": open("image.jpg", "rb")}
-
-response = requests.post(url, files=files)
-print(response.json())` :
-`import okhttp3.*;
-
-OkHttpClient client = new OkHttpClient();
-RequestBody body = new MultipartBody.Builder()
-  .setType(MultipartBody.FORM)
-  .addFormDataPart("file", "image.jpg",
-    RequestBody.create(
-      MediaType.parse("image/jpeg"), 
-      new File("image.jpg")
-    ))
-  .build();
-
-Request request = new Request.Builder()
-  .url("https://infer.visionflow.io/${projectId}/1")
-  .post(body)
-  .build();
-
-Response response = client.newCall(request).execute();
-System.out.println(response.body().string());`;
+  const currentCodeSnippet = codeSnippet || "Loading deployment snippet...";
 
   const thresholdedPredictions = Array.isArray(predictions)
     ? predictions.filter((p) => String(p?.type || "").toLowerCase() !== "classification")
@@ -275,6 +303,30 @@ System.out.println(response.body().string());`;
     if (!_imageFile || !selectedModel) return;
     runInference(_imageFile, selectedModel);
   }, [threshold, selectedModel]);
+
+  useEffect(() => {
+    let isActive = true;
+    const loadSnippet = async () => {
+      if (!selectedModel) {
+        if (isActive) setCodeSnippet("");
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/deployments/snippets?project_id=${encodeURIComponent(projectId)}&model_id=${encodeURIComponent(selectedModel)}&language=${encodeURIComponent(activeCodeTab)}&deployment_key=${encodeURIComponent(deploymentKey)}`
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || "Failed to load snippet");
+        if (isActive) setCodeSnippet(data.code || fallbackSnippet(activeCodeTab));
+      } catch (error) {
+        if (isActive) setCodeSnippet(fallbackSnippet(activeCodeTab));
+      }
+    };
+    loadSnippet();
+    return () => {
+      isActive = false;
+    };
+  }, [projectId, selectedModel, activeCodeTab, deploymentKey]);
 
   return (
     <div className="flex flex-col gap-6 w-full animate-page-enter max-w-[1200px] mx-auto min-h-[70vh]">
@@ -428,8 +480,20 @@ System.out.println(response.body().string());`;
                </label>
                 <div className="flex bg-gray-50 rounded border border-gray-200 overflow-hidden mb-6">
                  <span className="text-gray-500 text-xs py-2 px-3 border-r border-gray-200 font-mono self-center">POST</span>
-                 <input type="text" readOnly value={`https://infer.visionflow.io/${projectId}/1`} className="w-full bg-transparent text-gray-800 text-xs font-mono outline-none px-3" />
+                 <input type="text" readOnly value={currentModel?.endpoint_url || `https://infer.visionflow.io/api/projects/${projectId}/models/${selectedModel || "MODEL_ID"}/infer`} className="w-full bg-transparent text-gray-800 text-xs font-mono outline-none px-3" />
                </div>
+
+               <label className="text-[11px] font-bold tracking-widest uppercase text-gray-400 mb-2 block">Deployment Target</label>
+               <select
+                 className="w-full border py-2 px-3 border-gray-300 rounded-md outline-none focus:border-violet-500 font-medium text-gray-800 text-sm mb-4"
+                 value={deploymentKey}
+                 onChange={(e) => setDeploymentKey(e.target.value)}
+               >
+                 <option value="hosted_api">Hosted API</option>
+                 <option value="dedicated_runtime">Dedicated Runtime</option>
+                 <option value="batch_processing">Batch Processing</option>
+                 <option value="local_edge">Local Edge</option>
+               </select>
 
                <p className="text-[11px] text-gray-500 mt-2 border-b border-gray-100 pb-4 mb-4">
                  You can immediately deploy this model natively using the VisionFlow mobile SDKs or Docker containers.
@@ -439,13 +503,25 @@ System.out.println(response.body().string());`;
                <label className="text-[11px] font-bold tracking-widest uppercase text-gray-400 mb-3 block">Implementation Code</label>
                
                <div className="flex bg-[#1e1e1e] rounded-t-lg border-x border-t border-[#333] pt-2 px-2">
-                  <div 
+                  <div
                      className={`px-3 py-1.5 text-xs font-bold cursor-pointer rounded-t-md transition ${activeCodeTab === 'python' ? 'bg-[#333] text-white' : 'text-gray-400 hover:text-gray-200'}`}
                      onClick={() => setActiveCodeTab('python')}
                   >
                      Python (Requests)
                   </div>
-                  <div 
+                  <div
+                     className={`px-3 py-1.5 text-xs font-bold cursor-pointer rounded-t-md transition ${activeCodeTab === 'curl' ? 'bg-[#333] text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                     onClick={() => setActiveCodeTab('curl')}
+                  >
+                     cURL
+                  </div>
+                  <div
+                     className={`px-3 py-1.5 text-xs font-bold cursor-pointer rounded-t-md transition ${activeCodeTab === 'javascript' ? 'bg-[#333] text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                     onClick={() => setActiveCodeTab('javascript')}
+                  >
+                     JavaScript
+                  </div>
+                  <div
                      className={`px-3 py-1.5 text-xs font-bold cursor-pointer rounded-t-md transition ${activeCodeTab === 'java' ? 'bg-[#333] text-white' : 'text-gray-400 hover:text-gray-200'}`}
                      onClick={() => setActiveCodeTab('java')}
                   >

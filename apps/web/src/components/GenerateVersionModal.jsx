@@ -45,6 +45,7 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
       grayscale: false,
     },
     augmentations: [],
+    image_improvement: false,
     max_version_size: 1, // Multiplier
     split: { train: 70, valid: 20, test: 10 },
     rebalance: true
@@ -376,6 +377,28 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
                 ))}
               </div>
 
+              {config.augmentations.length > 0 && (
+                <div className="p-5 bg-emerald-50 border border-emerald-100 rounded-3xl">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${config.image_improvement ? "bg-emerald-600 text-white" : "bg-white text-emerald-500 border border-emerald-200"}`}>
+                        <ImageIcon size={18} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-gray-900">Image Improvement</p>
+                        <p className="text-xs font-bold text-gray-500">Enhance quality after augmentation pipeline changes.</p>
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => setConfig({ ...config, image_improvement: !config.image_improvement })}
+                      className={`w-12 h-6 rounded-full relative transition-colors cursor-pointer ${config.image_improvement ? "bg-emerald-600" : "bg-gray-300"}`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${config.image_improvement ? "left-7" : "left-1"}`} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {previews.length > 0 && (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
                   <div className="flex items-center justify-between px-1">
@@ -438,6 +461,7 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
                   <SummaryItem label="Version Name" value={config.name || "Untitled Version"} />
                   <SummaryItem label="Preprocessing" value={`${config.preprocessing.resize.enabled ? 'Resize ' + config.preprocessing.resize.width + 'x' + config.preprocessing.resize.height : 'Original Size'}`} />
                   <SummaryItem label="Augmentations" value={`${config.augmentations.length} Active (x${config.max_version_size} total images)`} />
+                  <SummaryItem label="Image Improvement" value={config.augmentations.length > 0 ? (config.image_improvement ? "Enabled" : "Disabled") : "Available after augmentation changes"} />
                 </div>
               </div>
             </div>

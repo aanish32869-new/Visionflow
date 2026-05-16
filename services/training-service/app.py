@@ -6,8 +6,10 @@ Config is read from visionflow.conf at startup and on each request.
 import configparser
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -916,6 +918,7 @@ def _dispatch_training(project_id, data):
         "job_id": job_id, "project_id": project_id, "version_id": version_id,
         "architecture": architecture, "architecture_label": arch_info["label"],
         "mode": "local", "device": device,
+        "output_dir": str(output_dir),
         "params": {
             "epochs": epochs,
             "batch_size": batch_size,
@@ -925,6 +928,7 @@ def _dispatch_training(project_id, data):
             "export": export_cfg,
         },
         "status": "Preparing", "progress": 0, "created_at": _utc_now(), "updated_at": _utc_now(),
+        "terminal_logs": ["[INFO] Training job queued."],
     }
 
     db = _get_db()
@@ -960,7 +964,17 @@ def _run_training(job_id, project_id, version_id, architecture, arch_info, param
         db.training_jobs.update_one({"job_id": job_id}, {"$set": {**enriched, "updated_at": _utc_now()}})
         job_doc = {**job_doc, **enriched}
 
+    def _append_log(line):
+        text = str(line or "").strip()
+        if not text:
+            return
+        logs = list(job_doc.get("terminal_logs") or [])
+        logs.append(text)
+        logs = logs[-200:]
+        _update({"terminal_logs": logs})
+
     try:
+        _append_log(f"[INFO] Starting training for {architecture} on requested device={params.get('device')}.")
         hw = _ensure_hardware_status_ready()
         selected_device = str(params.get("device") or "cpu").lower()
         if selected_device == "gpu":
@@ -971,25 +985,32 @@ def _run_training(job_id, project_id, version_id, architecture, arch_info, param
             device_arg = "mps" if hw.get("mps_available") else "cpu"
         else:
             device_arg = "cpu"
+        _append_log(f"[INFO] Resolved runtime device: {device_arg}")
         
         if arch_info.get("family") == "dinov3":
+            _append_log("[INFO] Launching DINOv3 training engine.")
             train_dinov3(
                 job_id, project_id, version_id, architecture, arch_info, params, conf,
                 _update, output_dir, device_arg, _register_model
             )
         elif arch_info.get("family") == "resnet":
+            _append_log("[INFO] Launching ResNet training engine.")
             train_resnet(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg, ROOT_DIR, _get_db, _format_duration, _register_model)
         elif arch_info.get("task") == "classify":
+            _append_log("[INFO] Launching Classification training engine.")
             train_pytorch(job_id, project_id, version_id, architecture, arch_info, params, conf, _update, output_dir, device_arg, ROOT_DIR, _get_db, _format_duration, _register_model)
         elif arch_info.get("family") == "yolov8":
+            _append_log("[INFO] Launching YOLOv8 training engine.")
             train_yolo(
                 job_id, project_id, version_id, architecture, arch_info, params, conf,
                 _update, output_dir, device_arg, ROOT_DIR, _register_model
             )
         else:
             raise RuntimeError(f"Unsupported architecture family: {arch_info.get('family')}")
+        _append_log("[INFO] Training finished.")
 
     except Exception as e:
+        _append_log(f"[ERROR] {e}")
         _update({"status": "Failed", "error": str(e)})
 
 def _register_model(job_id, project_id, version_id, architecture, arch_info, metrics, weights_path, output_dir, runtime_artifacts=None):
@@ -1013,6 +1034,49 @@ def get_job(project_id, job_id):
     db = _get_db()
     job = db.training_jobs.find_one({"job_id": job_id, "project_id": project_id})
     return jsonify(_serialize(job)) if job else (jsonify({"error": "Job not found"}), 404)
+
+@app.route("/api/projects/<project_id>/jobs/<job_id>/download-run", methods=["GET"])
+def download_training_run(project_id, job_id):
+    db = _get_db()
+    job = db.training_jobs.find_one({"job_id": job_id, "project_id": project_id})
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    output_dir = str(job.get("output_dir") or "").strip()
+    if not output_dir:
+        output_dir = str((ROOT_DIR / "storage" / "training" / job_id).resolve())
+    run_dir = Path(output_dir)
+    if not run_dir.exists() or not run_dir.is_dir():
+        return jsonify({"error": "Training run folder not found"}), 404
+
+    tmp_root = tempfile.mkdtemp(prefix=f"vf_run_{job_id[:8]}_")
+    archive_base = Path(tmp_root) / f"visionflow_train_run_{job_id[:8]}"
+    archive_file = shutil.make_archive(str(archive_base), "zip", root_dir=str(run_dir))
+    return send_file(archive_file, as_attachment=True, download_name=f"visionflow_train_run_{job_id[:8]}.zip")
+
+@app.route("/api/projects/<project_id>/jobs/<job_id>/graphs/<graph_name>", methods=["GET"])
+def get_training_graph(project_id, job_id, graph_name):
+    db = _get_db()
+    job = db.training_jobs.find_one({"job_id": job_id, "project_id": project_id})
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    output_dir = str(job.get("output_dir") or "").strip()
+    if not output_dir:
+        output_dir = str((ROOT_DIR / "storage" / "training" / job_id).resolve())
+    run_dir = Path(output_dir)
+    safe_name = Path(str(graph_name)).name
+    if safe_name != graph_name:
+        return jsonify({"error": "Invalid graph name"}), 400
+
+    candidates = [
+        run_dir / "yolo_run" / safe_name,
+        run_dir / safe_name,
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return send_file(str(candidate))
+    return jsonify({"error": "Graph not found"}), 404
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT_TRAINING_SERVICE", 5005))
