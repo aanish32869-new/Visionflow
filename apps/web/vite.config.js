@@ -88,7 +88,7 @@ export default defineConfig({
       
       // Project Service (Node)
       '^/api/annotation-groups(?:$|[/?])': createProxy(projectTarget),
-      '^/api/(projects|assets|folders|workspace-overview|jobs|batches|deployments|workflows)(?:$|[/?])': createProxy(projectTarget),
+      '^/api/(projects|assets|folders|workspace-overview|jobs|batches|deployments|workflows|system-metrics)(?:$|[/?])': createProxy(projectTarget),
       '/uploads': createProxy(projectTarget),
       '/datasets': createProxy(datasetTarget),
     },

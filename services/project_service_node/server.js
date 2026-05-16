@@ -3,6 +3,8 @@ fs.mkdirSync("logs", { recursive: true });
 fs.writeFileSync("logs/project_service_heartbeat.txt", "Project service started at " + new Date().toISOString());
 const path = require("path");
 const crypto = require("crypto");
+const os = require("os");
+const { execFile } = require("child_process");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -186,6 +188,169 @@ app.use("/uploads", express.static(config.legacyUploadRoot));
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "project-service-node", version: "1.0.0" });
 });
+
+const METRIC_SAMPLE_MS = 500;
+const metricsClients = new Set();
+let metricsCollectorBusy = false;
+let latestSystemMetrics = {
+  timestamp: new Date().toISOString(),
+  cpu: { percent: null },
+  ram: { percent: null },
+  disk: { percent: null },
+  gpu: { percent: null, status: "Detecting" },
+};
+let prevCpuSnapshot = snapshotCpuTimes();
+
+app.get("/api/system-metrics", (_req, res) => {
+  res.json(latestSystemMetrics);
+});
+
+app.get("/api/system-metrics/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  res.write(`data: ${JSON.stringify(latestSystemMetrics)}\n\n`);
+  metricsClients.add(res);
+
+  req.on("close", () => {
+    metricsClients.delete(res);
+  });
+});
+
+function snapshotCpuTimes() {
+  const cpuStats = os.cpus() || [];
+  let idle = 0;
+  let total = 0;
+  for (const cpu of cpuStats) {
+    const times = cpu.times || {};
+    idle += times.idle || 0;
+    total += (times.user || 0) + (times.nice || 0) + (times.sys || 0) + (times.idle || 0) + (times.irq || 0);
+  }
+  return { idle, total };
+}
+
+function computeCpuPercent() {
+  const current = snapshotCpuTimes();
+  const totalDelta = current.total - prevCpuSnapshot.total;
+  const idleDelta = current.idle - prevCpuSnapshot.idle;
+  prevCpuSnapshot = current;
+  if (totalDelta <= 0) {
+    return null;
+  }
+  const usage = 100 * (1 - idleDelta / totalDelta);
+  return Number(Math.max(0, Math.min(100, usage)).toFixed(2));
+}
+
+function execFileAsync(command, args, timeout = 900) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout }, (err, stdout) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(String(stdout || "").trim());
+    });
+  });
+}
+
+async function detectGpuPercent() {
+  // NVIDIA
+  try {
+    const out = await execFileAsync(
+      "nvidia-smi",
+      ["--query-gpu=utilization.gpu,utilization.memory", "--format=csv,noheader,nounits"]
+    );
+    const first = out.split(/\r?\n/)[0] || "";
+    const [gpuCoreRaw, gpuMemRaw] = first.split(",").map((s) => Number.parseFloat(String(s).trim()));
+    const gpuCore = Number.isFinite(gpuCoreRaw) ? gpuCoreRaw : null;
+    const gpuMem = Number.isFinite(gpuMemRaw) ? gpuMemRaw : null;
+    if (gpuCore !== null || gpuMem !== null) {
+      // Use max of core/memory utilization to avoid false-flat 0 when one engine is active.
+      const effective = Math.max(gpuCore ?? 0, gpuMem ?? 0);
+      return {
+        percent: Number(effective.toFixed(2)),
+        status: `NVIDIA${gpuCore !== null && gpuMem !== null ? ` (core:${gpuCore.toFixed(1)} mem:${gpuMem.toFixed(1)})` : ""}`,
+      };
+    }
+  } catch (_err) {}
+
+  // AMD ROCm
+  try {
+    const out = await execFileAsync("rocm-smi", ["--showuse"], 1200);
+    const match = out.match(/GPU\[\d+\].*?([0-9]+(?:\.[0-9]+)?)%/i) || out.match(/([0-9]+(?:\.[0-9]+)?)%/);
+    if (match) {
+      const val = Number.parseFloat(match[1]);
+      if (Number.isFinite(val)) {
+        return { percent: Number(val.toFixed(2)), status: "AMD" };
+      }
+    }
+  } catch (_err) {}
+
+  // Intel (Linux)
+  if (process.platform !== "win32") {
+    try {
+      const out = await execFileAsync("intel_gpu_top", ["-J", "-s", "500", "-o", "-"], 1500);
+      const rendered = out.match(/"Render\/3D\/0"[^0-9]*([0-9]+(?:\.[0-9]+)?)/i);
+      const val = rendered ? Number.parseFloat(rendered[1]) : NaN;
+      if (Number.isFinite(val)) {
+        return { percent: Number(val.toFixed(2)), status: "Intel" };
+      }
+    } catch (_err) {}
+  }
+
+  return { percent: null, status: "Not detected" };
+}
+
+function computeRamPercent() {
+  const total = os.totalmem();
+  const free = os.freemem();
+  if (!total || total <= 0) return null;
+  const usedPercent = ((total - free) / total) * 100;
+  return Number(Math.max(0, Math.min(100, usedPercent)).toFixed(2));
+}
+
+function computeDiskPercent() {
+  try {
+    const stat = fs.statfsSync(config.storageRoot);
+    const total = Number(stat.blocks) * Number(stat.bsize);
+    const free = Number(stat.bavail ?? stat.bfree ?? 0) * Number(stat.bsize);
+    if (!Number.isFinite(total) || total <= 0) {
+      return null;
+    }
+    const usedPercent = ((total - free) / total) * 100;
+    return Number(Math.max(0, Math.min(100, usedPercent)).toFixed(2));
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function collectAndBroadcastSystemMetrics() {
+  if (metricsCollectorBusy) return;
+  metricsCollectorBusy = true;
+  try {
+    const cpuPercent = computeCpuPercent();
+    const ramPercent = computeRamPercent();
+    const diskPercent = computeDiskPercent();
+    const gpu = await detectGpuPercent();
+    latestSystemMetrics = {
+      timestamp: new Date().toISOString(),
+      cpu: { percent: cpuPercent },
+      ram: { percent: ramPercent },
+      disk: { percent: diskPercent },
+      gpu,
+    };
+    const payload = `data: ${JSON.stringify(latestSystemMetrics)}\n\n`;
+    for (const client of metricsClients) {
+      client.write(payload);
+    }
+  } catch (error) {
+    logger.warn(`Metrics collector error: ${error?.message || error}`);
+  } finally {
+    metricsCollectorBusy = false;
+  }
+}
 
 app.get("/api/folders", async (_req, res) => {
   try {
@@ -1443,6 +1608,8 @@ async function start() {
     app.listen(config.port, () => {
       logger.info(`VisionFlow project service listening on http://localhost:${config.port}`);
     });
+    collectAndBroadcastSystemMetrics();
+    setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
   } catch (err) {
     logger.error("Failed to start project service", err);
     process.exit(1);

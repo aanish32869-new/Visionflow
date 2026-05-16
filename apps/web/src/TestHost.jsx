@@ -11,6 +11,7 @@ import ProjectUpload from "./pages/ProjectUpload";
 import Uploads from "./pages/Uploads";
 import BatchPreview from "./pages/BatchPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
+import SystemMetricsWidget from "./components/SystemMetricsWidget";
 
 // Define the global router configuration exactly once outside the React tree
 const globalRouter = createBrowserRouter([
@@ -41,6 +42,7 @@ export default function TestHost() {
       
       {/* Use the new Data Router which evaluates routes only 1 time intrinsically */}
       <RouterProvider router={globalRouter} />
+      <SystemMetricsWidget />
     </>
   );
 }

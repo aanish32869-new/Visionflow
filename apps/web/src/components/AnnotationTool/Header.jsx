@@ -10,7 +10,7 @@ export default function Header() {
     isSaving, saveAnnotations, handleAutoLabel,
     assetState, setAssetState, setShowRejectModal,
     setCurrentAssetIndex, showFeedback, updateAsset,
-    setActiveTab, onBatchComplete
+    setActiveTab, onBatchComplete, projectId
   } = useAnnotation();
 
   const { saveAnnotations: apiSave } = useAnnotationAPI();
@@ -137,17 +137,30 @@ export default function Header() {
             <div className="flex gap-2">
                <button 
                   onClick={async () => {
+                     const didSave = await apiSave();
+                     if (!didSave) {
+                        showFeedback("Save failed. Please fix annotations before approving.");
+                        return;
+                     }
+
                      if (currentAsset?.batch_id) {
                         const res = await fetch(`/api/batches/${currentAsset.batch_id}/dataset`, {
                            method: 'POST',
                            headers: { 'Content-Type': 'application/json' },
-                           body: JSON.stringify({ project_id: currentAsset.project_id })
+                           body: JSON.stringify({ project_id: projectId || currentAsset?.project_id })
                         });
                         if (res.ok) {
                            showFeedback("Batch moved to Dataset!", "success");
                            if (typeof onBatchComplete === 'function') onBatchComplete();
                         } else {
-                           showFeedback("Failed to approve batch.");
+                           let message = "Failed to approve batch.";
+                           try {
+                             const data = await res.json();
+                             if (data?.error) message = data.error;
+                           } catch (_err) {
+                             // Ignore parse errors
+                           }
+                           showFeedback(message);
                         }
                      } else {
                         // Fallback for single asset (if no batch_id)
