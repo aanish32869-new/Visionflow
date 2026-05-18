@@ -152,6 +152,8 @@ export default function ModelsTab({ projectId, onTrainModel }) {
   const [checkThreshold, setCheckThreshold] = useState(0.5);
   const [isChecking, setIsChecking] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
+  const [modelToDelete, setModelToDelete] = useState(null);
+  const [isDeletingModel, setIsDeletingModel] = useState(false);
 
   const fetchModels = useCallback(async () => {
     setIsLoading(true);
@@ -172,17 +174,20 @@ export default function ModelsTab({ projectId, onTrainModel }) {
     fetchModels();
   }, [fetchModels]);
 
-  const handleDelete = async (model) => {
-    const confirmText = `Delete model "${model.name}" permanently?\n\nThis removes it from the database and related deployment/inference records.`;
-    if (!window.confirm(confirmText)) return;
+  const handleDelete = async () => {
+    if (!modelToDelete?.model_id) return;
+    setIsDeletingModel(true);
     try {
-      const res = await fetch(`/api/models/${model.model_id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/models/${modelToDelete.model_id}`, { method: 'DELETE' });
       if (res.ok) {
-        setModels(prev => prev.filter(m => m.model_id !== model.model_id));
+        setModels(prev => prev.filter(m => m.model_id !== modelToDelete.model_id));
         setFeedback({ type: 'success', message: 'Model deleted successfully.' });
       }
     } catch (e) {
       setFeedback({ type: 'error', message: 'Failed to delete model.' });
+    } finally {
+      setIsDeletingModel(false);
+      setModelToDelete(null);
     }
   };
 
@@ -418,12 +423,42 @@ export default function ModelsTab({ projectId, onTrainModel }) {
             <ModelCard 
               key={model.model_id || model.id} 
               model={model} 
-              onDelete={handleDelete}
+              onDelete={() => setModelToDelete(model)}
               onDownload={handleDownload}
               onDeploy={handleDeploy}
               onCheck={handleCheck}
             />
           ))}
+        </div>
+      )}
+
+      {modelToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-gray-100">
+            <h3 className="text-xl font-black text-gray-950">Delete Model?</h3>
+            <p className="mt-2 text-sm font-semibold text-gray-600">
+              Delete <span className="text-gray-900">"{modelToDelete.name}"</span> permanently?
+            </p>
+            <p className="mt-2 text-sm font-semibold text-gray-500">
+              This removes it from the database and related deployment/inference records.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => !isDeletingModel && setModelToDelete(null)}
+                disabled={isDeletingModel}
+                className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isDeletingModel}
+                className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition disabled:opacity-60"
+              >
+                {isDeletingModel ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -895,10 +895,10 @@ export default function ProjectUpload() {
   const hasAssets = assets.length > 0;
 
   return (
-    <div className="h-screen overflow-y-auto bg-white flex font-sans animate-page-enter">
+    <div className="h-full overflow-y-auto bg-white flex font-sans animate-page-enter">
       
       {/* 1. Thin Dark Edge Sidebar */}
-      <div className="w-[60px] bg-[#1a1423] flex flex-col items-center py-4 justify-between shrink-0 h-screen sticky top-0">
+      <div className="w-[60px] bg-[#1a1423] flex flex-col items-center py-4 justify-between shrink-0 h-full sticky top-0">
         <div className="flex flex-col gap-6 w-full items-center">
           {/* Logo */}
           <div className="w-8 h-8 flex items-center justify-center bg-violet-600 rounded-md cursor-pointer" onClick={() => navigate('/')}>
@@ -925,7 +925,7 @@ export default function ProjectUpload() {
       </div>
 
       {/* 2. Light Project Sidebar */}
-      <div className="hidden md:flex w-[240px] border-r border-gray-200 flex-col shrink-0 h-screen sticky top-0 overflow-y-auto bg-gray-50/30">
+      <div className="hidden md:flex w-[240px] border-r border-gray-200 flex-col shrink-0 h-full sticky top-0 overflow-y-auto bg-gray-50/30">
         <div className="p-4">
           <button onClick={() => navigate(-1)} className="text-gray-500 hover:text-gray-800 text-[11px] font-bold uppercase flex items-center gap-1 tracking-wider mb-6">
             <span>←</span> AS WORKSPACE
@@ -973,7 +973,7 @@ export default function ProjectUpload() {
       </div>
 
       {/* 3. Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-y-auto bg-white min-w-0">
+      <div className="flex-1 flex flex-col h-full overflow-y-auto bg-white min-w-0">
         {/* Sub Header dynamically changes based on activeTab */}
         {activeTab !== 'annotate' && (
           <header className="px-5 sm:px-10 py-6 sm:py-8 pb-4 border-b border-gray-100 flex justify-between items-center">
@@ -990,7 +990,7 @@ export default function ProjectUpload() {
           {activeTab === 'upload' && (
             <>
               {/* Left Upload Configurations */}
-              <div className="flex-1 flex flex-col min-w-0">
+              <div className="flex-1 flex flex-col min-w-0 h-full">
                 <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 mb-6">
                   <div className="flex-1">
                      <label className="block text-[13px] font-bold text-gray-700 mb-2">Batch Name:</label>
@@ -1036,7 +1036,7 @@ export default function ProjectUpload() {
 
                  {/* Replace Dropzone with Uploading status seamlessly */}
                  {isUploading ? (
-                    <div className="w-full min-h-[400px] flex flex-col items-center justify-center p-10 animate-fade-in relative">
+                    <div className="w-full flex-1 min-h-[400px] flex flex-col items-center justify-center p-10 animate-fade-in relative">
                        <h2 className="text-[26px] font-bold text-violet-600 mb-2 tracking-tight drop-shadow-sm">Uploading files...</h2>
                        <p className="text-[12px] text-violet-500/80 mb-12 font-mono tracking-widest lowercase bg-violet-50 px-3 py-1 rounded-full border border-violet-100">
                          Uploading {Object.keys(uploadProgress).length} files. Calculating time remaining...
@@ -1049,7 +1049,7 @@ export default function ProjectUpload() {
                     </div>
                  ) : (
                     <div 
-                      className={`w-full relative border rounded-2xl p-6 sm:p-10 flex flex-col items-center shadow-sm transition-all ${isDragging ? 'bg-violet-50 border-violet-400 border-2 border-dashed' : 'bg-gray-50/50 border-gray-200'}`}
+                      className={`w-full flex-1 min-h-[420px] relative border rounded-2xl p-6 sm:p-10 flex flex-col items-center justify-center shadow-sm transition-all ${isDragging ? 'bg-violet-50 border-violet-400 border-2 border-dashed' : 'bg-gray-50/50 border-gray-200'}`}
                       onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                       onDragLeave={() => setIsDragging(false)}
                       onDrop={handleDrop}
