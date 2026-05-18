@@ -4,6 +4,7 @@ import {
   Home,
   Folder,
   Rocket,
+  Settings,
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -19,7 +20,16 @@ export default function Sidebar() {
     <div className="w-64 bg-gradient-to-b from-[#0f172a] to-[#581c87] text-white flex flex-col justify-between">
       
       <div>
-        <div className="p-5 text-lg font-semibold tracking-tight text-white mb-2">VisionFlow</div>
+        <div className="p-5 text-lg font-semibold tracking-tight text-white mb-2 flex items-center justify-between">
+          <span>VisionFlow</span>
+          <Link
+            to="/settings"
+            className="p-1.5 rounded-md text-gray-300 hover:text-white hover:bg-white/10 transition"
+            title="Settings"
+          >
+            <Settings size={17} />
+          </Link>
+        </div>
 
         <div className="px-3 space-y-1">
           {menu.map((item, i) => (

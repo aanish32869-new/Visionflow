@@ -5,7 +5,7 @@ import {
   Upload, Tag, HelpCircle, HardDrive, Edit3, Database, Layers, BarChart2, Hash, 
   Cpu, Box, Eye, Rocket, Check, ArrowUp, FileImage, FileCode, Film, FileText, Code, Globe, Lock,
   Sparkles, User, Users, Building, ChevronRight, UploadCloud, Activity, List, Share2, Network, PieChart,
-  Search, X, Plus, Crop, FileCheck, MoreVertical, ArrowRight, Image as ImageIcon, CheckCircle, Info, ChevronDown, Trash, Download,
+  Search, X, Plus, Crop, MoreVertical, ArrowRight, Image as ImageIcon, CheckCircle, Info, ChevronDown, Trash, Download,
   Calendar, Clock, EyeOff, ArrowLeft, Loader2
 } from "lucide-react";
 import AnnotationTool from "../components/AnnotationTool";
@@ -39,7 +39,6 @@ export default function ProjectUpload() {
   const [activeTab, setActiveTab] = useState(location.state?.activeTab || "upload");
   const [assets, setAssets] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [sortBy, setSortBy] = useState("newest");
   const [autoLabelClasses, setAutoLabelClasses] = useState([{ name: "", description: "" }]);
   const [createBatchInstantly, setCreateBatchInstantly] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
@@ -79,7 +78,6 @@ export default function ProjectUpload() {
   const [isBatchActionLoading, setIsBatchActionLoading] = useState(false);
   const [downloadDialog, setDownloadDialog] = useState({ open: false, batch: null, source: "unassigned" });
   const [downloadFormat, setDownloadFormat] = useState("yolo");
-  const [uiScale, setUiScale] = useState(1);
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
@@ -153,20 +151,6 @@ export default function ProjectUpload() {
     }
   }, [location.state]);
 
-  useEffect(() => {
-    const updateUiScale = () => {
-      const designWidth = 1920;
-      const designHeight = 1080;
-      const widthScale = window.innerWidth / designWidth;
-      const heightScale = window.innerHeight / designHeight;
-      const nextScale = Math.min(1, Math.max(0.67, Math.min(widthScale, heightScale)));
-      setUiScale(nextScale);
-    };
-
-    updateUiScale();
-    window.addEventListener("resize", updateUiScale);
-    return () => window.removeEventListener("resize", updateUiScale);
-  }, []);
 
   useEffect(() => {
     if (detectedObject && detectedObject !== "related objects") {
@@ -908,26 +892,10 @@ export default function ProjectUpload() {
 
   const approvedImages = assets.filter(a => a.state === 'approved');
 
-  const filteredJobs = useMemo(() => {
-    let result = [...jobs];
-    if (sortBy === "newest") result.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-    if (sortBy === "oldest") result.sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
-    // Additional sorting as needed
-    return result;
-  }, [jobs, sortBy]);
-
   const hasAssets = assets.length > 0;
 
   return (
-    <div
-      className="h-screen overflow-y-auto bg-white flex font-sans animate-page-enter"
-      style={{
-        zoom: uiScale,
-        transformOrigin: "top left",
-        width: "100%",
-        minHeight: `${100 / uiScale}vh`,
-      }}
-    >
+    <div className="h-screen overflow-y-auto bg-white flex font-sans animate-page-enter">
       
       {/* 1. Thin Dark Edge Sidebar */}
       <div className="w-[60px] bg-[#1a1423] flex flex-col items-center py-4 justify-between shrink-0 h-screen sticky top-0">
@@ -1277,20 +1245,12 @@ export default function ProjectUpload() {
                     <div className="flex justify-between items-center px-8 py-6 mb-2">
                         <div className="flex items-center gap-3">
                            <Crop className="text-gray-500" size={24} />
-                           <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">Image Lifecycle</h2>
+                           <h2 className="text-[22px] font-bold text-gray-900 tracking-tight">Annotate</h2>
                         </div>
                         <div className="flex items-center gap-4">
                            <div className="flex items-center gap-2 text-[13px] font-bold text-gray-700">
                               <Users size={16} className="text-gray-500" /> VisionFlow Labeling
                            </div>
-                           <button 
-                             onClick={() => setReviewMode(!reviewMode)}
-                             className={`px-4 py-2 border rounded-[8px] text-[13px] font-bold shadow-sm flex items-center gap-2 transition ${reviewMode ? 'bg-violet-600 text-white border-violet-700' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
-                           >
-                              <FileCheck size={16} className={reviewMode ? 'text-white' : 'text-gray-500'} /> 
-                              {reviewMode ? 'Review Mode ON' : 'Enable Review Mode'} 
-                              {!reviewMode && <span className="bg-violet-100 text-violet-700 p-0.5 rounded ml-1"><Lock size={12}/></span>}
-                           </button>
                            <button
                               onClick={() => setActiveTab('versions')}
                               className="px-5 py-2 bg-violet-600 text-white rounded-[8px] text-[13px] font-bold shadow-sm flex items-center gap-2 hover:bg-violet-700 transition"
@@ -1301,20 +1261,7 @@ export default function ProjectUpload() {
                     </div>
 
                     <div className="px-8 pb-4">
-                       <div className="flex items-center gap-2 mb-6">
-                           <span className="text-[12px] font-bold text-gray-500 uppercase tracking-wide">Sort By:</span>
-                           <select 
-                             value={sortBy}
-                             onChange={(e) => setSortBy(e.target.value)}
-                             className="px-3 py-1.5 border border-gray-200 rounded-[8px] bg-white shadow-sm outline-none cursor-pointer text-[13px] font-bold text-gray-700"
-                           >
-                              <option value="newest">Newest</option>
-                              <option value="oldest">Oldest</option>
-                              <option value="unassigned">Unassigned</option>
-                              <option value="progress">In Progress</option>
-                           </select>
-                       </div>
-                    
+
                        {/* Kanban Columns */}
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full items-stretch w-full mb-12">
                            

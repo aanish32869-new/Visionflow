@@ -10,6 +10,7 @@ import RapidUpload from "./pages/RapidUpload";
 import ProjectUpload from "./pages/ProjectUpload";
 import Uploads from "./pages/Uploads";
 import BatchPreview from "./pages/BatchPreview";
+import Settings from "./pages/Settings";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SystemMetricsWidget from "./components/SystemMetricsWidget";
 
@@ -26,6 +27,7 @@ const globalRouter = createBrowserRouter([
       { path: "/rapid-upload", element: <RapidUpload /> },
       { path: "/upload", element: <ProjectUpload /> },
       { path: "/uploads", element: <Uploads /> },
+      { path: "/settings", element: <Settings /> },
       { path: "/annotate/batch/:batchId", element: <BatchPreview /> },
       { path: "*", element: <Navigate to="/" replace /> }
     ]

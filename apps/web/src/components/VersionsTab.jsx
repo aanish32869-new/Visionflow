@@ -27,6 +27,8 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
   const [error, setError] = useState(null);
   const [selectedVersion, setSelectedVersion] = useState(null);
   const [downloadingVersion, setDownloadingVersion] = useState(null);
+  const [versionToDelete, setVersionToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchVersions = useCallback(async () => {
     setIsLoading(true);
@@ -68,10 +70,12 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
     return () => clearInterval(interval);
   }, [versions, fetchVersions]);
 
-  const handleDelete = async (versionId) => {
-    if (!window.confirm("Are you sure you want to delete this version? This action cannot be undone.")) return;
+  const handleDelete = async () => {
+    if (!versionToDelete?.version_id) return;
+    setIsDeleting(true);
     try {
       const pid = typeof projectId === 'object' && projectId !== null ? (projectId.id || projectId._id) : projectId;
+      const versionId = versionToDelete.version_id;
       let response = await fetch(`/api/projects/${pid}/versions/${versionId}`, {
         method: 'DELETE'
       });
@@ -86,6 +90,9 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
       }
     } catch (err) {
       console.error("Delete failed", err);
+    } finally {
+      setIsDeleting(false);
+      setVersionToDelete(null);
     }
   };
 
@@ -172,7 +179,7 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
               key={version.version_id} 
               version={version} 
               onTrain={() => onTrainModel(version)}
-              onDelete={() => handleDelete(version.version_id)}
+              onDelete={() => setVersionToDelete(version)}
               onViewDetails={() => setSelectedVersion(version)}
               onDownload={() => setDownloadingVersion(version)}
             />
@@ -196,6 +203,34 @@ export default function VersionsTab({ projectId, onTrainModel, onOpenGenerate })
         projectId={projectId}
         version={downloadingVersion || {}}
       />
+
+      {versionToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-gray-100">
+            <h3 className="text-xl font-black text-gray-950">Delete Version?</h3>
+            <p className="mt-2 text-sm font-semibold text-gray-600">
+              Are you sure you want to delete{" "}
+              <span className="text-gray-900">"{versionToDelete.name}"</span>? This action cannot be undone.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => !isDeleting && setVersionToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition disabled:opacity-60"
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
