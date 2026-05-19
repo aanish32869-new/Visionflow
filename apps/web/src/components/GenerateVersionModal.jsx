@@ -175,9 +175,9 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-gray-950/60 backdrop-blur-sm" onClick={onClose} />
       
-      <div className="relative w-full max-w-4xl bg-white rounded-[40px] shadow-2xl flex flex-col overflow-hidden animate-modal-enter">
+      <div className="relative w-full max-w-3xl max-h-[88vh] bg-white rounded-[32px] shadow-2xl flex flex-col overflow-hidden animate-modal-enter">
         {/* Header */}
-        <div className="px-8 py-6 border-b border-gray-100 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-violet-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-violet-200">
               <Layers size={20} />
@@ -201,7 +201,7 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-8 min-h-[400px]">
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 min-h-0">
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
               <Trash2 size={18} /> {error}
@@ -469,7 +469,7 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
         </div>
 
         {/* Footer */}
-        <div className="px-8 py-6 border-t border-gray-100 bg-white flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-t border-gray-100 bg-white flex items-center justify-between shrink-0">
           <button 
             disabled={step === 1 || isSubmitting}
             onClick={() => setStep(s => s - 1)}

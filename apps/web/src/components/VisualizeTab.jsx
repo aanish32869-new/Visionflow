@@ -100,6 +100,12 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const modelRef = (m) => String(m?.model_id || m?.id || m?._id || "");
   const selectionKey = `visionflow_visualize_selected_model_${projectId}`;
+  const modelTimestamp = (m) => {
+    const t = Date.parse(String(m?.updated_at || m?.created_at || ""));
+    return Number.isFinite(t) ? t : 0;
+  };
+  const isPtModel = (m) => String(m?.weights_path || "").toLowerCase().endsWith(".pt");
+  const isDeployed = (m) => m?.deployment_status === "deployed" || Boolean(m?.deployment_id);
 
   const fetchModels = useCallback(async () => {
     setIsLoadingModels(true);
@@ -116,7 +122,7 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
           const isClassify = arch.includes("resnet") || arch.includes("vit") || arch.includes("dinov3") || arch.includes("simplecnn");
           return projectTypeNow === "Object Detection" ? !isClassify : isClassify;
         });
-        const deployedModels = taskFiltered.filter((m) => m.deployment_status === "deployed" || m.deployment_id);
+        const deployedModels = taskFiltered.filter((m) => isDeployed(m));
         const fallbackDeployed = allModels.filter((m) => m.deployment_status === "deployed" || m.deployment_id);
         const readyModels =
           deployedModels.length > 0
@@ -124,6 +130,14 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
             : (taskFiltered.length > 0 ? taskFiltered : fallbackDeployed);
         setModels(readyModels);
         if (readyModels.length > 0) {
+          const latestDeployedPt = [...readyModels]
+            .filter((m) => isDeployed(m) && isPtModel(m))
+            .sort((a, b) => modelTimestamp(b) - modelTimestamp(a))[0];
+          const latestDeployedAny = [...readyModels]
+            .filter((m) => isDeployed(m))
+            .sort((a, b) => modelTimestamp(b) - modelTimestamp(a))[0];
+          const latestPreferred = latestDeployedPt || latestDeployedAny;
+
           const preferred = localStorage.getItem("visionflow_selected_model_id");
           const sticky = localStorage.getItem(selectionKey);
           const preferredExists = preferred && readyModels.some((m) => modelRef(m) === String(preferred));
@@ -131,7 +145,10 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
           const yoloPreferred = readyModels.find((m) => String(m.architecture || "").toLowerCase().includes("yolo"));
           const fallback = projectTypeNow === "Object Detection" ? (yoloPreferred || readyModels[0]) : readyModels[0];
 
-          if (preferredExists) {
+          // Enforce newest deployed model as default inference source.
+          if (latestPreferred) {
+            setSelectedModelId(modelRef(latestPreferred));
+          } else if (preferredExists) {
             setSelectedModelId(preferred);
             localStorage.removeItem("visionflow_selected_model_id");
           } else if (stickyExists) {
@@ -159,6 +176,15 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
 
   useEffect(() => {
     fetchModels();
+  }, [fetchModels]);
+
+  useEffect(() => {
+    const onDataChanged = (e) => {
+      const t = e?.detail?.type;
+      if (t === "model" || t === "deployment") fetchModels();
+    };
+    window.addEventListener("visionflow_data_changed", onDataChanged);
+    return () => window.removeEventListener("visionflow_data_changed", onDataChanged);
   }, [fetchModels]);
 
   useEffect(() => {
@@ -238,14 +264,11 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
           const box = normalizeBox(prediction, nw, nh);
           if (!box) return null;
           const { x, y, width, height } = box;
-
           return {
-            box: [
-              Math.max(0, x - width / 2),
-              Math.max(0, y - height / 2),
-              Math.min(1, x + width / 2),
-              Math.min(1, y + height / 2),
-            ],
+            x,
+            y,
+            width,
+            height,
             label: prediction.label || prediction.class || "Object",
             confidence: Number(prediction.confidence || 0),
             normalized: true,
@@ -367,18 +390,18 @@ export default function VisualizeTab({ projectId, onTrainModel }) {
                        src={previewUrl} 
                        onLoad={updateImageSize}
                        alt="Preview" 
-                       className="block max-w-full max-h-[700px] rounded-[24px] shadow-2xl border border-gray-100"
+                       className="block w-full h-[68vh] object-contain rounded-[24px] shadow-2xl border border-gray-100 bg-gray-50"
                      />
                    
                    {/* Results Overlay */}
                     {results && imageSize.width > 0 && results.map((res, i) => {
-                     if (!res || !Array.isArray(res.box)) return null;
+                     if (!res) return null;
                      if (String(res.type || "").toLowerCase() === "classification") return null;
-                     const isNorm = res.normalized;
-                     const left = isNorm ? res.box[0] * imageSize.width : (res.box[0] / imageRef.current.naturalWidth) * imageSize.width;
-                     const top = isNorm ? res.box[1] * imageSize.height : (res.box[1] / imageRef.current.naturalHeight) * imageSize.height;
-                     const width = isNorm ? (res.box[2] - res.box[0]) * imageSize.width : ((res.box[2] - res.box[0]) / imageRef.current.naturalWidth) * imageSize.width;
-                     const height = isNorm ? (res.box[3] - res.box[1]) * imageSize.height : ((res.box[3] - res.box[1]) / imageRef.current.naturalHeight) * imageSize.height;
+                     if (!Number.isFinite(Number(res.x)) || !Number.isFinite(Number(res.y)) || !Number.isFinite(Number(res.width)) || !Number.isFinite(Number(res.height))) return null;
+                     const width = Number(res.width || 0) * imageSize.width;
+                     const height = Number(res.height || 0) * imageSize.height;
+                     const left = Number(res.x || 0) * imageSize.width - width / 2;
+                     const top = Number(res.y || 0) * imageSize.height - height / 2;
                      
                      if (Number(res.confidence || 0) < threshold) return null;
                      if (isClassificationResult && res.type === "classification") {

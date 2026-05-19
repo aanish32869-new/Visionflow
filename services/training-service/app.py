@@ -224,6 +224,29 @@ def _resolve_model_doc(model_ref: str):
             return model
     return db.models.find_one({"model_id": raw})
 
+def _delete_model_cascade(db, model_doc):
+    model_ref = str(model_doc.get("model_id") or "")
+    db.deleted_models.update_one(
+        {"project_id": str(model_doc.get("project_id")), "model_id": model_ref},
+        {"$set": {
+            "project_id": str(model_doc.get("project_id")),
+            "model_id": model_ref,
+            "source_job_id": model_doc.get("source_job_id"),
+            "version_id": model_doc.get("version_id"),
+            "architecture": model_doc.get("architecture"),
+            "deleted_at": _utc_now(),
+        }},
+        upsert=True,
+    )
+    db.inference_history.delete_many({"model_id": model_ref})
+    db.deployments.delete_many({
+        "$or": [
+            {"model_id": model_ref},
+            {"model_name": model_doc.get("name")},
+        ]
+    })
+    db.models.delete_one({"_id": model_doc["_id"]})
+
 def to_object_id(value):
     try:
         if value and ObjectId.is_valid(str(value)):
@@ -776,31 +799,7 @@ def delete_model(model_id):
     if not model:
         return jsonify({"error": "Model not found"}), 404
 
-    model_ref = str(model.get("model_id") or model_id)
-    db.deleted_models.update_one(
-        {"project_id": str(model.get("project_id")), "model_id": model_ref},
-        {"$set": {
-            "project_id": str(model.get("project_id")),
-            "model_id": model_ref,
-            "source_job_id": model.get("source_job_id"),
-            "version_id": model.get("version_id"),
-            "architecture": model.get("architecture"),
-            "deleted_at": _utc_now(),
-        }},
-        upsert=True,
-    )
-    # Cascade cleanup across related collections so delete is permanent.
-    db.inference_history.delete_many({"model_id": model_ref})
-    db.deployments.delete_many({
-        "$or": [
-            {"model_id": model_ref},
-            {"model_name": model.get("name")},
-        ]
-    })
-
-    deleted = db.models.delete_one({"_id": model["_id"]})
-    if deleted.deleted_count != 1:
-        return jsonify({"error": "Model delete failed"}), 500
+    _delete_model_cascade(db, model)
     return jsonify({"ok": True, "deleted_model_id": str(model.get("model_id") or model_id)})
 
 @app.route("/api/models/<model_id>", methods=["PATCH"])
@@ -903,10 +902,12 @@ def _dispatch_training(project_id, data):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     export_formats = params.get("export_formats")
+    # Do not auto-request ONNX/TensorRT exports by default.
+    # Those formats may trigger privileged package installs on Windows
+    # (e.g., into C:\Python314), which can fail with access denied.
+    # Exports will run only when explicitly requested by caller.
     if not isinstance(export_formats, list):
-        export_formats = ["onnx"]
-        if device == "gpu":
-            export_formats.append("engine")
+        export_formats = []
     export_cfg = {
         "formats": [str(item).strip().lower() for item in export_formats if str(item).strip()],
         "half": bool(params.get("export_fp16", device == "gpu")),
@@ -1034,6 +1035,29 @@ def get_job(project_id, job_id):
     db = _get_db()
     job = db.training_jobs.find_one({"job_id": job_id, "project_id": project_id})
     return jsonify(_serialize(job)) if job else (jsonify({"error": "Job not found"}), 404)
+
+@app.route("/api/projects/<project_id>/jobs/<job_id>", methods=["DELETE"])
+def delete_job(project_id, job_id):
+    db = _get_db()
+    job = db.training_jobs.find_one({"job_id": job_id, "project_id": project_id})
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    linked_models = list(db.models.find({"project_id": str(project_id), "source_job_id": job_id}))
+    deleted_model_ids = []
+    for model_doc in linked_models:
+        deleted_model_ids.append(str(model_doc.get("model_id")))
+        _delete_model_cascade(db, model_doc)
+
+    output_dir = str(job.get("output_dir") or "").strip()
+    if not output_dir:
+        output_dir = str((ROOT_DIR / "storage" / "training" / job_id).resolve())
+    run_dir = Path(output_dir)
+    if run_dir.exists() and run_dir.is_dir():
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+    db.training_jobs.delete_one({"_id": job["_id"]})
+    return jsonify({"ok": True, "deleted_job_id": job_id, "deleted_models": deleted_model_ids})
 
 @app.route("/api/projects/<project_id>/jobs/<job_id>/download-run", methods=["GET"])
 def download_training_run(project_id, job_id):

@@ -1525,7 +1525,7 @@ class InferenceLogic:
         annotated_assets = 0
         detected_classes = set()
         results = []
-        threshold = InferenceLogic._parse_confidence(confidence, default=0.5)
+        threshold = InferenceLogic._parse_confidence(confidence, default=0.3)
 
         for asset_id in unique_asset_ids:
             result = InferenceLogic.run_classification_labeling(

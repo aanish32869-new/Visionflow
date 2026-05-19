@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2, Download } from "lucide-react";
+import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2, Download, Trash2 } from "lucide-react";
 
 const ARCHITECTURES = [
   {
@@ -64,6 +64,31 @@ function normalizeProgress(job) {
   return Math.max(0, Math.min(100, Math.round(p)));
 }
 
+function getJobLogLines(job, detail) {
+  const candidate = detail?.terminal_logs ?? job?.terminal_logs ?? detail?.logs ?? job?.logs;
+
+  if (Array.isArray(candidate)) {
+    const lines = candidate.map((x) => String(x ?? "")).filter(Boolean);
+    return lines.length ? lines.slice(-80) : ["[INFO] Waiting for log output..."];
+  }
+
+  if (typeof candidate === "string") {
+    const lines = candidate.split(/\r?\n/).map((x) => x.trimEnd()).filter(Boolean);
+    return lines.length ? lines.slice(-80) : ["[INFO] Waiting for log output..."];
+  }
+
+  if (candidate && typeof candidate === "object") {
+    try {
+      const text = JSON.stringify(candidate, null, 2);
+      return text ? text.split(/\r?\n/).slice(-80) : ["[INFO] Waiting for log output..."];
+    } catch {
+      return ["[INFO] Waiting for log output..."];
+    }
+  }
+
+  return ["[INFO] Waiting for log output..."];
+}
+
 export default function TrainTab({ projectId, onOpenModels }) {
   const [versions, setVersions] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -83,8 +108,14 @@ export default function TrainTab({ projectId, onOpenModels }) {
   const [workers, setWorkers] = useState("4");
   const [jobDetails, setJobDetails] = useState({});
   const [activeLogJob, setActiveLogJob] = useState(null);
+  const [jobToDelete, setJobToDelete] = useState(null);
+  const [isDeletingJob, setIsDeletingJob] = useState(false);
+  const [deletedJobIds, setDeletedJobIds] = useState([]);
 
   const currentArch = useMemo(() => ARCHITECTURES.find((a) => a.id === architecture) || ARCHITECTURES[0], [architecture]);
+  const deletedJobsStorageKey = `visionflow_deleted_jobs_${projectId}`;
+  const deletedJobSet = useMemo(() => new Set(deletedJobIds.map((id) => String(id))), [deletedJobIds]);
+  const filterDeletedJobs = (rows) => (Array.isArray(rows) ? rows.filter((j) => !deletedJobSet.has(String(j?.job_id || ""))) : []);
 
   const safeJson = async (res) => {
     const text = await res.text();
@@ -110,6 +141,24 @@ export default function TrainTab({ projectId, onOpenModels }) {
   }, [architecture]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(deletedJobsStorageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setDeletedJobIds(Array.isArray(parsed) ? parsed.map((id) => String(id)) : []);
+    } catch {
+      setDeletedJobIds([]);
+    }
+  }, [deletedJobsStorageKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(deletedJobsStorageKey, JSON.stringify(deletedJobIds));
+    } catch {
+      // no-op
+    }
+  }, [deletedJobIds, deletedJobsStorageKey]);
+
+  useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
@@ -124,7 +173,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
         
         setProject(p);
         setVersions(Array.isArray(v) ? v : []);
-        setJobs(Array.isArray(j) ? j : []);
+        setJobs(filterDeletedJobs(j));
         if (!versionId && v?.length) setVersionId(v[0].version_id);
         
       } catch {
@@ -134,7 +183,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
       }
     };
     load();
-  }, [projectId]);
+  }, [projectId, deletedJobSet]);
 
   useEffect(() => {
     const hasActiveJobs = jobs.some((j) => isActiveJob(j.status));
@@ -145,7 +194,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
         const jRes = await fetch(`/api/projects/${projectId}/jobs`);
         if (jRes.ok) {
           const nextJobs = await safeJson(jRes);
-          setJobs(Array.isArray(nextJobs) ? nextJobs : []);
+          setJobs(filterDeletedJobs(nextJobs));
         }
       } catch {
         // Keep existing UI state if refresh fails transiently.
@@ -153,7 +202,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
     }, 2500);
 
     return () => clearInterval(timer);
-  }, [jobs, projectId]);
+  }, [jobs, projectId, deletedJobSet]);
 
   const startTraining = async () => {
     if (!versionId) {
@@ -196,7 +245,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
       if (data?.job_id) setActiveLogJob(data.job_id);
       const refreshJobs = async () => {
         const jRes = await fetch(`/api/projects/${projectId}/jobs`);
-        if (jRes.ok) setJobs(await safeJson(jRes));
+        if (jRes.ok) setJobs(filterDeletedJobs(await safeJson(jRes)));
       };
       await refreshJobs();
       setTimeout(refreshJobs, 1200);
@@ -205,6 +254,53 @@ export default function TrainTab({ projectId, onOpenModels }) {
       setMessage({ type: "error", text: e.message || "Failed to start training." });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+
+
+  const deleteTrainingJob = async () => {
+    if (!jobToDelete?.job_id) return;
+    setIsDeletingJob(true);
+    try {
+      const jobId = jobToDelete.job_id;
+      const res = await fetch(`/api/projects/${projectId}/jobs/${jobId}`, {
+        method: "DELETE",
+      });
+      const data = await safeJson(res);
+
+      // Fallback for environments where the new training-job delete endpoint
+      // is not yet deployed: delete linked models directly.
+      if (!res.ok && [404, 405, 501].includes(res.status)) {
+        const modelsRes = await fetch(`/api/projects/${projectId}/models`);
+        const modelsData = await safeJson(modelsRes);
+        const models = Array.isArray(modelsData) ? modelsData : [];
+        const linked = models.filter((m) => String(m.source_job_id || "") === String(jobId));
+
+        for (const m of linked) {
+          const modelId = m.model_id || m.id;
+          if (!modelId) continue;
+          await fetch(`/api/models/${modelId}`, { method: "DELETE" });
+        }
+      } else if (!res.ok) {
+        throw new Error(data?.error || "Failed to delete training job.");
+      }
+
+      setDeletedJobIds((prev) => (prev.includes(String(jobId)) ? prev : [...prev, String(jobId)]));
+      setJobs((prev) => prev.filter((j) => j.job_id !== jobId));
+      setJobDetails((prev) => {
+        const next = { ...prev };
+        delete next[jobId];
+        return next;
+      });
+      if (activeLogJob === jobId) setActiveLogJob(null);
+      setMessage({ type: "success", text: "Training job and linked model(s) deleted permanently." });
+      window.dispatchEvent(new CustomEvent("visionflow_data_changed", { detail: { type: "model" } }));
+    } catch (e) {
+      setMessage({ type: "error", text: e.message || "Failed to delete training job." });
+    } finally {
+      setIsDeletingJob(false);
+      setJobToDelete(null);
     }
   };
 
@@ -415,10 +511,20 @@ POST /api/projects/${projectId}/train
                     <div className="font-black text-sm text-gray-900">
                       {j.model_version_label || `${j.architecture_label || j.architecture} (${j.version_display_id || j.version_id?.slice(0, 8) || "version"})`}
                     </div>
-                    <div className="text-xs text-gray-500">Job {j.job_id?.slice(0, 8) || "created"} • {j.version_display_id || j.version_id?.slice(0, 8)}</div>
+                    <div className="text-xs text-gray-500">Job {j.job_id?.slice(0, 8) || "created"} ï¿½ {j.version_display_id || j.version_id?.slice(0, 8)}</div>
                   </div>
-                  <div className="text-xs font-bold text-gray-600">
-                    {j.status} {j.status === "Completed" && <CheckCircle2 size={14} className="inline ml-1 text-emerald-500" />}
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-bold text-gray-600">
+                      {j.status} {j.status === "Completed" && <CheckCircle2 size={14} className="inline ml-1 text-emerald-500" />}
+                    </div>
+                    <button
+                      type="button"
+                      title="Delete training job"
+                      onClick={() => setJobToDelete(j)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
                 <div className="mt-2 flex items-center gap-3">
@@ -461,17 +567,17 @@ POST /api/projects/${projectId}/train
                       />
                     </div>
                     <div className="mt-2 text-[11px] font-black text-violet-700">
-                      {j.progress_line || `Processing ${normalizeProgress(j)}%`}
+                      {`Processing ${normalizeProgress(j)}%`}
                     </div>
                     <div className="mt-1 text-[11px] font-bold text-gray-500">
-                      Processing state: {normalizeProgress(j)}% (1-100) • {j.eta_line || `ETA: ${j.estimated_time_remaining || "calculating..."}`}
+                      Processing state: {normalizeProgress(j)}% (1-100) ï¿½ {j.eta_line || `ETA: ${j.estimated_time_remaining || "calculating..."}`}
                     </div>
                   </div>
                 )}
                 {activeLogJob === j.job_id && (
                   <div className="mt-3 rounded-xl border border-gray-200 bg-gray-950 text-gray-100 p-3">
                     <div className="text-[10px] font-black uppercase tracking-widest text-violet-300 mb-2">Training Terminal Logs</div>
-                    <pre className="text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap">{((jobDetails[j.job_id]?.terminal_logs || j.terminal_logs || ["[INFO] Waiting for log output..."]).slice(-40)).join("\n")}</pre>
+                    <pre className="text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap">{getJobLogLines(j, jobDetails[j.job_id]).join("\n")}</pre>
                   </div>
                 )}
                 {j.status === "Completed" && (
@@ -491,6 +597,36 @@ POST /api/projects/${projectId}/train
           </div>
         )}
       </div>
+
+      {jobToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-gray-100">
+            <h3 className="text-xl font-black text-gray-950">Delete Training Job?</h3>
+            <p className="mt-2 text-sm font-semibold text-gray-600">
+              Delete job <span className="text-gray-900">{jobToDelete.job_id?.slice(0, 8)}</span> permanently?
+            </p>
+            <p className="mt-2 text-sm font-semibold text-gray-500">
+              This removes the training job, linked trained model(s), related deployments/inference records, and run files from storage.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => !isDeletingJob && setJobToDelete(null)}
+                disabled={isDeletingJob}
+                className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-bold hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteTrainingJob}
+                disabled={isDeletingJob}
+                className="px-4 py-2.5 rounded-xl bg-rose-600 text-white font-bold hover:bg-rose-700 transition disabled:opacity-60"
+              >
+                {isDeletingJob ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

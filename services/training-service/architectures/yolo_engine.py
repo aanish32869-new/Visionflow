@@ -13,7 +13,7 @@ def train_yolo(job_id, project_id, version_id, architecture, arch_info, params, 
     weights = arch_info.get("weights", "yolov8s.pt")
 
     export_cfg = params.get("export", {}) if isinstance(params.get("export"), dict) else {}
-    export_formats = export_cfg.get("formats", ["onnx"])
+    export_formats = export_cfg.get("formats", [])
     export_half = bool(export_cfg.get("half", device_arg.startswith("cuda")))
     export_int8 = bool(export_cfg.get("int8", False))
     export_batch = int(export_cfg.get("batch", max(1, batch_size)))

@@ -20,6 +20,13 @@ export default function DeployTab({ projectId }) {
   const [inferenceError, setInferenceError] = useState("");
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [inferenceMeta, setInferenceMeta] = useState({ threshold: 0.5, peak_confidence: 0, raw_prediction_count: 0, suggested_threshold: 0.5 });
+  const modelRef = (m) => String(m?.model_id || m?.id || m?._id || "");
+  const modelTimestamp = (m) => {
+    const t = Date.parse(String(m?.updated_at || m?.created_at || ""));
+    return Number.isFinite(t) ? t : 0;
+  };
+  const isPtModel = (m) => String(m?.weights_path || "").toLowerCase().endsWith(".pt");
+  const isDeployed = (m) => m?.deployment_status === "deployed" || Boolean(m?.deployment_id);
   const inferEndpoint = `https://infer.visionflow.io/api/projects/${projectId}/models/${selectedModel || "MODEL_ID"}/infer?conf=0.25`;
   const fallbackSnippet = (language) => {
     if (language === "curl") {
@@ -139,6 +146,15 @@ print(response.json())`;
     fetchModels();
   }, [projectMeta.project_type]);
 
+  useEffect(() => {
+    const onDataChanged = (e) => {
+      const t = e?.detail?.type;
+      if (t === "model" || t === "deployment") fetchModels();
+    };
+    window.addEventListener("visionflow_data_changed", onDataChanged);
+    return () => window.removeEventListener("visionflow_data_changed", onDataChanged);
+  }, [projectId, projectMeta.project_type]);
+
   async function fetchProjectMeta() {
     try {
       const pid = typeof projectId === "object" && projectId !== null ? (projectId.id || projectId._id) : projectId;
@@ -174,17 +190,21 @@ print(response.json())`;
           return projectType === "Classification" ? classify : !classify;
         }) : [];
         const fallbackDeployed = Array.isArray(data)
-          ? data.filter((m) => m.deployment_status === "deployed" || m.deployment_id)
+          ? data.filter((m) => isDeployed(m))
           : [];
         const effectiveModels = filtered.length > 0 ? filtered : fallbackDeployed;
         setModels(effectiveModels);
         if (effectiveModels.length > 0) {
-          const currentExists = selectedModel && effectiveModels.some((m) => String(m.model_id || m.id || m._id) === String(selectedModel));
-          if (!currentExists) {
-            const yoloPreferred = effectiveModels.find((m) => String(m.architecture || "").toLowerCase().includes("yolo"));
-            const fallback = projectType === "Object Detection" ? (yoloPreferred || effectiveModels[effectiveModels.length - 1]) : effectiveModels[effectiveModels.length - 1];
-            setSelectedModel(fallback.model_id || fallback.id || fallback._id);
-          }
+          const latestDeployedPt = [...effectiveModels]
+            .filter((m) => isDeployed(m) && isPtModel(m))
+            .sort((a, b) => modelTimestamp(b) - modelTimestamp(a))[0];
+          const latestDeployedAny = [...effectiveModels]
+            .filter((m) => isDeployed(m))
+            .sort((a, b) => modelTimestamp(b) - modelTimestamp(a))[0];
+          const yoloPreferred = effectiveModels.find((m) => String(m.architecture || "").toLowerCase().includes("yolo"));
+          const fallback = projectType === "Object Detection" ? (yoloPreferred || effectiveModels[0]) : effectiveModels[0];
+          const pick = latestDeployedPt || latestDeployedAny || fallback;
+          setSelectedModel(modelRef(pick));
         }
       }
     } catch (err) {

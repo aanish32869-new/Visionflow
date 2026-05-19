@@ -895,7 +895,7 @@ export default function ProjectUpload() {
   const hasAssets = assets.length > 0;
 
   return (
-    <div className="h-full overflow-y-auto bg-white flex font-sans animate-page-enter">
+    <div className="h-screen min-h-screen overflow-hidden bg-white flex font-sans animate-page-enter">
       
       {/* 1. Thin Dark Edge Sidebar */}
       <div className="w-[60px] bg-[#1a1423] flex flex-col items-center py-4 justify-between shrink-0 h-full sticky top-0">
