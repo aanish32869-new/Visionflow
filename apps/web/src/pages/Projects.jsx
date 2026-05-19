@@ -36,6 +36,8 @@ export default function Projects() {
   const [toastMessage, setToastMessage] = useState(null);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
+  const [folderToDelete, setFolderToDelete] = useState(null);
+  const [isDeletingFolder, setIsDeletingFolder] = useState(false);
 
   const loadOverview = async () => {
     setIsLoading(true);
@@ -52,6 +54,16 @@ export default function Projects() {
 
   useEffect(() => {
     loadOverview();
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key === "visionflow_folder_deleted") {
+        loadOverview();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const projects = overview?.projects || EMPTY_ARRAY;
@@ -128,6 +140,55 @@ export default function Projects() {
       alert(err.message || "Failed to delete project.");
     } finally {
       setIsDeletingProject(false);
+    }
+  };
+
+  const openDeleteFolderDialog = (folder, event) => {
+    event.stopPropagation();
+    setFolderToDelete(folder);
+  };
+
+  const deleteFolder = async () => {
+    if (!folderToDelete || isDeletingFolder) return;
+
+    const deletingFolderId = folderToDelete.id;
+    setIsDeletingFolder(true);
+
+    const previousOverview = overview;
+    setOverview((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        folders: (prev.folders || []).filter((folder) => folder.id !== deletingFolderId),
+        projects: (prev.projects || []).filter((project) => (project.folder_id || "") !== deletingFolderId),
+      };
+    });
+
+    if (selectedFolderId === deletingFolderId) {
+      setSelectedFolderId("all");
+    }
+
+    try {
+      let res = await fetch(`/api/folders/${deletingFolderId}?cascade=true`, { method: "DELETE" });
+      if (res.status === 404) {
+        res = await fetch(`/api/folders/${deletingFolderId}/delete?cascade=true`, { method: "POST" });
+      }
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        const message = [errorBody.error, errorBody.details].filter(Boolean).join(": ");
+        throw new Error(message || `Failed to delete folder permanently (HTTP ${res.status})`);
+      }
+      localStorage.removeItem("visionflow_active_folder_id");
+      sessionStorage.removeItem("visionflow_active_folder_id");
+      localStorage.setItem("visionflow_folder_deleted", JSON.stringify({ id: deletingFolderId, ts: Date.now() }));
+      await loadOverview();
+      setFolderToDelete(null);
+    } catch (err) {
+      console.error("Failed to delete folder", err);
+      setOverview(previousOverview);
+      alert(err.message || "Failed to delete folder.");
+    } finally {
+      setIsDeletingFolder(false);
     }
   };
 
@@ -244,12 +305,52 @@ export default function Projects() {
           </div>
         )}
 
+        {folderToDelete && (
+          <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-[460px] rounded-[12px] shadow-2xl overflow-hidden animate-slide-up">
+              <div className="flex items-center justify-between p-5 pb-4 border-b border-gray-100">
+                <h3 className="font-bold text-[18px] text-gray-900">Delete Folder</h3>
+                <button
+                  onClick={() => !isDeletingFolder && setFolderToDelete(null)}
+                  className="text-gray-400 hover:text-gray-600 transition p-1"
+                  disabled={isDeletingFolder}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-[15px] font-semibold text-gray-900">Delete folder and everything inside permanently?</p>
+                <p className="text-[13px] text-gray-500 mt-2">
+                  {folderToDelete.name} and all linked projects, assets, metadata, and storage files will be hard-deleted.
+                </p>
+              </div>
+              <div className="p-5 flex items-center justify-end gap-3 pt-0">
+                <button
+                  onClick={() => setFolderToDelete(null)}
+                  className="px-5 py-2.5 rounded-[6px] border border-gray-300 text-gray-700 font-semibold text-[13px] hover:bg-gray-50 transition shadow-sm"
+                  disabled={isDeletingFolder}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={deleteFolder}
+                  disabled={isDeletingFolder}
+                  className="px-6 py-2.5 rounded-[6px] bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] transition flex items-center gap-2 shadow-sm disabled:opacity-70"
+                >
+                  {isDeletingFolder && <Loader2 size={16} className="animate-spin" />}
+                  Confirm Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6 mt-4">
           <div>
             <div className="text-[12px] font-bold uppercase tracking-[0.18em] text-violet-600 mb-2">Workspace</div>
             <h1 className="text-[28px] font-bold text-gray-900 tracking-tight">{workspace.name}</h1>
             <p className="text-[14px] text-gray-500 mt-2 max-w-[760px]">
-              Organize your computer vision work as Workspace → Projects → Dataset Versions → Models, with folders to group projects by team, client, or use case.
+              Organize your computer vision work as Workspace → Projects → Dataset Versions → Models.
             </p>
           </div>
 
@@ -331,6 +432,7 @@ export default function Projects() {
                   active={selectedFolderId === folder.id}
                   label={folder.name}
                   onClick={() => setSelectedFolderId(folder.id)}
+                  onDelete={(event) => openDeleteFolderDialog(folder, event)}
                 />
               ))}
             </div>
@@ -450,14 +552,24 @@ function StatCard({ label, value, note, icon }) {
   );
 }
 
-function FolderChip({ active, label, onClick }) {
+function FolderChip({ active, label, onClick, onDelete }) {
   return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 rounded-full text-[12px] font-bold border transition ${active ? "bg-violet-600 text-white border-violet-600" : "bg-white text-gray-600 border-gray-200 hover:border-violet-200 hover:text-violet-700"}`}
+    <div
+      className={`px-3 py-2 rounded-full text-[12px] font-bold border transition inline-flex items-center gap-2 ${active ? "bg-violet-600 text-white border-violet-600" : "bg-white text-gray-600 border-gray-200 hover:border-violet-200 hover:text-violet-700"}`}
     >
-      {label}
-    </button>
+      <button onClick={onClick} className="leading-none">
+        {label}
+      </button>
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          className={`rounded-full p-1 transition ${active ? "hover:bg-white/20" : "hover:bg-red-50 hover:text-red-600"}`}
+          title="Delete folder"
+        >
+          <Trash2 size={12} />
+        </button>
+      )}
+    </div>
   );
 }
 

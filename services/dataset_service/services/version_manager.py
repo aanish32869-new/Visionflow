@@ -10,7 +10,7 @@ from io import BytesIO
 from pymongo import UpdateOne
 from models.db import db
 from utils.logger import logger
-from dataset_exporter import generate_dataset_archive, _transform_annotation
+from dataset_exporter import generate_dataset_archive
 from services.tag_service import TagService
 from config import Config
 
@@ -134,8 +134,9 @@ class VersionManager:
         classes = set()
         
         class_remap = options.get("class_remap", {})
-        augmentation_config = options.get("augmentations", [])
-        max_version_size = int(options.get("max_version_size", 1))
+        # Dataset multiplier is treated as virtual expansion during training time.
+        # We keep immutable snapshots physically compact (original assets only).
+        max_version_size = int(options.get("max_version_size", 1) or 1)
 
         # 4. Apply Preprocessing & Augmentations to Snapshot
         for asset_meta in snapshot_assets:
@@ -157,32 +158,8 @@ class VersionManager:
                 if "_id" in ann_copy: del ann_copy["_id"]
                 final_annotations.append(ann_copy)
 
-            # Add Augmented Copies (Only for Training - will be decided in next step)
-            # We store the augmented candidates here, but only add them to train split later
-            if augmentation_config and max_version_size > 1:
-                asset_meta["augmentation_candidates"] = []
-                for i in range(max_version_size - 1):
-                    aug_name = augmentation_config[i % len(augmentation_config)]
-                    aug_id = f"{orig_id}_aug_{i+1}"
-                    
-                    aug_asset = dict(asset_meta)
-                    aug_asset["original_asset_id"] = aug_id
-                    aug_asset["is_augmented"] = True
-                    aug_asset["augmentation_type"] = aug_name
-                    if "augmentation_candidates" in aug_asset: del aug_asset["augmentation_candidates"]
-                    
-                    aug_anns = []
-                    for ann in asset_anns:
-                        ann_copy = _transform_annotation(ann, aug_name)
-                        ann_copy["version_id"] = version_id
-                        ann_copy["asset_id"] = aug_id
-                        if "_id" in ann_copy: del ann_copy["_id"]
-                        aug_anns.append(ann_copy)
-                    
-                    asset_meta["augmentation_candidates"].append({
-                        "asset": aug_asset,
-                        "annotations": aug_anns
-                    })
+            # No physical duplication for multiplier in immutable snapshot.
+            # Augmentation randomness is applied dynamically by training dataloaders.
 
         # 5. Split Logic (Apply to Originals)
         rebalance = options.get("rebalance", False)
@@ -205,16 +182,7 @@ class VersionManager:
                 
                 final_version_assets.append(asset)
                 
-                # Add augmented copies ONLY for TRAIN split
-                if s_name == "train" and "augmentation_candidates" in asset:
-                    for cand in asset["augmentation_candidates"]:
-                        aug_asset = cand["asset"]
-                        aug_asset["split"] = "train"
-                        final_version_assets.append(aug_asset)
-                        final_version_annotations.extend(cand["annotations"])
-                        split_counts["train"] += 1
-                
-                if "augmentation_candidates" in asset: del asset["augmentation_candidates"]
+                # Multiplier is virtual; do not materialize extra assets here.
 
         if rebalance:
             # Group by class (using the first annotation as the anchor)
@@ -258,7 +226,8 @@ class VersionManager:
             "total_images": len(final_version_assets),
             "total_annotations": len(final_version_annotations),
             "classes": sorted(list(classes)),
-            "split_counts": split_counts
+            "split_counts": split_counts,
+            "dataset_multiplier": max(1, max_version_size),
         }
 
     @classmethod
@@ -293,7 +262,7 @@ class VersionManager:
         if not version:
             return False
             
-        assets = list(db.version_assets.find({"version_id": version_id, "is_augmented": False}))
+        assets = list(db.version_assets.find({"version_id": version_id, "is_augmented": {"$ne": True}}))
         random.shuffle(assets)
         
         total = len(assets)
@@ -308,25 +277,7 @@ class VersionManager:
             updates.append(UpdateOne({"_id": asset["_id"]}, {"$set": {"split": s_name}}))
             split_counts[s_name] += 1
             
-            # Update augmented copies
-            if s_name == "train":
-                parent_id = asset["original_asset_id"]
-                # We can't easily bulk update with $regex in a list of UpdateOne for different assets
-                # so we'll do a separate update_many for each parent_id. 
-                # This is still better than individual updates per augmented asset.
-                res = db.version_assets.update_many(
-                    {"version_id": version_id, "is_augmented": True, "original_asset_id": {"$regex": f"^{parent_id}_aug_"}},
-                    {"$set": {"split": "train"}}
-                )
-                split_counts["train"] += res.modified_count
-            else:
-                parent_id = asset["original_asset_id"]
-                db.version_assets.delete_many(
-                    {"version_id": version_id, "is_augmented": True, "original_asset_id": {"$regex": f"^{parent_id}_aug_"}}
-                )
-                db.version_annotations.delete_many(
-                    {"version_id": version_id, "asset_id": {"$regex": f"^{parent_id}_aug_"}}
-                )
+            # Multiplier does not create persisted augmented rows, so no child updates.
 
         if updates:
             db.version_assets.bulk_write(updates)

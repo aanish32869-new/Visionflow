@@ -408,6 +408,19 @@ def _resolve_version_dir(version_id: str, conf: dict):
         return matching[0], matching[0].name
     return version_dir, version_id
 
+
+def _normalize_dataset_multiplier(value):
+    try:
+        parsed = int(value)
+    except Exception:
+        parsed = 1
+    return parsed if parsed in {1, 2, 3, 5} else 1
+
+
+def _extract_dataset_multiplier(version_doc):
+    options = (version_doc or {}).get("options") or {}
+    return _normalize_dataset_multiplier(options.get("max_version_size", 1))
+
 def _collect_train_class_counts(version_dir: Path):
     counts = {}
     labels_dir = version_dir / "train" / "labels"
@@ -458,6 +471,7 @@ def _get_training_precheck(project_id: str, version_id: str, architecture: str, 
     project_type = str(project.get("project_type") or "Object Detection")
     task = str(ARCH_MAP.get(architecture, {}).get("task", "detect"))
     split_counts = version.get("split_counts") or {}
+    dataset_multiplier = _extract_dataset_multiplier(version)
     train_count = int(split_counts.get("train", 0) or 0)
     valid_count = int(split_counts.get("valid", 0) or 0)
     test_count = int(split_counts.get("test", 0) or 0)
@@ -516,6 +530,7 @@ def _get_training_precheck(project_id: str, version_id: str, architecture: str, 
         "task": task,
         "architecture": architecture,
         "version_id": version_id,
+        "dataset_multiplier": dataset_multiplier,
         "split_counts": {"train": train_count, "valid": valid_count, "test": test_count},
         "classes_count": len(classes),
         "minimums": minimums,
@@ -529,6 +544,7 @@ def _calculate_auto_params(project_id, version_id, architecture):
     hw = _ensure_hardware_status_ready()
     
     img_count = version.get("images_count", 0)
+    dataset_multiplier = _extract_dataset_multiplier(version)
     
     if str(architecture).lower().startswith("yolov8"):
         if img_count < 500:
@@ -565,6 +581,7 @@ def _calculate_auto_params(project_id, version_id, architecture):
         
     return {
         "epochs": epochs,
+        "dataset_multiplier": dataset_multiplier,
         "batch_size": batch_size,
         "img_size": img_size,
         "workers": workers,
@@ -745,6 +762,8 @@ def _build_training_plan(version_doc, architecture, resolved_params, hw):
             "version_id": version_doc.get("version_id"),
             "name": version_doc.get("name"),
             "images_count": int(version_doc.get("images_count", 0) or 0),
+            "dataset_multiplier": _extract_dataset_multiplier(version_doc),
+            "effective_images_per_epoch": int(version_doc.get("images_count", 0) or 0) * _extract_dataset_multiplier(version_doc),
             "classes_count": len(version_doc.get("classes", []) or []),
         },
         "architecture_profile": profile,
@@ -872,11 +891,15 @@ def _dispatch_training(project_id, data):
     if not precheck.get("ok"):
         return jsonify({"error": "Training precheck failed", "precheck": precheck}), 400
 
+    db = _get_db()
+    version = db.versions.find_one({"version_id": version_id}) or {}
+    dataset_multiplier = _extract_dataset_multiplier(version)
     auto_params = _calculate_auto_params(project_id, version_id, architecture)
     def _resolve(val, key):
         return auto_params[key] if (val is None or str(val).lower() == "auto") else val
 
-    epochs = int(_resolve(params.get("epochs"), "epochs"))
+    base_epochs = int(_resolve(params.get("epochs"), "epochs"))
+    epochs = max(1, base_epochs) * dataset_multiplier
     batch_size = int(_resolve(params.get("batch_size"), "batch_size"))
     img_size = int(_resolve(params.get("img_size"), "img_size"))
     workers = int(_resolve(params.get("workers"), "workers"))
@@ -921,7 +944,9 @@ def _dispatch_training(project_id, data):
         "mode": "local", "device": device,
         "output_dir": str(output_dir),
         "params": {
+            "base_epochs": max(1, base_epochs),
             "epochs": epochs,
+            "dataset_multiplier": dataset_multiplier,
             "batch_size": batch_size,
             "img_size": img_size,
             "workers": workers,
@@ -932,9 +957,10 @@ def _dispatch_training(project_id, data):
         "terminal_logs": ["[INFO] Training job queued."],
     }
 
-    db = _get_db()
-    version = db.versions.find_one({"version_id": version_id}) or {}
     job_doc["version_display_id"] = version.get("display_id")
+    job_doc["dataset_multiplier"] = dataset_multiplier
+    job_doc["base_epochs"] = max(1, base_epochs)
+    job_doc["effective_images_per_epoch"] = int(version.get("images_count", 0) or 0) * dataset_multiplier
     job_doc["estimated_total_seconds"] = _estimate_training_seconds(version, architecture, epochs, batch_size, workers, device)
     historical = _estimate_historical_training_seconds(project_id, version_id, architecture, job_doc["params"])
     if historical:

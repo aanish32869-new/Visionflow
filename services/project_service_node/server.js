@@ -377,6 +377,118 @@ app.post("/api/folders", async (req, res) => {
   }
 });
 
+const _folderDeleteLocks = new Set();
+
+async function hardDeleteProjectByDoc(project) {
+  if (!project?._id) return { deleted: false, reason: "missing_project" };
+  const projectId = project._id.toString();
+  const storage = getProjectStorage(project);
+  const assets = await db.collection("assets").find({ project_id: projectId }).toArray();
+  const assetIds = assets.map((asset) => asset._id.toString());
+
+  for (const asset of assets) {
+    await deleteStoredAssetFile(asset);
+    await deleteAnnotationSession(asset._id.toString(), project);
+  }
+
+  await db.collection("annotations").deleteMany({ project_id: projectId });
+  if (assetIds.length) {
+    await db.collection("annotations").deleteMany({ asset_id: { $in: assetIds } });
+    await db.collection("annotation_sessions").deleteMany({ asset_id: { $in: assetIds } });
+  }
+  await db.collection("annotation_sessions").deleteMany({ project_id: projectId });
+  await db.collection("assets").deleteMany({ project_id: projectId });
+  await db.collection("versions").deleteMany({ project_id: projectId });
+  await db.collection("version_assets").deleteMany({ project_id: projectId });
+  await db.collection("version_annotations").deleteMany({ project_id: projectId });
+  await db.collection("exports").deleteMany({ project_id: projectId });
+  await db.collection("training_jobs").deleteMany({ project_id: projectId });
+  await db.collection("models").deleteMany({ project_id: projectId });
+  await db.collection("deployments").deleteMany({ project_id: projectId });
+  await db.collection("jobs").deleteMany({ project_id: projectId });
+  await db.collection("deleted_models").deleteMany({ project_id: projectId });
+  await db.collection("inference_history").deleteMany({ project_id: projectId });
+  await db.collection("projects").deleteOne({ _id: project._id });
+
+  if (storage.root && isPathInside(storage.root, config.projectRoot) && fs.existsSync(storage.root)) {
+    await fsp.rm(storage.root, { recursive: true, force: true });
+  }
+
+  return { deleted: true, project_id: projectId, deleted_assets: assets.length };
+}
+
+async function handleFolderHardDelete(req, res) {
+  const folderIdText = String(req.params.folderId || "").trim();
+  const folderObjectId = toObjectId(folderIdText);
+  if (!folderObjectId) {
+    return res.status(400).json({ error: "Invalid folder id" });
+  }
+  const lockKey = folderObjectId.toString();
+  if (_folderDeleteLocks.has(lockKey)) {
+    return res.status(409).json({ error: "Folder deletion already in progress" });
+  }
+  _folderDeleteLocks.add(lockKey);
+  try {
+    const cascade = String(req.query?.cascade || "true").toLowerCase() !== "false";
+    const folder = await db.collection("folders").findOne({ _id: folderObjectId });
+    if (!folder) {
+      return res.status(404).json({ error: "Folder not found" });
+    }
+    const projects = await db.collection("projects").find({
+      $or: [
+        { folder_id: folderObjectId.toString() },
+        { folder_id: folderObjectId },
+      ],
+    }).toArray();
+    if (!cascade && projects.length > 0) {
+      return res.status(409).json({ error: "Folder is not empty. Use cascade=true to hard-delete all child projects." });
+    }
+
+    const deletedProjects = [];
+    let deletedAssetsTotal = 0;
+    for (const project of projects) {
+      const result = await hardDeleteProjectByDoc(project);
+      if (result.deleted) {
+        deletedProjects.push(result.project_id);
+        deletedAssetsTotal += Number(result.deleted_assets || 0);
+      }
+    }
+
+    await db.collection("folders").deleteOne({ _id: folderObjectId });
+
+    // Best-effort cleanup for legacy folder-level metadata collections.
+    await Promise.allSettled([
+      db.collection("folder_permissions").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("folder_activity_logs").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("folder_thumbnails").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("folder_embeddings").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("folder_vector_indexes").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("folder_ai_outputs").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("folder_search_index").deleteMany({ folder_id: folderObjectId.toString() }),
+      db.collection("cache_entries").deleteMany({ folder_id: folderObjectId.toString() }),
+    ]);
+
+    return res.json({
+      success: true,
+      deleted_folder_id: folderObjectId.toString(),
+      deleted_projects: deletedProjects.length,
+      deleted_assets: deletedAssetsTotal,
+      deleted_project_ids: deletedProjects,
+    });
+  } catch (error) {
+    logger.error(`Failed to hard-delete folder ${folderIdText}:`, error);
+    return res.status(500).json({
+      error: "Failed to delete folder permanently",
+      details: error?.message || String(error),
+    });
+  } finally {
+    _folderDeleteLocks.delete(lockKey);
+  }
+}
+
+app.delete("/api/folders/:folderId", handleFolderHardDelete);
+app.post("/api/folders/:folderId/delete", handleFolderHardDelete);
+
 app.get("/api/workspace-overview", async (_req, res) => {
   try {
     const folders = await db.collection("folders").find().sort({ name: 1 }).toArray();
@@ -737,27 +849,8 @@ app.delete("/api/projects/:projectId", async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
-
-    const projectId = project._id.toString();
-    const storage = getProjectStorage(project);
-    const assets = await db.collection("assets").find({ project_id: projectId }).toArray();
-
-    for (const asset of assets) {
-      await deleteStoredAssetFile(asset);
-      await deleteAnnotationSession(asset._id.toString(), project);
-    }
-
-    await db.collection("annotations").deleteMany({ project_id: projectId });
-    await db.collection("annotation_sessions").deleteMany({ project_id: projectId });
-    await db.collection("assets").deleteMany({ project_id: projectId });
-    await db.collection("versions").deleteMany({ project_id: projectId });
-    await db.collection("projects").deleteOne({ _id: project._id });
-
-    if (storage.root && isPathInside(storage.root, config.projectRoot) && fs.existsSync(storage.root)) {
-      await fsp.rm(storage.root, { recursive: true, force: true });
-    }
-
-    res.json({ success: true, deleted_project_id: projectId });
+    const result = await hardDeleteProjectByDoc(project);
+    res.json({ success: true, deleted_project_id: result.project_id });
   } catch (error) {
     res.status(500).json({ error: "Failed to delete project" });
   }
@@ -2463,8 +2556,17 @@ async function moveFile(sourcePath, targetPath) {
 }
 
 async function safeUnlink(targetPath) {
-  if (targetPath && fs.existsSync(targetPath)) {
+  if (!targetPath || !fs.existsSync(targetPath)) return;
+  try {
+    const stats = await fsp.lstat(targetPath);
+    if (stats.isDirectory()) {
+      await fsp.rm(targetPath, { recursive: true, force: true });
+      return;
+    }
     await fsp.unlink(targetPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
   }
 }
 
@@ -2490,7 +2592,7 @@ async function storeUploadInGridFS(source, filename, metadata = {}) {
 
 async function deleteStoredAssetFile(asset) {
   const fileId = toObjectId(asset?.file_id || asset?.current_file_id);
-  if (fileId) {
+  if (fileId && assetFilesBucket) {
     try {
       await assetFilesBucket.delete(fileId);
     } catch (_error) {

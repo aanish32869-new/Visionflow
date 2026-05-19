@@ -811,6 +811,15 @@ class InferenceLogic:
         return names
 
     @staticmethod
+    def _is_label_in_allowed_classes(label, allowed_classes):
+        if not allowed_classes:
+            return True
+        for class_name in allowed_classes:
+            if InferenceLogic._label_matches_queries(label, [class_name]):
+                return True
+        return False
+
+    @staticmethod
     def _build_torchvision_classifier(architecture, num_classes):
         arch = str(architecture or "").lower()
         if torchvision is None:
@@ -1093,6 +1102,7 @@ class InferenceLogic:
                 for label in labels
             ]
         else:
+            allowed_classes = InferenceLogic._resolve_class_names(model_doc)
             # Capture detections at a permissive confidence floor so UI threshold
             # can be adjusted interactively without needing repeated model passes.
             capture_confidence = min(threshold, 0.01)
@@ -1111,18 +1121,22 @@ class InferenceLogic:
             # Keep all detections for visualize/deploy flows.
             # Client-side can choose to hide suspicious full-frame boxes, but
             # dropping here can lead to zero predictions even when objects exist.
-            predictions = [
-                {
-                    "type": "detection",
-                    "class": detection.get("label"),
-                    "confidence": detection.get("confidence"),
-                    "x": detection.get("x_center"),
-                    "y": detection.get("y_center"),
-                    "width": detection.get("width"),
-                    "height": detection.get("height"),
-                }
-                for detection in result.get("detections", [])
-            ]
+            predictions = []
+            for detection in result.get("detections", []):
+                label = detection.get("label")
+                if not InferenceLogic._is_label_in_allowed_classes(label, allowed_classes):
+                    continue
+                predictions.append(
+                    {
+                        "type": "detection",
+                        "class": label,
+                        "confidence": detection.get("confidence"),
+                        "x": detection.get("x_center"),
+                        "y": detection.get("y_center"),
+                        "width": detection.get("width"),
+                        "height": detection.get("height"),
+                    }
+                )
 
         peak_confidence = 0.0
         if predictions:

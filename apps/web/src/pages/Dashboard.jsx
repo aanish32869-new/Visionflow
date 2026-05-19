@@ -56,7 +56,7 @@ export default function Dashboard() {
           </div>
           <p className="mt-2 text-gray-600">successful runs</p>
           <p className="mt-2 text-sm text-gray-400">
-            {successfulRuns} running deployment{successfulRuns === 1 ? "" : "s"} in cloud
+            {successfulRuns} running deployment{successfulRuns === 1 ? "" : "s"}
           </p>
         </div>
 

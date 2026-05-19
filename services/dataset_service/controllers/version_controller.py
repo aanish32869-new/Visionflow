@@ -65,6 +65,12 @@ def _safe_int(value, default):
         return default
 
 
+def _normalize_dataset_multiplier(value):
+    allowed = {1, 2, 3, 5}
+    parsed = _safe_int(value, 1)
+    return parsed if parsed in allowed else 1
+
+
 def _find_project(project_id):
     try:
         if ObjectId.is_valid(project_id):
@@ -342,6 +348,7 @@ def create_version(project_id):
             "split": split,
             "preprocessing": data.get("preprocessing", {}),
             "augmentations": data.get("augmentations", []),
+            "max_version_size": _normalize_dataset_multiplier(data.get("max_version_size", 1)),
             "tag_filter": data.get("tag_filter", {}),
             "class_remap": data.get("class_remap", {}),
             "export_format": data.get("export_format", "yolov8")
