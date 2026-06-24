@@ -1,5 +1,5 @@
-﻿"""
-VisionFlow Training Service â€” Port 5005
+"""
+VisionFlow Training Service - Port 5005
 Manages training jobs, model registry, and local/server training dispatch.
 Config is read from visionflow.conf at startup and on each request.
 """
@@ -32,7 +32,7 @@ from architectures.yolo_engine import train_yolo
 from architectures.pytorch_engine import train_pytorch
 from architectures.resnet_engine import train_resnet
 
-# â”€â”€ Dependency Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Dependency Check ──────────────────────────────────────────────────────────
 def check_dependencies():
     required = ["flask", "flask_cors", "pymongo", "ultralytics", "torch"]
     missing = []
@@ -56,7 +56,7 @@ def check_dependencies():
 
 DEPENDENCIES_OK = check_dependencies()
 
-# â”€â”€ Configuration Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Configuration Loading ──────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 CONF_PATH = ROOT_DIR / "visionflow.conf"
 
@@ -76,7 +76,7 @@ def load_env_from_conf():
 # Load environment before any other setup
 load_env_from_conf()
 
-# â”€â”€ Setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Setup ──────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app)
 
@@ -255,10 +255,10 @@ def to_object_id(value):
         pass
     return None
 
-# â”€â”€ In-memory active job tracker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── In-memory active job tracker ───────────────────────────────────────────────
 _active_processes: dict[str, subprocess.Popen] = {}
 
-# â”€â”€ Architecture registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Architecture registry ───────────────────────────────────────────────────────
 ARCH_MAP = {
     "dinov3_small": {"label": "DINOv3 Small", "weights": "vit_b_16.pt", "task": "classify", "family": "dinov3", "size": "small"},
     "dinov3_base": {"label": "DINOv3 Base", "weights": "vit_b_16.pt", "task": "classify", "family": "dinov3", "size": "base"},
@@ -311,7 +311,7 @@ def _resolve_architecture_variant(architecture, model_size):
         raise ValueError(f"Unsupported architecture variant: {variant}")
     return variant
 
-# â”€â”€ Hardware Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Hardware Cache ────────────────────────────────────────────────────────────
 _hardware_cache = {
     "gpu_available": False, 
     "mps_available": False,
@@ -775,7 +775,7 @@ def _build_training_plan(version_doc, architecture, resolved_params, hw):
         "resolved_params": resolved_params
     }
 
-# â”€â”€ Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/api/training/health")
 def health():
@@ -1045,7 +1045,7 @@ def _register_model(job_id, project_id, version_id, architecture, arch_info, met
         db = _get_db()
         version = db.versions.find_one({"version_id": version_id}) or {}
         model_doc = {
-            "model_id": uuid.uuid4().hex, "name": f"{arch_info['label']} â€” {version.get('display_id', version_id[:8])}",
+            "model_id": uuid.uuid4().hex, "name": f"{arch_info['label']} - {version.get('display_id', version_id[:8])}",
             "project_id": project_id, "version_id": version_id, "architecture": architecture,
             "architecture_label": arch_info["label"], "metrics": metrics, "weights_path": str(weights_path),
             "runtime_artifacts": runtime_artifacts or {"pt": str(weights_path)},

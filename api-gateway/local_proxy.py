@@ -41,6 +41,10 @@ def get_target_port(path):
     # Inference routes must be checked before generic project model routes.
     if path.startswith('api/projects') and '/models/' in path and path.endswith('/infer'):
         return INFERENCE_PORT
+    if path.startswith('api/projects') and '/inference-history' in path:
+        return INFERENCE_PORT
+    if path.startswith('api/kpi/inference-stream'):
+        return INFERENCE_PORT
     if path.startswith('api/auto-label') or path.startswith('api/classify') or path.startswith('api/infer'):
         return INFERENCE_PORT
     # Training service — dedicated routes
@@ -74,6 +78,7 @@ def get_target_port(path):
         or path.startswith('api/logs')
         or path.startswith('api/deployments')
         or path.startswith('api/workflows')
+        or path.startswith('api/kpi/live/stream')
         or path.startswith('uploads/')
     ):
         return PROJECT_PORT

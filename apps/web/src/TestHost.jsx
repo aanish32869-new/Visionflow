@@ -14,6 +14,13 @@ import Settings from "./pages/Settings";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SystemMetricsWidget from "./components/SystemMetricsWidget";
 
+function KpiToolRedirect() {
+  React.useEffect(() => {
+    window.location.replace("/kpi-tool/index.html");
+  }, []);
+  return null;
+}
+
 // Define the global router configuration exactly once outside the React tree
 const globalRouter = createBrowserRouter([
   {
@@ -29,6 +36,10 @@ const globalRouter = createBrowserRouter([
       { path: "/uploads", element: <Uploads /> },
       { path: "/settings", element: <Settings /> },
       { path: "/annotate/batch/:batchId", element: <BatchPreview /> },
+      { path: "/kpi-tool", element: <KpiToolRedirect /> },
+      { path: "/kpi-tool/", element: <KpiToolRedirect /> },
+      { path: "/kpi-metrics", element: <KpiToolRedirect /> },
+      { path: "/kpi-metrics/", element: <KpiToolRedirect /> },
       { path: "*", element: <Navigate to="/" replace /> }
     ]
   }

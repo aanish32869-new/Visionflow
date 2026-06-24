@@ -69,6 +69,8 @@ export default defineConfig({
       // Inference Service. Keep the concrete infer route before the generic
       // project model registry route below.
       '^/api/projects/[^/]+/models/[^/]+/infer(?:$|[/?])': createProxy(inferenceTarget),
+      '^/api/projects/[^/]+/inference-history(?:$|[/?])': createProxy(inferenceTarget),
+      '^/api/kpi/inference-stream(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
 
       // Training Service (Registry, Jobs, Config)
@@ -89,6 +91,7 @@ export default defineConfig({
       // Project Service (Node)
       '^/api/annotation-groups(?:$|[/?])': createProxy(projectTarget),
       '^/api/(projects|assets|folders|workspace-overview|jobs|batches|deployments|workflows|system-metrics)(?:$|[/?])': createProxy(projectTarget),
+      '^/api/kpi/live/stream(?:$|[/?])': createProxy(projectTarget),
       '/uploads': createProxy(projectTarget),
       '/datasets': createProxy(datasetTarget),
     },
