@@ -6,10 +6,13 @@ def train_yolo(job_id, project_id, version_id, architecture, arch_info, params, 
     """Run YOLOv8 training using ultralytics library."""
     from ultralytics import YOLO
 
+    import os
     epochs = int(params.get("epochs", conf.get("local_epochs", 120)))
     batch_size = int(params.get("batch_size", conf.get("local_batch_size", 16)))
     img_size = int(params.get("img_size", conf.get("local_img_size", 768)))
-    workers = int(params.get("workers", conf.get("local_workers", 4)))
+    workers = int(params.get("workers", conf.get("local_workers", 0 if os.name == 'nt' else 4)))
+    if os.name == 'nt':
+        workers = 0  # Force 0 on Windows to prevent silent multiprocess crashes
     weights = arch_info.get("weights", "yolov8s.pt")
 
     export_cfg = params.get("export", {}) if isinstance(params.get("export"), dict) else {}
