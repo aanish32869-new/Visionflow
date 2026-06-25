@@ -1,9 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
-// Single centralized log file path
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const LOG_FILE = path.join(REPO_ROOT, 'logs', 'visionflow.log');
+const DEFAULT_LOG_FILE = path.join(REPO_ROOT, 'logs', 'visionflow.log');
+
+function resolveLogFile(logFile) {
+  if (!logFile) return DEFAULT_LOG_FILE;
+  return path.isAbsolute(logFile) ? logFile : path.resolve(REPO_ROOT, logFile);
+}
 
 const LEVELS = {
   DEBUG: 0,
@@ -19,9 +23,10 @@ function formatMessage(level, service, module, message) {
 }
 
 class Logger {
-  constructor(service, module) {
+  constructor(service, module, options = {}) {
     this.service = service;
     this.module = module;
+    this.logFile = resolveLogFile(options.logFile || options.log_file);
   }
 
   log(level, message, metadata = null) {
@@ -45,9 +50,10 @@ class Logger {
 
     // Append to the centralized log file
     try {
-      fs.appendFileSync(LOG_FILE, formatted);
+      fs.mkdirSync(path.dirname(this.logFile), { recursive: true });
+      fs.appendFileSync(this.logFile, formatted);
     } catch (err) {
-      console.error(`[LOGGER_FAIL] Could not write to ${LOG_FILE}: ${err.message}`);
+      console.error(`[LOGGER_FAIL] Could not write to ${this.logFile}: ${err.message}`);
     }
   }
 
@@ -58,4 +64,4 @@ class Logger {
   critical(msg, meta) { this.log('CRITICAL', msg, meta); }
 }
 
-module.exports = (service, module) => new Logger(service, module);
+module.exports = (service, module, options) => new Logger(service, module, options);

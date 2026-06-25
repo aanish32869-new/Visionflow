@@ -1,7 +1,39 @@
 const fs = require("fs");
-fs.mkdirSync("logs", { recursive: true });
-fs.writeFileSync("logs/project_service_heartbeat.txt", "Project service started at " + new Date().toISOString());
 const path = require("path");
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
+const LOG_DIR = path.join(REPO_ROOT, "logs");
+fs.mkdirSync(LOG_DIR, { recursive: true });
+fs.writeFileSync(path.join(LOG_DIR, "project_service_heartbeat.txt"), "Project service started at " + new Date().toISOString());
+
+// ── Structured JSON-Lines log files ─────────────────────────────────────────
+// Each file gets a session-start marker so log viewers can identify restarts.
+const SYSTEM_METRICS_LOG = path.join(LOG_DIR, "system-metrics.log");
+const KPI_METRICS_LOG    = path.join(LOG_DIR, "kpi-metrics.log");
+
+// Append a session-start sentinel so log readers can spot service restarts.
+const _sessionStart = new Date().toISOString();
+fs.appendFileSync(SYSTEM_METRICS_LOG, JSON.stringify({ _event: "session_start", service: "project-service", timestamp: _sessionStart }) + "\n");
+fs.appendFileSync(KPI_METRICS_LOG,    JSON.stringify({ _event: "session_start", service: "project-service", timestamp: _sessionStart }) + "\n");
+
+// Monotonic counter so every system-metrics snapshot has a unique sequence id.
+let metricsSeq = 0;
+
+/**
+ * Appends a single JSON-Lines record to a dedicated metrics log file.
+ * Safe to call from async contexts — uses synchronous appendFileSync so
+ * records are always written before the process can crash.
+ *
+ * @param {string} logPath  - Absolute path to the target .log file
+ * @param {object} record   - Plain object to serialise as a JSON line
+ */
+function appendMetricsJsonLine(logPath, record) {
+  try {
+    fs.appendFileSync(logPath, JSON.stringify(record) + "\n");
+  } catch (writeErr) {
+    // Silently swallow — we never want a log failure to crash the service.
+    console.error(`[METRICS_LOG] Failed to write to ${path.basename(logPath)}: ${writeErr.message}`);
+  }
+}
 const crypto = require("crypto");
 const os = require("os");
 const { execFile } = require("child_process");
@@ -9,11 +41,17 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const { MongoClient, ObjectId, GridFSBucket } = require("mongodb");
+const ExcelJS = require("exceljs");
 const logger = require("../common/logger")("PROJECT", "SERVER");
+const systemMetricsLogger = require("../common/logger")("PROJECT", "SYSTEM_METRICS", {
+  logFile: path.join(LOG_DIR, "system-metrics.log"),
+});
+const kpiMetricsLogger = require("../common/logger")("PROJECT", "KPI_METRICS", {
+  logFile: path.join(LOG_DIR, "kpi-metrics.log"),
+});
 
 const fsp = fs.promises;
 const SERVICE_ROOT = __dirname;
-const REPO_ROOT = path.resolve(SERVICE_ROOT, "..", "..");
 
 loadVisionflowConfig(path.join(REPO_ROOT, "visionflow.conf"));
 
@@ -251,11 +289,42 @@ function buildKpiEventDocs(req, res, durationMs) {
   return docs;
 }
 
+function summarizeKpiEvent(event) {
+  return {
+    type: event.type,
+    metric: event.metric,
+    route_group: event.route_group,
+    method: event.method,
+    path: event.path,
+    status_code: event.status_code,
+    duration_ms: event.duration_ms,
+    ts: event.ts,
+  };
+}
+
 async function insertKpiEvents(docs) {
   const payload = Array.isArray(docs) ? docs.filter(Boolean) : [];
   if (!payload.length || !db) return;
   try {
     await db.collection(KPI_EVENT_COLLECTION).insertMany(payload, { ordered: false });
+    for (const event of payload) {
+      const summary = summarizeKpiEvent(event);
+      // ── Write to kpi-metrics.log only (file-only, no terminal output) ──────
+      appendMetricsJsonLine(KPI_METRICS_LOG, {
+        timestamp:   new Date().toISOString(),
+        category:    "http_event",
+        type:        summary.type,
+        metric:      summary.metric,
+        method:      summary.method,
+        path:        summary.path,
+        route_group: summary.route_group,
+        status_code: summary.status_code,
+        duration_ms: summary.duration_ms,
+        is_up:       event.is_up ?? null,
+        session_id:  event.session_id ?? null,
+        ts:          summary.ts,
+      });
+    }
   } catch (error) {
     if (error?.code !== 11000) {
       logger.warn(`Failed to record KPI events: ${error?.message || error}`);
@@ -436,6 +505,8 @@ app.get("/health", (req, res) => {
 const METRIC_SAMPLE_MS = 500;
 const metricsClients = new Set();
 let metricsCollectorBusy = false;
+let systemMetricsTimer = null;
+let systemMetricsHistory = [];
 const kpiClients = new Set();
 let kpiHeartbeatTimer = null;
 let latestSystemMetrics = {
@@ -449,6 +520,96 @@ let prevCpuSnapshot = snapshotCpuTimes();
 
 app.get("/api/system-metrics", (_req, res) => {
   res.json(latestSystemMetrics);
+});
+
+app.post("/api/system-metrics/start", (req, res) => {
+  if (!systemMetricsTimer) {
+    systemMetricsHistory = [];
+    systemMetricsTimer = setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
+    res.json({ success: true, message: "Started gathering metrics" });
+  } else {
+    res.json({ success: true, message: "Already gathering metrics" });
+  }
+});
+
+app.post("/api/system-metrics/stop", async (req, res) => {
+  if (systemMetricsTimer) {
+    clearInterval(systemMetricsTimer);
+    systemMetricsTimer = null;
+  }
+
+  if (!systemMetricsHistory.length) {
+    return res.json({ message: "No metrics gathered.", summary: null });
+  }
+
+  let cpuMin = 100, cpuMax = 0, cpuSum = 0;
+  let ramMin = 100, ramMax = 0, ramSum = 0;
+  let diskMin = 100, diskMax = 0, diskSum = 0;
+  let gpuMin = 100, gpuMax = 0, gpuSum = 0;
+
+  const count = systemMetricsHistory.length;
+  for (const m of systemMetricsHistory) {
+    if (m.cpu < cpuMin) cpuMin = m.cpu;
+    if (m.cpu > cpuMax) cpuMax = m.cpu;
+    cpuSum += m.cpu;
+
+    if (m.ram < ramMin) ramMin = m.ram;
+    if (m.ram > ramMax) ramMax = m.ram;
+    ramSum += m.ram;
+
+    if (m.disk < diskMin) diskMin = m.disk;
+    if (m.disk > diskMax) diskMax = m.disk;
+    diskSum += m.disk;
+
+    if (m.gpu < gpuMin) gpuMin = m.gpu;
+    if (m.gpu > gpuMax) gpuMax = m.gpu;
+    gpuSum += m.gpu;
+  }
+
+  const summary = {
+    cpu: { min: cpuMin, max: cpuMax, avg: Number((cpuSum / count).toFixed(2)) },
+    ram: { min: ramMin, max: ramMax, avg: Number((ramSum / count).toFixed(2)) },
+    disk: { min: diskMin, max: diskMax, avg: Number((diskSum / count).toFixed(2)) },
+    gpu: { min: gpuMin, max: gpuMax, avg: Number((gpuSum / count).toFixed(2)) },
+    samples: count,
+  };
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("System Metrics");
+    sheet.columns = [
+      { header: "Timestamp", key: "timestamp", width: 25 },
+      { header: "CPU (%)", key: "cpu", width: 10 },
+      { header: "RAM (%)", key: "ram", width: 10 },
+      { header: "Disk (%)", key: "disk", width: 10 },
+      { header: "GPU (%)", key: "gpu", width: 10 },
+    ];
+    sheet.addRows(systemMetricsHistory);
+
+    const summarySheet = workbook.addWorksheet("Summary");
+    summarySheet.columns = [
+      { header: "Metric", key: "metric", width: 15 },
+      { header: "Min (%)", key: "min", width: 10 },
+      { header: "Max (%)", key: "max", width: 10 },
+      { header: "Avg (%)", key: "avg", width: 10 },
+    ];
+    summarySheet.addRow({ metric: "CPU", ...summary.cpu });
+    summarySheet.addRow({ metric: "RAM", ...summary.ram });
+    summarySheet.addRow({ metric: "Disk", ...summary.disk });
+    summarySheet.addRow({ metric: "GPU", ...summary.gpu });
+
+    const excelPath = path.join(LOG_DIR, "system-metrics.xlsx");
+    await workbook.xlsx.writeFile(excelPath);
+
+    res.json({
+      success: true,
+      summary,
+      excelFile: excelPath
+    });
+  } catch (err) {
+    logger.error("Failed to generate metrics Excel file", err);
+    res.status(500).json({ error: "Failed to generate Excel file", summary });
+  }
 });
 
 app.get("/api/system-metrics/stream", (req, res) => {
@@ -492,11 +653,12 @@ app.get("/api/kpi/live/stream", (req, res) => {
 });
 
 function broadcastKpiUpdate(reason, detail = {}) {
+  const ts = Date.now();
   const payload = `event: snapshot\ndata: ${JSON.stringify({
     source: "project-service",
     reason,
     detail,
-    ts: Date.now(),
+    ts,
   })}\n\n`;
 
   const deadClients = [];
@@ -510,6 +672,17 @@ function broadcastKpiUpdate(reason, detail = {}) {
   for (const client of deadClients) {
     kpiClients.delete(client);
   }
+
+  // ── Write structured JSON-Lines record to kpi-metrics.log ─────────────────
+  appendMetricsJsonLine(KPI_METRICS_LOG, {
+    timestamp:      new Date(ts).toISOString(),
+    category:       "broadcast",
+    type:           "broadcast",
+    reason,
+    detail,
+    active_clients: kpiClients.size,
+    ts,
+  });
 }
 
 function snapshotCpuTimes() {
@@ -634,10 +807,30 @@ async function collectAndBroadcastSystemMetrics() {
       disk: { percent: diskPercent },
       gpu,
     };
+
+    systemMetricsHistory.push({
+      timestamp: latestSystemMetrics.timestamp,
+      cpu: cpuPercent ?? 0,
+      ram: ramPercent ?? 0,
+      disk: diskPercent ?? 0,
+      gpu: gpu?.percent ?? 0
+    });
     const payload = `data: ${JSON.stringify(latestSystemMetrics)}\n\n`;
     for (const client of metricsClients) {
       client.write(payload);
     }
+
+    // ── Write structured JSON-Lines record to system-metrics.log ────────────
+    appendMetricsJsonLine(SYSTEM_METRICS_LOG, {
+      timestamp:          latestSystemMetrics.timestamp,
+      seq:                ++metricsSeq,
+      cpu_percent:        cpuPercent,
+      ram_percent:        ramPercent,
+      disk_percent:       diskPercent,
+      gpu_percent:        gpu?.percent ?? null,
+      gpu_status:         gpu?.status  ?? "Not detected",
+      active_sse_clients: metricsClients.size,
+    });
   } catch (error) {
     logger.warn(`Metrics collector error: ${error?.message || error}`);
   } finally {
@@ -2006,7 +2199,7 @@ async function start() {
       logger.info(`VisionFlow project service listening on http://localhost:${config.port}`);
     });
     collectAndBroadcastSystemMetrics();
-    setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
+    systemMetricsTimer = setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
   } catch (err) {
     logger.error("Failed to start project service", err);
     process.exit(1);
