@@ -567,36 +567,83 @@ app.post("/api/system-metrics/stop", async (req, res) => {
   }
 
   const summary = {
-    cpu: { min: cpuMin, max: cpuMax, avg: Number((cpuSum / count).toFixed(2)) },
-    ram: { min: ramMin, max: ramMax, avg: Number((ramSum / count).toFixed(2)) },
-    disk: { min: diskMin, max: diskMax, avg: Number((diskSum / count).toFixed(2)) },
-    gpu: { min: gpuMin, max: gpuMax, avg: Number((gpuSum / count).toFixed(2)) },
+    cpu:  { min: cpuMin,  max: cpuMax,  avg: Number((cpuSum  / count).toFixed(2)), sum: Number(cpuSum.toFixed(2))  },
+    ram:  { min: ramMin,  max: ramMax,  avg: Number((ramSum  / count).toFixed(2)), sum: Number(ramSum.toFixed(2))  },
+    disk: { min: diskMin, max: diskMax, avg: Number((diskSum / count).toFixed(2)), sum: Number(diskSum.toFixed(2)) },
+    gpu:  { min: gpuMin,  max: gpuMax,  avg: Number((gpuSum  / count).toFixed(2)), sum: Number(gpuSum.toFixed(2))  },
     samples: count,
   };
 
+  // Aggregate totals across all metrics
+  const totalMinSum  = Number((cpuMin  + ramMin  + diskMin  + gpuMin ).toFixed(2));
+  const totalMaxSum  = Number((cpuMax  + ramMax  + diskMax  + gpuMax ).toFixed(2));
+  const totalAvgAvg  = Number(((summary.cpu.avg + summary.ram.avg + summary.disk.avg + summary.gpu.avg) / 4).toFixed(2));
+  const totalSumAll  = Number((cpuSum  + ramSum  + diskSum  + gpuSum ).toFixed(2));
+
   try {
     const workbook = new ExcelJS.Workbook();
+
+    // ── Sheet 1: Raw data rows ─────────────────────────────────────────────
     const sheet = workbook.addWorksheet("System Metrics");
     sheet.columns = [
       { header: "Timestamp", key: "timestamp", width: 25 },
-      { header: "CPU (%)", key: "cpu", width: 10 },
-      { header: "RAM (%)", key: "ram", width: 10 },
-      { header: "Disk (%)", key: "disk", width: 10 },
-      { header: "GPU (%)", key: "gpu", width: 10 },
+      { header: "CPU (%)",   key: "cpu",       width: 10 },
+      { header: "RAM (%)",   key: "ram",       width: 10 },
+      { header: "Disk (%)",  key: "disk",      width: 10 },
+      { header: "GPU (%)",   key: "gpu",       width: 10 },
     ];
     sheet.addRows(systemMetricsHistory);
 
+    // Style header row bold
+    sheet.getRow(1).font = { bold: true };
+
+    // Blank separator row
+    sheet.addRow([]);
+
+    // Per-metric summary rows at bottom of main sheet
+    sheet.addRow({ timestamp: "── PER-METRIC SUMMARY ──", cpu: "CPU (%)", ram: "RAM (%)", disk: "Disk (%)", gpu: "GPU (%)" });
+    sheet.addRow({ timestamp: "Min",  cpu: cpuMin,               ram: ramMin,              disk: diskMin,              gpu: gpuMin              });
+    sheet.addRow({ timestamp: "Max",  cpu: cpuMax,               ram: ramMax,              disk: diskMax,              gpu: gpuMax              });
+    sheet.addRow({ timestamp: "Avg",  cpu: summary.cpu.avg,      ram: summary.ram.avg,     disk: summary.disk.avg,     gpu: summary.gpu.avg     });
+    sheet.addRow({ timestamp: "Sum",  cpu: summary.cpu.sum,      ram: summary.ram.sum,     disk: summary.disk.sum,     gpu: summary.gpu.sum     });
+
+    // Blank separator row
+    sheet.addRow([]);
+
+    // Aggregate totals
+    const aggLabel = sheet.addRow({ timestamp: "── AGGREGATE TOTALS ──", cpu: "", ram: "", disk: "", gpu: "" });
+    aggLabel.font = { bold: true };
+    sheet.addRow({ timestamp: "Sum of All Minimums",         cpu: totalMinSum  });
+    sheet.addRow({ timestamp: "Sum of All Maximums",         cpu: totalMaxSum  });
+    sheet.addRow({ timestamp: "Average of All Averages",     cpu: totalAvgAvg  });
+    sheet.addRow({ timestamp: "Grand Total Sum (all metrics)", cpu: totalSumAll });
+
+    // ── Sheet 2: Summary ──────────────────────────────────────────────────
     const summarySheet = workbook.addWorksheet("Summary");
     summarySheet.columns = [
-      { header: "Metric", key: "metric", width: 15 },
-      { header: "Min (%)", key: "min", width: 10 },
-      { header: "Max (%)", key: "max", width: 10 },
-      { header: "Avg (%)", key: "avg", width: 10 },
+      { header: "Metric",  key: "metric", width: 28 },
+      { header: "Sum (%)", key: "sum",    width: 12 },
+      { header: "Min (%)", key: "min",    width: 12 },
+      { header: "Max (%)", key: "max",    width: 12 },
+      { header: "Avg (%)", key: "avg",    width: 12 },
     ];
-    summarySheet.addRow({ metric: "CPU", ...summary.cpu });
-    summarySheet.addRow({ metric: "RAM", ...summary.ram });
+    summarySheet.getRow(1).font = { bold: true };
+
+    summarySheet.addRow({ metric: "CPU",  ...summary.cpu  });
+    summarySheet.addRow({ metric: "RAM",  ...summary.ram  });
     summarySheet.addRow({ metric: "Disk", ...summary.disk });
-    summarySheet.addRow({ metric: "GPU", ...summary.gpu });
+    summarySheet.addRow({ metric: "GPU",  ...summary.gpu  });
+
+    // Blank separator
+    summarySheet.addRow([]);
+
+    // Aggregate totals block
+    const aggHeader = summarySheet.addRow({ metric: "── AGGREGATE TOTALS ──", sum: "", min: "", max: "", avg: "" });
+    aggHeader.font = { bold: true };
+    summarySheet.addRow({ metric: "Sum of All Minimums",           min: totalMinSum  });
+    summarySheet.addRow({ metric: "Sum of All Maximums",           max: totalMaxSum  });
+    summarySheet.addRow({ metric: "Average of All Averages",       avg: totalAvgAvg  });
+    summarySheet.addRow({ metric: "Grand Total Sum (all metrics)", sum: totalSumAll  });
 
     const excelPath = path.join(LOG_DIR, "system-metrics.xlsx");
     await workbook.xlsx.writeFile(excelPath);
@@ -604,12 +651,22 @@ app.post("/api/system-metrics/stop", async (req, res) => {
     res.json({
       success: true,
       summary,
+      aggregateTotals: { sumOfMins: totalMinSum, sumOfMaxes: totalMaxSum, avgOfAvgs: totalAvgAvg, grandTotalSum: totalSumAll },
       excelFile: excelPath
     });
   } catch (err) {
     logger.error("Failed to generate metrics Excel file", err);
     res.status(500).json({ error: "Failed to generate Excel file", summary });
   }
+});
+
+app.get("/api/system-metrics/download", (req, res) => {
+  const excelPath = path.join(LOG_DIR, "system-metrics.xlsx");
+  res.download(excelPath, "system-metrics.xlsx", (err) => {
+    if (err) {
+      res.status(404).send("Excel file not found. Stop metrics gathering first.");
+    }
+  });
 });
 
 app.get("/api/system-metrics/stream", (req, res) => {

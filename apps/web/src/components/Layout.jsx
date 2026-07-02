@@ -4,6 +4,7 @@ import { useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Navbar from "./Navbar";
 import { Menu, X } from "lucide-react";
+import EcrioLogo from "./EcrioLogo";
 
 export default function Layout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -32,14 +33,9 @@ export default function Layout({ children }) {
       {/* Main Flexible Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {/* Mobile Action Header */}
-        <div className="md:hidden flex items-center justify-between bg-gradient-to-r from-[#0f172a] to-[#581c87] text-white p-4 shadow-md z-20 relative">
+        <div className="md:hidden flex items-center justify-between bg-[var(--ecrio-dark)] border-b border-[var(--ecrio-dark-card)] text-white p-4 shadow-md z-20 relative">
           <div className="font-bold tracking-tight flex items-center gap-2">
-             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-               <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-               <path d="M2 17L12 22L22 17" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-               <path d="M2 12L12 17L22 12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-             </svg>
-             VisionFlow
+             <EcrioLogo size={28} variant="light" />
           </div>
           <button onClick={() => setMobileMenuOpen(true)} className="p-1 hover:bg-white/20 outline-none rounded transition">
              <Menu size={24} />

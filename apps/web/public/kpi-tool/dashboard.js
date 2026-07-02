@@ -1132,7 +1132,126 @@ function bindEvents() {
     registerTelemetryInteraction();
     refreshDashboard().catch(() => {});
   });
+
+  document.getElementById('btn-download-excel').addEventListener('click', async () => {
+    const button = document.getElementById('btn-download-excel');
+    const originalText = button.innerHTML;
+    try {
+      button.innerHTML = 'Generating...';
+      button.disabled = true;
+      registerTelemetryInteraction();
+      
+      const response = await fetch(resolveApiUrl('/api/system-metrics/stop'), { method: 'POST' });
+      if (!response.ok) throw new Error('Failed to stop and generate metrics');
+      
+      const data = await response.json();
+      if (!data.summary) {
+         alert(data.message || 'No metrics gathered yet.');
+         return;
+      }
+      
+      // Trigger download
+      const a = document.createElement('a');
+      a.href = resolveApiUrl('/api/system-metrics/download');
+      a.download = 'system-metrics.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      // Optionally restart gathering here
+      // await fetch(resolveApiUrl('/api/system-metrics/start'), { method: 'POST' });
+    } catch (err) {
+      alert('Error generating Excel file: ' + err.message);
+    } finally {
+      button.innerHTML = originalText;
+      button.disabled = false;
+    }
+  });
   document.getElementById('btn-close-detail').addEventListener('click', closeDetail);
+
+  document.getElementById('btn-download-kpi')?.addEventListener('click', () => {
+    registerTelemetryInteraction();
+    const rows = [
+      ['Metric Name', 'Key', 'Current Value', 'Unit', 'Status', 'Samples', 'Warning Threshold', 'Critical Threshold', 'Sum (History)', 'Min (History)', 'Max (History)', 'Avg (History)']
+    ];
+
+    let totalMin = 0, totalMax = 0, totalAvg = 0, totalSum = 0;
+    let metricCount = 0;
+
+    METRIC_DEFS.forEach(def => {
+      const metric = state.metrics[def.key];
+      if (metric) {
+        const history = (metric.history || []).filter(v => typeof v === 'number' && !isNaN(v));
+        const sum = history.reduce((a, b) => a + b, 0);
+        const min = history.length ? Math.min(...history) : 0;
+        const max = history.length ? Math.max(...history) : 0;
+        const avg = history.length ? sum / history.length : 0;
+
+        totalSum += sum;
+        totalMin += min;
+        totalMax += max;
+        totalAvg += avg;
+        metricCount++;
+
+        rows.push([
+          def.name,
+          def.key,
+          metric.current,
+          def.unit,
+          metric.status,
+          metric.samples || 0,
+          def.warningThreshold,
+          def.criticalThreshold,
+          parseFloat(sum.toFixed(4)),
+          parseFloat(min.toFixed(4)),
+          parseFloat(max.toFixed(4)),
+          parseFloat(avg.toFixed(4))
+        ]);
+      }
+    });
+
+    // Blank separator row
+    rows.push([]);
+
+    // Summary totals row
+    rows.push([
+      'SUMMARY TOTALS', '', '', '', '', '',  '', '',
+      parseFloat(totalSum.toFixed(4)),
+      parseFloat(totalMin.toFixed(4)),
+      parseFloat(totalMax.toFixed(4)),
+      metricCount > 0 ? parseFloat((totalAvg / metricCount).toFixed(4)) : 0
+    ]);
+
+    // Individual summary rows for clarity
+    rows.push(['Sum of All Minimums', '', '', '', '', '', '', '', '', parseFloat(totalMin.toFixed(4)), '', '']);
+    rows.push(['Sum of All Maximums', '', '', '', '', '', '', '', '', '', parseFloat(totalMax.toFixed(4)), '']);
+    rows.push(['Average of All Averages', '', '', '', '', '', '', '', '', '', '', metricCount > 0 ? parseFloat((totalAvg / metricCount).toFixed(4)) : 0]);
+
+    if (typeof XLSX !== 'undefined') {
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+
+      // Style header row bold (column widths)
+      ws['!cols'] = [
+        { wch: 22 }, { wch: 18 }, { wch: 14 }, { wch: 8 }, { wch: 10 },
+        { wch: 9 }, { wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'KPI Metrics');
+      XLSX.writeFile(wb, 'kpi-metrics.xlsx');
+    } else {
+      const csvContent = rows.map(r => r.map(v => `"${v ?? ''}"`).join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'kpi-metrics.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  });
 
   window.addEventListener('visionflow_data_changed', () => {
     refreshDashboard().catch(() => {});

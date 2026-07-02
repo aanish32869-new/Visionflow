@@ -32,6 +32,7 @@ DATASET_PORT  = int(os.getenv("PORT_DATASET_SERVICE",  5003))
 PROJECT_PORT  = int(os.getenv("PORT_PROJECT_SERVICE",  5004))
 TRAINING_PORT = int(os.getenv("PORT_TRAINING_SERVICE", 5005))
 INFERENCE_PORT= int(os.getenv("PORT_INFERENCE_SERVICE",5006))
+NOTIFICATION_PORT = int(os.getenv("PORT_NOTIFICATION_SERVICE", 5009))
 
 def get_target_port(path):
     # Auth
@@ -47,6 +48,8 @@ def get_target_port(path):
         return INFERENCE_PORT
     if path.startswith('api/auto-label') or path.startswith('api/classify') or path.startswith('api/infer'):
         return INFERENCE_PORT
+    if path.startswith('api/notifications'):
+        return NOTIFICATION_PORT
     # Training service — dedicated routes
     if path.startswith('api/training/'):
         return TRAINING_PORT

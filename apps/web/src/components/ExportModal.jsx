@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useRef, useState, useEffect } from "react";
 import { X, Download, CheckCircle, AlertTriangle, Box, ChevronRight } from "lucide-react";
 import logger from "../utils/logger";
+import { emitVisionFlowNotification } from "../utils/notifications";
 
 const FORMAT_GROUPS = [
   {
@@ -35,6 +36,53 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
   const [pendingReady, setPendingReady] = useState(false);
   const [error, setError] = useState(null);
   const [exportData, setExportData] = useState(null);
+  const notifiedExportRef = useRef(new Set());
+
+  const fetchStatus = useCallback(async (targetExportId = exportId) => {
+    if (!targetExportId) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/dataset/exports/${targetExportId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setProgress(data.progress || 0);
+      if (data.status === "Ready") {
+        setProgress(100);
+        setExportData(data);
+        setPendingReady(true);
+        if (!notifiedExportRef.current.has(`ready-${targetExportId}`)) {
+          notifiedExportRef.current.add(`ready-${targetExportId}`);
+          emitVisionFlowNotification({
+            id: `dataset-export-completed-${targetExportId}`,
+            status: "Success",
+            title: "Dataset export completed",
+            description: "Your dataset export is ready to download.",
+            route: "/upload",
+            projectId,
+            source: "dataset-export",
+          });
+        }
+      } else if (data.status === "Failed") {
+        setStatus("failed");
+        setError(data.error || "Export failed unexpectedly.");
+        if (!notifiedExportRef.current.has(`failed-${targetExportId}`)) {
+          notifiedExportRef.current.add(`failed-${targetExportId}`);
+          emitVisionFlowNotification({
+            id: `dataset-export-failed-${targetExportId}`,
+            status: "Error",
+            title: "Export failed",
+            description: data.error || "Dataset export failed unexpectedly.",
+            route: "/upload",
+            projectId,
+            source: "dataset-export",
+          });
+        }
+      } else if (data.status === "Processing") {
+        setStatus("processing");
+      }
+    } catch (err) {
+      logger.error("Failed to fetch export status", err);
+    }
+  }, [exportId, projectId]);
 
   useEffect(() => {
     let interval;
@@ -42,7 +90,7 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
       interval = setInterval(fetchStatus, 500);
     }
     return () => clearInterval(interval);
-  }, [exportId, status]);
+  }, [exportId, fetchStatus, status]);
 
   useEffect(() => {
     if (!(status === "preparing" || status === "processing")) return undefined;
@@ -60,27 +108,6 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
     }, 150);
     return () => clearInterval(interval);
   }, [progress, pendingReady, status]);
-
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/dataset/exports/${exportId}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setProgress(data.progress || 0);
-      if (data.status === "Ready") {
-        setProgress(100);
-        setExportData(data);
-        setPendingReady(true);
-      } else if (data.status === "Failed") {
-        setStatus("failed");
-        setError(data.error || "Export failed unexpectedly.");
-      } else if (data.status === "Processing") {
-        setStatus("processing");
-      }
-    } catch (err) {
-      logger.error("Failed to fetch export status", err);
-    }
-  };
 
   const handleStartExport = async () => {
     setStatus("preparing");
@@ -101,15 +128,43 @@ export default function ExportModal({ isOpen, onClose, projectId, assetIds = [] 
       const data = await res.json();
       if (res.ok) {
         setExportId(data.export_id);
-        fetchStatus();
+        emitVisionFlowNotification({
+          id: `dataset-export-started-${data.export_id || Date.now()}`,
+          status: "Information",
+          title: "Dataset export started",
+          description: "VisionFlow is preparing your dataset export.",
+          route: "/upload",
+          projectId,
+          source: "dataset-export",
+        });
+        fetchStatus(data.export_id);
       }
       else {
         setStatus("failed");
         setError(data.error || "Failed to start export.");
+        emitVisionFlowNotification({
+          id: `dataset-export-failed-start-${Date.now()}`,
+          status: "Error",
+          title: "Export failed",
+          description: data.error || "Failed to start dataset export.",
+          route: "/upload",
+          projectId,
+          source: "dataset-export",
+        });
       }
     } catch (err) {
+      logger.error("Failed to start dataset export", err);
       setStatus("failed");
       setError("An error occurred while connecting to the server.");
+      emitVisionFlowNotification({
+        id: `dataset-export-network-failed-${Date.now()}`,
+        status: "Error",
+        title: "Server unavailable",
+        description: "VisionFlow could not connect to start the export.",
+        route: "/upload",
+        projectId,
+        source: "dataset-export",
+      });
     }
   };
 

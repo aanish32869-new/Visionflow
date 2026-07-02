@@ -32,6 +32,7 @@ export default function ClassesTab() {
         const data = await res.json();
         const serverClasses = Array.isArray(data.classes) ? data.classes : [];
         const nextClasses = serverClasses.map((item, index) => ({
+          id: item.id || item.name,
           name: item.name,
           color: item.color || COLORS[index % COLORS.length],
           attributes: item.attributes || [],

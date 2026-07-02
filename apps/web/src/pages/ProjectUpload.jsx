@@ -22,6 +22,7 @@ import GenerateVersionModal from "../components/GenerateVersionModal";
 import * as tf from '@tensorflow/tfjs';
 import * as mobilenet from '@tensorflow-models/mobilenet';
 import logger from "../utils/logger";
+import { emitVisionFlowNotification } from "../utils/notifications";
 
 function buildBatchId(label) {
   return `${(label || "uploaded-batch").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "uploaded-batch"}-${Date.now()}`;
@@ -430,6 +431,15 @@ export default function ProjectUpload() {
     await Promise.all(workers);
     
     setIsUploading(false);
+    emitVisionFlowNotification({
+      id: `batch-upload-completed-${batchMeta.batchId}`,
+      status: "Success",
+      title: filesArray.length > 1 ? "Batch upload completed" : "Image upload completed",
+      description: `${filesArray.length} file${filesArray.length === 1 ? "" : "s"} processed for ${normalizedBatchName}.`,
+      route: "/upload",
+      projectId,
+      source: "upload",
+    });
     setActiveAnnotationBatchId(batchMeta.batchId);
     fetchAssets();
     setActiveTab("annotate");
@@ -508,6 +518,15 @@ export default function ProjectUpload() {
     setAutoLabelStatus("");
     const isClassificationProject = projectType === "Classification";
     const batchConfidenceThreshold = isClassificationProject ? 0.5 : 0.75;
+    emitVisionFlowNotification({
+      id: `batch-auto-label-started-${asset?.id || activeAnnotationBatchId || projectId}-${Date.now()}`,
+      status: "Information",
+      title: "Auto-label started",
+      description: asset ? "VisionFlow is labeling one image." : "VisionFlow is labeling the selected batch.",
+      route: "/upload",
+      projectId,
+      source: "auto-label",
+    });
     
     try {
       const endpoint = isClassificationProject ? "/api/infer/classification-label" : "/api/infer/yolo-label";
@@ -532,11 +551,31 @@ export default function ProjectUpload() {
         ? `Successfully predicted image classes for ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"} at ${Math.round(batchConfidenceThreshold * 100)}% confidence or higher.`
         : `Successfully labeled ${totalAnnotations} objects across ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"} using YOLOv26s at ${Math.round(batchConfidenceThreshold * 100)}% confidence or higher.`
       );
+      emitVisionFlowNotification({
+        id: `batch-auto-label-completed-${asset?.id || activeAnnotationBatchId || projectId}-${Date.now()}`,
+        status: "Success",
+        title: "Auto-label completed",
+        description: isClassificationProject
+          ? `Predicted classes for ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"}.`
+          : `Labeled ${totalAnnotations} objects across ${annotatedAssets} image${annotatedAssets === 1 ? "" : "s"}.`,
+        route: "/upload",
+        projectId,
+        source: "auto-label",
+      });
       await fetchAssets();
       setAnnotateView('tool');
     } catch (err) {
       console.error(err);
       setAutoLabelError(err.message || `Failed to run ${isClassificationProject ? "classification" : "YOLO"} auto-labeling.`);
+      emitVisionFlowNotification({
+        id: `batch-auto-label-failed-${asset?.id || activeAnnotationBatchId || projectId}-${Date.now()}`,
+        status: "Error",
+        title: "Auto-label failed",
+        description: err.message || "Batch auto-labeling failed.",
+        route: "/upload",
+        projectId,
+        source: "auto-label",
+      });
     } finally {
       setIsApplyingAutoLabel(false);
     }
@@ -809,12 +848,39 @@ export default function ProjectUpload() {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       if (ready?.download_url) {
+        emitVisionFlowNotification({
+          id: `batch-export-completed-${startData.export_id}`,
+          status: "Success",
+          title: "Dataset export completed",
+          description: `${batch.batch_name || "Batch"} export is ready.`,
+          route: "/upload",
+          projectId,
+          source: "dataset-export",
+        });
         window.location.href = ready.download_url;
       } else {
+        emitVisionFlowNotification({
+          id: `batch-export-failed-${startData.export_id || Date.now()}`,
+          status: "Error",
+          title: "Export failed",
+          description: `${batch.batch_name || "Batch"} export failed or timed out.`,
+          route: "/upload",
+          projectId,
+          source: "dataset-export",
+        });
         alert("Export failed or timed out. Please try again.");
       }
     } catch (err) {
       console.error("Download failed", err);
+      emitVisionFlowNotification({
+        id: `batch-export-network-failed-${Date.now()}`,
+        status: "Error",
+        title: "Export failed",
+        description: "Batch export could not connect to the server.",
+        route: "/upload",
+        projectId,
+        source: "dataset-export",
+      });
       alert("Download failed. Please check server status and retry.");
     } finally {
       setIsBatchActionLoading(false);

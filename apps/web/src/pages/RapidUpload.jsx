@@ -2,6 +2,7 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { Globe, Lock, Bell, HelpCircle, ArrowUp, Minus, Plus, RotateCcw, Eye, Search, ThumbsUp, ThumbsDown, SlidersHorizontal, ArrowRight, Zap, Sparkles, Image as ImageIcon, Trash, Rocket, List, Crop, X } from "lucide-react";
 import { useRef, useState, useEffect } from "react";
+import EcrioLogo from "../components/EcrioLogo";
 
 export default function RapidUpload() {
   const navigate = useNavigate();
@@ -711,9 +712,9 @@ export default function RapidUpload() {
       <div className="h-screen overflow-y-auto bg-white font-sans flex flex-col animate-page-enter">
         <header className="flex justify-between items-center px-6 py-4 border-b border-gray-100 shadow-sm z-10 relative bg-white">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/')}>
-             <span className="font-bold tracking-tight text-violet-700 text-lg">VisionFlow</span>
-             <span className="text-violet-600 font-bold uppercase text-[12px] tracking-widest ml-1 mt-0.5">Rapid</span>
-             <HelpCircle size={13} className="text-violet-400 ml-1 hover:text-violet-600 transition" />
+             <EcrioLogo size={32} />
+             <span className="text-[var(--ecrio-red)] font-bold uppercase text-[12px] tracking-widest ml-2 mt-0.5">Rapid</span>
+             <HelpCircle size={13} className="text-gray-400 ml-1 hover:text-[var(--ecrio-red)] transition" />
           </div>
           <div className="flex items-center gap-5">
           </div>
@@ -737,7 +738,7 @@ export default function RapidUpload() {
                       onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                       onDragLeave={() => setIsDragging(false)}
                       onDrop={handleDrop}
-                      className={`w-full border-2 border-dashed rounded-[18px] h-[400px] flex flex-col justify-center items-center cursor-pointer transition-colors group ${isDragging ? 'bg-violet-100 border-violet-600' : isUploading ? 'bg-violet-50/80 cursor-wait border-[#a78bfa]' : 'border-[#a78bfa] hover:bg-violet-50/50 hover:border-violet-500'}`}
+                      className={`w-full border-2 border-dashed rounded-[18px] h-[400px] flex flex-col justify-center items-center cursor-pointer transition-colors group ${isDragging ? 'bg-violet-100 border-violet-600' : isUploading ? 'bg-violet-50/80 cursor-wait border-[#e56464]' : 'border-[#e56464] hover:bg-violet-50/50 hover:border-violet-500'}`}
                     >
                       <div className={`w-[50px] h-[50px] rounded-full flex items-center justify-center mb-5 transition ${isUploading ? 'bg-violet-200 animate-pulse' : 'bg-violet-100 group-hover:bg-violet-200'}`}>
                          <ArrowUp className="text-violet-600" strokeWidth={2.5} size={22} />
@@ -881,9 +882,9 @@ export default function RapidUpload() {
       {/* Top Protocol Header */}
       <header className="flex justify-between items-center px-4 md:px-6 py-3 border-b border-gray-200 bg-white shrink-0 shadow-sm z-10 relative">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => navigate('/')}>
-             <span className="font-bold tracking-tight text-violet-700 text-lg md:text-[20px]">visionflow</span>
-             <span className="text-violet-600 font-bold uppercase text-[11px] md:text-[13px] tracking-widest mt-1">RAPID</span>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/')}>
+             <EcrioLogo size={32} />
+             <span className="text-[var(--ecrio-red)] font-bold uppercase text-[11px] md:text-[13px] tracking-widest mt-1 ml-1">RAPID</span>
           </div>
           
           <div className="hidden md:flex items-center gap-3 ml-4">
@@ -1032,7 +1033,7 @@ export default function RapidUpload() {
                    className="w-full border border-violet-200 text-violet-700 bg-white hover:bg-violet-50 rounded-[6px] px-4 py-2 font-bold text-[13px] transition disabled:opacity-50 flex items-center justify-center gap-1 shadow-sm"
                  >
                    {isSearching ? <span className="animate-spin rounded-full h-3 w-3 border-b-2 border-violet-700"></span> : "Find Objects"}
-                   <Sparkles size={13} className={`${isSearching ? 'hidden' : ''} text-[#a78bfa]`} />
+                   <Sparkles size={13} className={`${isSearching ? 'hidden' : ''} text-[#e56464]`} />
                  </button>
                </div>
 

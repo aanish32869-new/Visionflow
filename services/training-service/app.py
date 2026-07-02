@@ -12,6 +12,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,6 +108,22 @@ def _get_db():
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+def _emit_notification(payload):
+    if str(os.getenv("NOTIFICATIONS_ENABLED", "true")).strip().lower() in {"0", "false", "no", "off"}:
+        return
+    try:
+        port = int(os.getenv("PORT_NOTIFICATION_SERVICE", 5009))
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://localhost:{port}/api/notifications",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=1).read()
+    except (OSError, urllib.error.URLError, ValueError):
+        pass
 
 def _serialize(doc):
     """Convert MongoDB doc to JSON-serialisable dict."""
@@ -968,6 +986,15 @@ def _dispatch_training(project_id, data):
     # Provide UI-ready loading representation from the start.
     job_doc.update(_compute_progress_update(job_doc, {"status": "Preparing", "progress": 1}))
     db.training_jobs.insert_one(job_doc)
+    _emit_notification({
+        "id": f"training-started-{job_id}",
+        "status": "Information",
+        "title": "Model training started",
+        "description": f"{arch_info.get('label', architecture)} training has started.",
+        "route": "/upload",
+        "projectId": project_id,
+        "source": "training-service",
+    })
 
     thread = threading.Thread(
         target=_run_training,
@@ -987,9 +1014,43 @@ def _run_training(job_id, project_id, version_id, architecture, arch_info, param
 
     def _update(fields):
         nonlocal job_doc
+        previous_status = job_doc.get("status")
         enriched = _compute_progress_update(job_doc, fields)
         db.training_jobs.update_one({"job_id": job_id}, {"$set": {**enriched, "updated_at": _utc_now()}})
         job_doc = {**job_doc, **enriched}
+        next_status = job_doc.get("status")
+        if previous_status != next_status:
+            label = job_doc.get("model_version_label") or job_doc.get("architecture_label") or architecture
+            if next_status == "Completed":
+                _emit_notification({
+                    "id": f"training-completed-{job_id}",
+                    "status": "Success",
+                    "title": "Model training completed",
+                    "description": f"{label} finished successfully.",
+                    "route": "/upload",
+                    "projectId": project_id,
+                    "source": "training-service",
+                })
+            elif next_status == "Failed":
+                _emit_notification({
+                    "id": f"training-failed-{job_id}",
+                    "status": "Error",
+                    "title": "Model training failed",
+                    "description": job_doc.get("error") or f"{label} failed.",
+                    "route": "/upload",
+                    "projectId": project_id,
+                    "source": "training-service",
+                })
+            elif next_status == "Cancelled":
+                _emit_notification({
+                    "id": f"training-cancelled-{job_id}",
+                    "status": "Warning",
+                    "title": "Model training cancelled",
+                    "description": f"{label} was cancelled.",
+                    "route": "/upload",
+                    "projectId": project_id,
+                    "source": "training-service",
+                })
 
     def _append_log(line):
         text = str(line or "").strip()

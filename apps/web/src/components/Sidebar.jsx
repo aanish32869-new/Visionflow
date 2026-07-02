@@ -6,6 +6,7 @@ import {
   Rocket,
   Settings,
 } from "lucide-react";
+import EcrioLogo from "./EcrioLogo";
 
 export default function Sidebar() {
   const { pathname } = useLocation();
@@ -17,11 +18,11 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-64 bg-gradient-to-b from-[#0f172a] to-[#581c87] text-white flex flex-col justify-between">
+    <div className="w-64 bg-[var(--ecrio-dark)] border-r border-[var(--ecrio-dark-card)] text-white flex flex-col justify-between">
       
       <div>
         <div className="p-5 text-lg font-semibold tracking-tight text-white mb-2 flex items-center justify-between">
-          <span>VisionFlow</span>
+          <EcrioLogo size={32} variant="light" />
           <Link
             to="/settings"
             className="p-1.5 rounded-md text-gray-300 hover:text-white hover:bg-white/10 transition"

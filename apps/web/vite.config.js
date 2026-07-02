@@ -50,6 +50,8 @@ const datasetTarget = `http://localhost:${Number(visionflowConfig.PORT_DATASET_S
 const projectTarget = `http://localhost:${Number(visionflowConfig.PORT_PROJECT_SERVICE || 5004)}`
 const trainingTarget = `http://localhost:${Number(visionflowConfig.PORT_TRAINING_SERVICE || 5005)}`
 const inferenceTarget = `http://localhost:${Number(visionflowConfig.PORT_INFERENCE_SERVICE || 5006)}`
+const notificationTarget = `http://localhost:${Number(visionflowConfig.PORT_NOTIFICATION_SERVICE || 5009)}`
+const notificationsEnabled = String(visionflowConfig.NOTIFICATIONS_ENABLED ?? 'true').toLowerCase() !== 'false'
 
 const createProxy = (target) => ({
   target,
@@ -59,6 +61,9 @@ const createProxy = (target) => ({
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  define: {
+    'import.meta.env.VITE_NOTIFICATIONS_ENABLED': JSON.stringify(String(notificationsEnabled)),
+  },
   server: {
     host: '0.0.0.0',
     proxy: {
@@ -72,6 +77,9 @@ export default defineConfig({
       '^/api/projects/[^/]+/inference-history(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/kpi/inference-stream(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
+
+      // Notification Service
+      '^/api/notifications(?:$|[/?])': createProxy(notificationTarget),
 
       // Training Service (Registry, Jobs, Config)
       '^/api/training(?:$|[/?])': createProxy(trainingTarget),
