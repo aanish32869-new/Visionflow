@@ -1,116 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* =====================================================
+   ECRIO Design System — Color Tokens
+   Brand: Crimson Red #C41E2A | Steel Grey #4B6575 | Off-White #F4F4F5
+   ===================================================== */
+
 @layer base {
   :root {
-    --text: #1f2937;
-    --text-light: #6b7280;
-    --bg: #f9fafb;
-    --card: #ffffff;
-    --border: #e5e7eb;
-    --accent: #7c3aed;
+    /* Ecrio brand palette */
+    --ecrio-red:        #E53935;
+    --ecrio-red-dark:   #D32F2F;
+    --ecrio-red-light:  #EF5350;
+    --ecrio-red-muted:  rgba(229, 57, 53, 0.12);
+
+    --ecrio-steel:      #041A37;
+    --ecrio-steel-dark: #021023;
+    --ecrio-steel-mid:  #082C5A;
+
+    --ecrio-dark:       #1C2028;
+    --ecrio-dark-card:  #242930;
+
+    /* UI semantic tokens */
+    --text:             #1C2028;
+    --text-light:       #637D8E;
+    --bg:               #F4F4F5;
+    --card:             #FFFFFF;
+    --border:           #E2E4E7;
+    --accent:           #E53935;
+    --accent-hover:     #D32F2F;
+  }
+
+  html {
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   }
 
   body {
-    @apply font-sans text-[var(--text)];
-    background: #f6f7fb;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    color: var(--text);
+    background: #F4F4F5;
     overflow: hidden;
   }
 
+  ::selection {
+    background-color: var(--ecrio-red);
+    color: white;
+  }
+
+  /* ── Light theme ── */
   :root.theme-light body {
-    background: #f6f7fb;
-    color: #1f2937;
+    background: #F4F4F5;
+    color: #1C2028;
   }
 
+  /* ── Dark theme ── */
   :root.theme-dark body {
-    background: #0b1020;
-    color: #e5e7eb;
+    background: #13181F;
+    color: #E8EAED;
   }
-
   :root.theme-dark .card {
-    background: #121a2b;
-    border-color: #253049;
-    color: #e5e7eb;
+    background: #1C2028;
+    border-color: #2E3540;
+    color: #E8EAED;
   }
-
   :root.theme-dark .text-gray-900,
   :root.theme-dark .text-gray-800,
   :root.theme-dark .text-gray-700 {
-    color: #e5e7eb !important;
+    color: #E8EAED !important;
   }
-
   :root.theme-dark .text-gray-600,
   :root.theme-dark .text-gray-500,
   :root.theme-dark .text-gray-400 {
-    color: #aab4c8 !important;
+    color: #8A96A3 !important;
   }
-
   :root.theme-dark .bg-white,
   :root.theme-dark .bg-gray-50 {
-    background-color: #121a2b !important;
+    background-color: #1C2028 !important;
   }
-
   :root.theme-dark .border-gray-200,
   :root.theme-dark .border-gray-300,
   :root.theme-dark .border-gray-100 {
-    border-color: #253049 !important;
+    border-color: #2E3540 !important;
   }
 
-  /* Premium Custom Scrollbars */
+  /* ── Ecrio-branded scrollbars ── */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(139, 92, 246, 0.3); /* violet-500 with opacity */
+    background: rgba(229, 57, 53, 0.25);
     border-radius: 10px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(139, 92, 246, 0.6);
+    background: rgba(229, 57, 53, 0.55);
   }
 }
 
+/* =====================================================
+   Tailwind utility overrides — replace violet with red
+   ===================================================== */
 @layer components {
+  /* Cards */
   .card {
     @apply bg-white border border-gray-200 rounded-xl shadow-sm;
   }
 
+  /* Primary button — Ecrio red */
   .btn-primary {
-    @apply bg-violet-600 text-white px-4 py-2 rounded-md text-sm transition-colors duration-200 hover:bg-violet-700;
+    background-color: var(--ecrio-red);
+    color: #fff;
+    @apply px-4 py-2 rounded-md text-sm font-medium transition-all duration-200;
+  }
+  .btn-primary:hover {
+    background-color: var(--ecrio-red-dark);
+    box-shadow: 0 0 0 3px rgba(229, 57, 53, 0.15);
   }
 
+  /* Secondary button */
   .btn-secondary {
-    @apply bg-transparent border border-gray-300 px-4 py-2 rounded-md text-sm transition-colors duration-200 hover:bg-gray-100 text-gray-800;
+    @apply bg-transparent border border-gray-300 px-4 py-2 rounded-md text-sm font-medium
+           transition-all duration-200 hover:bg-gray-100 text-gray-700;
+  }
+  .btn-secondary:hover {
+    border-color: var(--ecrio-steel-mid);
   }
 
+  /* Form input */
   .input {
-    @apply border border-gray-300 rounded-md px-3 py-2 w-full focus:outline-none focus:border-violet-600 focus:ring-1 focus:ring-violet-600 transition-colors duration-200;
+    @apply border border-gray-300 rounded-md px-3 py-2 w-full
+           focus:outline-none transition-colors duration-200;
+  }
+  .input:focus {
+    border-color: var(--ecrio-red);
+    box-shadow: 0 0 0 3px rgba(229, 57, 53, 0.12);
   }
 
+  /* Typography helpers */
   .heading {
     @apply text-[22px] font-semibold text-gray-900;
   }
-
   .subtext {
-    @apply text-[var(--text-light)];
+    color: var(--text-light);
   }
 }
 
+/* =====================================================
+   Utility animations
+   ===================================================== */
 @layer utilities {
   @keyframes pageEnter {
-    0% { opacity: 0; transform: translateY(12px) scale(0.995); }
-    100% { opacity: 1; transform: translateY(0) scale(1); }
+    0%   { opacity: 0; transform: translateY(12px) scale(0.995); }
+    100% { opacity: 1; transform: translateY(0)    scale(1); }
   }
   .animate-page-enter {
     animation: pageEnter 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   @keyframes sidebarItemEnter {
-    0% { opacity: 0; transform: translateX(-15px); }
+    0%   { opacity: 0; transform: translateX(-15px); }
     100% { opacity: 1; transform: translateX(0); }
   }
   .animate-sidebar-item {
@@ -118,4 +172,37 @@
     opacity: 0;
   }
 
+  /* Ecrio red glow for active/focus states */
+  .ecrio-focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(229, 57, 53, 0.18);
+  }
 }
+
+/* =====================================================
+   Global Tailwind violet → Ecrio red overrides
+   These swap any residual violet-* classes across the
+   entire app without touching each file individually.
+   ===================================================== */
+.text-violet-600,
+.text-violet-700,
+.text-violet-500 { color: var(--ecrio-red) !important; }
+
+.bg-violet-600,
+.bg-violet-700   { background-color: var(--ecrio-red) !important; }
+
+.bg-violet-600:hover,
+.bg-violet-700:hover { background-color: var(--ecrio-red-dark) !important; }
+
+.border-violet-600,
+.focus\:border-violet-600:focus { border-color: var(--ecrio-red) !important; }
+
+.ring-violet-600,
+.focus\:ring-violet-600:focus   { --tw-ring-color: rgba(229, 57, 53, 0.35) !important; }
+
+.bg-violet-50  { background-color: rgba(229, 57, 53, 0.05) !important; }
+.text-violet-400 { color: rgba(229, 57, 53, 0.65) !important; }
+
+/* Active state pills — steelgrey background instead of purple */
+.bg-violet-100 { background-color: rgba(4, 26, 55, 0.12) !important; }
+

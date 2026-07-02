@@ -7,11 +7,18 @@ from logging.handlers import RotatingFileHandler
 
 # Single centralized log file path relative to repo root
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-LOG_FILE = os.path.join(REPO_ROOT, "logs", "visionflow.log")
+DEFAULT_LOG_FILE = os.path.join(REPO_ROOT, "logs", "visionflow.log")
 
-def get_logger(service_name, module_name="MAIN"):
+def _resolve_log_file(log_file=None):
+    if not log_file:
+        return DEFAULT_LOG_FILE
+    return log_file if os.path.isabs(log_file) else os.path.abspath(os.path.join(REPO_ROOT, log_file))
+
+
+def get_logger(service_name, module_name="MAIN", log_file=None):
     # Ensure log directory exists
-    log_dir = os.path.dirname(LOG_FILE)
+    log_path = _resolve_log_file(log_file)
+    log_dir = os.path.dirname(log_path)
     os.makedirs(log_dir, exist_ok=True)
 
     logger = logging.getLogger(f"{service_name}.{module_name}")
@@ -34,7 +41,7 @@ def get_logger(service_name, module_name="MAIN"):
     # On Windows, we open with 'a' mode which is generally safe for atomic appends
     # but we avoid RotatingFileHandler from multiple processes on the SAME file.
     # We will let the Node.js service handle rotation.
-    file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8', delay=True)
+    file_handler = logging.FileHandler(log_path, encoding='utf-8', delay=True)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

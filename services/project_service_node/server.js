@@ -1,7 +1,39 @@
 const fs = require("fs");
-fs.mkdirSync("logs", { recursive: true });
-fs.writeFileSync("logs/project_service_heartbeat.txt", "Project service started at " + new Date().toISOString());
 const path = require("path");
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
+const LOG_DIR = path.join(REPO_ROOT, "logs");
+fs.mkdirSync(LOG_DIR, { recursive: true });
+fs.writeFileSync(path.join(LOG_DIR, "project_service_heartbeat.txt"), "Project service started at " + new Date().toISOString());
+
+// ── Structured JSON-Lines log files ─────────────────────────────────────────
+// Each file gets a session-start marker so log viewers can identify restarts.
+const SYSTEM_METRICS_LOG = path.join(LOG_DIR, "system-metrics.log");
+const KPI_METRICS_LOG    = path.join(LOG_DIR, "kpi-metrics.log");
+
+// Append a session-start sentinel so log readers can spot service restarts.
+const _sessionStart = new Date().toISOString();
+fs.appendFileSync(SYSTEM_METRICS_LOG, JSON.stringify({ _event: "session_start", service: "project-service", timestamp: _sessionStart }) + "\n");
+fs.appendFileSync(KPI_METRICS_LOG,    JSON.stringify({ _event: "session_start", service: "project-service", timestamp: _sessionStart }) + "\n");
+
+// Monotonic counter so every system-metrics snapshot has a unique sequence id.
+let metricsSeq = 0;
+
+/**
+ * Appends a single JSON-Lines record to a dedicated metrics log file.
+ * Safe to call from async contexts — uses synchronous appendFileSync so
+ * records are always written before the process can crash.
+ *
+ * @param {string} logPath  - Absolute path to the target .log file
+ * @param {object} record   - Plain object to serialise as a JSON line
+ */
+function appendMetricsJsonLine(logPath, record) {
+  try {
+    fs.appendFileSync(logPath, JSON.stringify(record) + "\n");
+  } catch (writeErr) {
+    // Silently swallow — we never want a log failure to crash the service.
+    console.error(`[METRICS_LOG] Failed to write to ${path.basename(logPath)}: ${writeErr.message}`);
+  }
+}
 const crypto = require("crypto");
 const os = require("os");
 const { execFile } = require("child_process");
@@ -9,11 +41,17 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const { MongoClient, ObjectId, GridFSBucket } = require("mongodb");
+const ExcelJS = require("exceljs");
 const logger = require("../common/logger")("PROJECT", "SERVER");
+const systemMetricsLogger = require("../common/logger")("PROJECT", "SYSTEM_METRICS", {
+  logFile: path.join(LOG_DIR, "system-metrics.log"),
+});
+const kpiMetricsLogger = require("../common/logger")("PROJECT", "KPI_METRICS", {
+  logFile: path.join(LOG_DIR, "kpi-metrics.log"),
+});
 
 const fsp = fs.promises;
 const SERVICE_ROOT = __dirname;
-const REPO_ROOT = path.resolve(SERVICE_ROOT, "..", "..");
 
 loadVisionflowConfig(path.join(REPO_ROOT, "visionflow.conf"));
 
@@ -122,6 +160,195 @@ app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+const KPI_EVENT_COLLECTION = "kpi_events";
+const KPI_TRACKED_GET_PREFIXES = [
+  "/api/workspace-overview",
+  "/api/deployments/summary",
+  "/api/jobs",
+  "/api/system-metrics",
+  "/api/projects/",
+  "/api/folders",
+  "/api/workflows",
+];
+
+function getRequestHeader(req, name) {
+  const value = req.headers[String(name || "").toLowerCase()];
+  if (Array.isArray(value)) return String(value[0] || "").trim();
+  return String(value || "").trim();
+}
+
+function getRequestIdentity(req) {
+  const forwardedFor = getRequestHeader(req, "x-forwarded-for");
+  const remoteAddress = forwardedFor || req.socket?.remoteAddress || req.ip || "unknown";
+  const userAgent = getRequestHeader(req, "user-agent");
+  const fingerprint = crypto
+    .createHash("sha1")
+    .update(`${remoteAddress}|${userAgent}`)
+    .digest("hex")
+    .slice(0, 24);
+  return {
+    session_id: getRequestHeader(req, "x-visionflow-session") || fingerprint,
+    visitor_id: getRequestHeader(req, "x-visionflow-visitor") || fingerprint,
+  };
+}
+
+function routeGroupForPath(pathname) {
+  const pathText = String(pathname || "");
+  if (pathText.startsWith("/api/workspace-overview")) return "workspace";
+  if (pathText.startsWith("/api/deployments/summary")) return "deployments";
+  if (pathText.startsWith("/api/jobs")) return "jobs";
+  if (pathText.startsWith("/api/system-metrics")) return "system";
+  if (pathText.startsWith("/api/projects/") && pathText.includes("/inference-history")) return "inference-history";
+  if (pathText.startsWith("/api/projects")) return "projects";
+  if (pathText.startsWith("/api/folders")) return "folders";
+  if (pathText.startsWith("/api/workflows")) return "workflows";
+  return "api";
+}
+
+function isTrackedApiRequest(req) {
+  const pathText = String(req.originalUrl || req.path || "").split("?")[0];
+  if (!pathText.startsWith("/api/")) return false;
+  if (pathText.startsWith("/api/kpi/events")) return false;
+  if (pathText.startsWith("/api/kpi/live/stream")) return false;
+  if (pathText.startsWith("/api/kpi/inference-stream")) return false;
+  if (pathText.startsWith("/api/system-metrics/stream")) return false;
+  if (pathText.startsWith("/api/logs")) return false;
+  return true;
+}
+
+function buildKpiEventDocs(req, res, durationMs) {
+  const pathText = String(req.originalUrl || req.path || "").split("?")[0];
+  const method = String(req.method || "GET").toUpperCase();
+  const { session_id, visitor_id } = getRequestIdentity(req);
+  const ts = Date.now();
+  const route_group = routeGroupForPath(pathText);
+  const isSuccess = res.statusCode < 400;
+  const base = {
+    session_id,
+    visitor_id,
+    source: "project-service",
+    route_group,
+    method,
+    path: pathText,
+    status_code: res.statusCode,
+    duration_ms: Number(Math.max(0, durationMs).toFixed(2)),
+    ts,
+    recorded_at: nowIso(),
+  };
+
+  const docs = [
+    {
+      ...base,
+      type: "http_response",
+      metric: "response_time",
+      value: base.duration_ms,
+      is_up: res.statusCode < 500,
+    },
+  ];
+
+  if (method === "GET") {
+    docs.push({
+      ...base,
+      type: "page_hit",
+      metric: "traffic",
+      page: route_group,
+      page_count: 1,
+      is_visit: true,
+    });
+  }
+
+  if (pathText.endsWith("/health") || pathText === "/health") {
+    docs.push({
+      ...base,
+      type: "health_check",
+      metric: "uptime",
+      is_up: res.statusCode < 500,
+    });
+  }
+
+  if (isSuccess && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    docs.push({
+      ...base,
+      type: "conversion",
+      metric: "conversion_rate",
+      conversion: 1,
+      is_conversion: true,
+    });
+  }
+
+  if (method === "GET" && KPI_TRACKED_GET_PREFIXES.some((prefix) => pathText.startsWith(prefix))) {
+    docs.push({
+      ...base,
+      type: "visit",
+      metric: "conversion_rate",
+      visit: 1,
+      is_visit: true,
+    });
+  }
+
+  return docs;
+}
+
+function summarizeKpiEvent(event) {
+  return {
+    type: event.type,
+    metric: event.metric,
+    route_group: event.route_group,
+    method: event.method,
+    path: event.path,
+    status_code: event.status_code,
+    duration_ms: event.duration_ms,
+    ts: event.ts,
+  };
+}
+
+async function insertKpiEvents(docs) {
+  const payload = Array.isArray(docs) ? docs.filter(Boolean) : [];
+  if (!payload.length || !db) return;
+  try {
+    await db.collection(KPI_EVENT_COLLECTION).insertMany(payload, { ordered: false });
+    for (const event of payload) {
+      const summary = summarizeKpiEvent(event);
+      // ── Write to kpi-metrics.log only (file-only, no terminal output) ──────
+      appendMetricsJsonLine(KPI_METRICS_LOG, {
+        timestamp:   new Date().toISOString(),
+        category:    "http_event",
+        type:        summary.type,
+        metric:      summary.metric,
+        method:      summary.method,
+        path:        summary.path,
+        route_group: summary.route_group,
+        status_code: summary.status_code,
+        duration_ms: summary.duration_ms,
+        is_up:       event.is_up ?? null,
+        session_id:  event.session_id ?? null,
+        ts:          summary.ts,
+      });
+    }
+  } catch (error) {
+    if (error?.code !== 11000) {
+      logger.warn(`Failed to record KPI events: ${error?.message || error}`);
+    }
+  }
+}
+
+app.use((req, res, next) => {
+  if (!isTrackedApiRequest(req)) {
+    next();
+    return;
+  }
+
+  const startedAt = process.hrtime.bigint();
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    const docs = buildKpiEventDocs(req, res, durationMs);
+    insertKpiEvents(docs).catch((error) => {
+      logger.warn(`Failed to persist KPI telemetry: ${error?.message || error}`);
+    });
+  });
+  next();
+});
+
 // Centralized Logging Endpoint for Frontend
 app.post("/api/logs", (req, res) => {
   const { level, service, module, message, stack } = req.body;
@@ -132,6 +359,74 @@ app.post("/api/logs", (req, res) => {
   
   feLogger.log(level || "INFO", logMsg);
   res.status(200).json({ success: true });
+});
+
+app.post("/api/kpi/events", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const rawEvents = Array.isArray(body) ? body : Array.isArray(body.events) ? body.events : [body];
+    const receivedAt = Date.now();
+    const normalized = rawEvents
+      .map((event) => {
+        if (!event || typeof event !== "object") return null;
+        const type = String(event.type || event.metric || "").trim();
+        if (!type) return null;
+        const { session_id, visitor_id } = getRequestIdentity(req);
+        const ts = Number.isFinite(Number(event.ts)) ? Number(event.ts) : receivedAt;
+        return {
+          ...event,
+          type,
+          session_id: String(event.session_id || session_id),
+          visitor_id: String(event.visitor_id || visitor_id),
+          source: String(event.source || "visionflow-kpi"),
+          route_group: String(event.route_group || event.page || routeGroupForPath(String(event.path || ""))),
+          method: String(event.method || req.method || "POST").toUpperCase(),
+          path: String(event.path || req.originalUrl || "/api/kpi/events"),
+          status_code: Number.isFinite(Number(event.status_code)) ? Number(event.status_code) : null,
+          duration_ms: Number.isFinite(Number(event.duration_ms)) ? Number(event.duration_ms) : null,
+          page_count: Number.isFinite(Number(event.page_count)) ? Number(event.page_count) : undefined,
+          pages_viewed: Number.isFinite(Number(event.pages_viewed)) ? Number(event.pages_viewed) : undefined,
+          interactions: Number.isFinite(Number(event.interactions)) ? Number(event.interactions) : undefined,
+          is_up: typeof event.is_up === "boolean" ? event.is_up : undefined,
+          is_visit: typeof event.is_visit === "boolean" ? event.is_visit : undefined,
+          is_conversion: typeof event.is_conversion === "boolean" ? event.is_conversion : undefined,
+          ts,
+          recorded_at: nowIso(),
+        };
+      })
+      .filter(Boolean);
+
+    if (!normalized.length) {
+      return res.status(400).json({ error: "No KPI events supplied" });
+    }
+
+    await insertKpiEvents(normalized);
+    res.status(201).json({ success: true, inserted: normalized.length });
+  } catch (error) {
+    logger.error("Failed to ingest KPI events", error);
+    res.status(500).json({ error: "Failed to ingest KPI events" });
+  }
+});
+
+app.get("/api/kpi/events", async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(1000, Number(req.query?.limit || 100)));
+    const type = String(req.query?.type || "").trim();
+    const sessionId = String(req.query?.session_id || "").trim();
+    const visitorId = String(req.query?.visitor_id || "").trim();
+    const routeGroup = String(req.query?.route_group || "").trim();
+    const query = {};
+    if (type) query.type = type;
+    if (sessionId) query.session_id = sessionId;
+    if (visitorId) query.visitor_id = visitorId;
+    if (routeGroup) query.route_group = routeGroup;
+
+    const events = await db.collection(KPI_EVENT_COLLECTION).find(query).sort({ ts: -1 }).limit(limit).toArray();
+    res.json({ success: true, events, count: events.length });
+  } catch (error) {
+    logger.error("Failed to fetch KPI events", error);
+    res.status(500).json({ error: "Failed to fetch KPI events" });
+  }
 });
 
 
@@ -185,13 +480,35 @@ app.get("/uploads/assets/:assetId/:filename", async (req, res) => {
 app.use("/uploads/projects", express.static(config.projectRoot));
 app.use("/uploads", express.static(config.legacyUploadRoot));
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "project-service-node", version: "1.0.0" });
+app.get("/health", (req, res) => {
+  const payload = { status: "ok", service: "project-service-node", version: "1.0.0" };
+  res.json(payload);
+  insertKpiEvents([{
+    type: "health_check",
+    metric: "uptime",
+    source: "project-service",
+    route_group: "health",
+    path: "/health",
+    method: "GET",
+    status_code: 200,
+    duration_ms: 0,
+    session_id: getRequestIdentity(req).session_id,
+    visitor_id: getRequestIdentity(req).visitor_id,
+    is_up: true,
+    ts: Date.now(),
+    recorded_at: nowIso(),
+  }]).catch((error) => {
+    logger.warn(`Failed to persist project-service health telemetry: ${error?.message || error}`);
+  });
 });
 
 const METRIC_SAMPLE_MS = 500;
 const metricsClients = new Set();
 let metricsCollectorBusy = false;
+let systemMetricsTimer = null;
+let systemMetricsHistory = [];
+const kpiClients = new Set();
+let kpiHeartbeatTimer = null;
 let latestSystemMetrics = {
   timestamp: new Date().toISOString(),
   cpu: { percent: null },
@@ -203,6 +520,153 @@ let prevCpuSnapshot = snapshotCpuTimes();
 
 app.get("/api/system-metrics", (_req, res) => {
   res.json(latestSystemMetrics);
+});
+
+app.post("/api/system-metrics/start", (req, res) => {
+  if (!systemMetricsTimer) {
+    systemMetricsHistory = [];
+    systemMetricsTimer = setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
+    res.json({ success: true, message: "Started gathering metrics" });
+  } else {
+    res.json({ success: true, message: "Already gathering metrics" });
+  }
+});
+
+app.post("/api/system-metrics/stop", async (req, res) => {
+  if (systemMetricsTimer) {
+    clearInterval(systemMetricsTimer);
+    systemMetricsTimer = null;
+  }
+
+  if (!systemMetricsHistory.length) {
+    return res.json({ message: "No metrics gathered.", summary: null });
+  }
+
+  let cpuMin = 100, cpuMax = 0, cpuSum = 0;
+  let ramMin = 100, ramMax = 0, ramSum = 0;
+  let diskMin = 100, diskMax = 0, diskSum = 0;
+  let gpuMin = 100, gpuMax = 0, gpuSum = 0;
+
+  const count = systemMetricsHistory.length;
+  for (const m of systemMetricsHistory) {
+    if (m.cpu < cpuMin) cpuMin = m.cpu;
+    if (m.cpu > cpuMax) cpuMax = m.cpu;
+    cpuSum += m.cpu;
+
+    if (m.ram < ramMin) ramMin = m.ram;
+    if (m.ram > ramMax) ramMax = m.ram;
+    ramSum += m.ram;
+
+    if (m.disk < diskMin) diskMin = m.disk;
+    if (m.disk > diskMax) diskMax = m.disk;
+    diskSum += m.disk;
+
+    if (m.gpu < gpuMin) gpuMin = m.gpu;
+    if (m.gpu > gpuMax) gpuMax = m.gpu;
+    gpuSum += m.gpu;
+  }
+
+  const summary = {
+    cpu:  { min: cpuMin,  max: cpuMax,  avg: Number((cpuSum  / count).toFixed(2)), sum: Number(cpuSum.toFixed(2))  },
+    ram:  { min: ramMin,  max: ramMax,  avg: Number((ramSum  / count).toFixed(2)), sum: Number(ramSum.toFixed(2))  },
+    disk: { min: diskMin, max: diskMax, avg: Number((diskSum / count).toFixed(2)), sum: Number(diskSum.toFixed(2)) },
+    gpu:  { min: gpuMin,  max: gpuMax,  avg: Number((gpuSum  / count).toFixed(2)), sum: Number(gpuSum.toFixed(2))  },
+    samples: count,
+  };
+
+  // Aggregate totals across all metrics
+  const totalMinSum  = Number((cpuMin  + ramMin  + diskMin  + gpuMin ).toFixed(2));
+  const totalMaxSum  = Number((cpuMax  + ramMax  + diskMax  + gpuMax ).toFixed(2));
+  const totalAvgAvg  = Number(((summary.cpu.avg + summary.ram.avg + summary.disk.avg + summary.gpu.avg) / 4).toFixed(2));
+  const totalSumAll  = Number((cpuSum  + ramSum  + diskSum  + gpuSum ).toFixed(2));
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+
+    // ── Sheet 1: Raw data rows ─────────────────────────────────────────────
+    const sheet = workbook.addWorksheet("System Metrics");
+    sheet.columns = [
+      { header: "Timestamp", key: "timestamp", width: 25 },
+      { header: "CPU (%)",   key: "cpu",       width: 10 },
+      { header: "RAM (%)",   key: "ram",       width: 10 },
+      { header: "Disk (%)",  key: "disk",      width: 10 },
+      { header: "GPU (%)",   key: "gpu",       width: 10 },
+    ];
+    sheet.addRows(systemMetricsHistory);
+
+    // Style header row bold
+    sheet.getRow(1).font = { bold: true };
+
+    // Blank separator row
+    sheet.addRow([]);
+
+    // Per-metric summary rows at bottom of main sheet
+    sheet.addRow({ timestamp: "── PER-METRIC SUMMARY ──", cpu: "CPU (%)", ram: "RAM (%)", disk: "Disk (%)", gpu: "GPU (%)" });
+    sheet.addRow({ timestamp: "Min",  cpu: cpuMin,               ram: ramMin,              disk: diskMin,              gpu: gpuMin              });
+    sheet.addRow({ timestamp: "Max",  cpu: cpuMax,               ram: ramMax,              disk: diskMax,              gpu: gpuMax              });
+    sheet.addRow({ timestamp: "Avg",  cpu: summary.cpu.avg,      ram: summary.ram.avg,     disk: summary.disk.avg,     gpu: summary.gpu.avg     });
+    sheet.addRow({ timestamp: "Sum",  cpu: summary.cpu.sum,      ram: summary.ram.sum,     disk: summary.disk.sum,     gpu: summary.gpu.sum     });
+
+    // Blank separator row
+    sheet.addRow([]);
+
+    // Aggregate totals
+    const aggLabel = sheet.addRow({ timestamp: "── AGGREGATE TOTALS ──", cpu: "", ram: "", disk: "", gpu: "" });
+    aggLabel.font = { bold: true };
+    sheet.addRow({ timestamp: "Sum of All Minimums",         cpu: totalMinSum  });
+    sheet.addRow({ timestamp: "Sum of All Maximums",         cpu: totalMaxSum  });
+    sheet.addRow({ timestamp: "Average of All Averages",     cpu: totalAvgAvg  });
+    sheet.addRow({ timestamp: "Grand Total Sum (all metrics)", cpu: totalSumAll });
+
+    // ── Sheet 2: Summary ──────────────────────────────────────────────────
+    const summarySheet = workbook.addWorksheet("Summary");
+    summarySheet.columns = [
+      { header: "Metric",  key: "metric", width: 28 },
+      { header: "Sum (%)", key: "sum",    width: 12 },
+      { header: "Min (%)", key: "min",    width: 12 },
+      { header: "Max (%)", key: "max",    width: 12 },
+      { header: "Avg (%)", key: "avg",    width: 12 },
+    ];
+    summarySheet.getRow(1).font = { bold: true };
+
+    summarySheet.addRow({ metric: "CPU",  ...summary.cpu  });
+    summarySheet.addRow({ metric: "RAM",  ...summary.ram  });
+    summarySheet.addRow({ metric: "Disk", ...summary.disk });
+    summarySheet.addRow({ metric: "GPU",  ...summary.gpu  });
+
+    // Blank separator
+    summarySheet.addRow([]);
+
+    // Aggregate totals block
+    const aggHeader = summarySheet.addRow({ metric: "── AGGREGATE TOTALS ──", sum: "", min: "", max: "", avg: "" });
+    aggHeader.font = { bold: true };
+    summarySheet.addRow({ metric: "Sum of All Minimums",           min: totalMinSum  });
+    summarySheet.addRow({ metric: "Sum of All Maximums",           max: totalMaxSum  });
+    summarySheet.addRow({ metric: "Average of All Averages",       avg: totalAvgAvg  });
+    summarySheet.addRow({ metric: "Grand Total Sum (all metrics)", sum: totalSumAll  });
+
+    const excelPath = path.join(LOG_DIR, "system-metrics.xlsx");
+    await workbook.xlsx.writeFile(excelPath);
+
+    res.json({
+      success: true,
+      summary,
+      aggregateTotals: { sumOfMins: totalMinSum, sumOfMaxes: totalMaxSum, avgOfAvgs: totalAvgAvg, grandTotalSum: totalSumAll },
+      excelFile: excelPath
+    });
+  } catch (err) {
+    logger.error("Failed to generate metrics Excel file", err);
+    res.status(500).json({ error: "Failed to generate Excel file", summary });
+  }
+});
+
+app.get("/api/system-metrics/download", (req, res) => {
+  const excelPath = path.join(LOG_DIR, "system-metrics.xlsx");
+  res.download(excelPath, "system-metrics.xlsx", (err) => {
+    if (err) {
+      res.status(404).send("Excel file not found. Stop metrics gathering first.");
+    }
+  });
 });
 
 app.get("/api/system-metrics/stream", (req, res) => {
@@ -218,6 +682,65 @@ app.get("/api/system-metrics/stream", (req, res) => {
     metricsClients.delete(res);
   });
 });
+
+app.get("/api/kpi/live/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  res.write(`event: snapshot\ndata: ${JSON.stringify({ source: "project-service", reason: "connected", ts: Date.now() })}\n\n`);
+  kpiClients.add(res);
+  if (!kpiHeartbeatTimer) {
+    kpiHeartbeatTimer = setInterval(() => {
+      for (const client of kpiClients) {
+        client.write(`: keep-alive\n\n`);
+      }
+    }, 25000);
+  }
+
+  req.on("close", () => {
+    kpiClients.delete(res);
+    if (!kpiClients.size && kpiHeartbeatTimer) {
+      clearInterval(kpiHeartbeatTimer);
+      kpiHeartbeatTimer = null;
+    }
+  });
+});
+
+function broadcastKpiUpdate(reason, detail = {}) {
+  const ts = Date.now();
+  const payload = `event: snapshot\ndata: ${JSON.stringify({
+    source: "project-service",
+    reason,
+    detail,
+    ts,
+  })}\n\n`;
+
+  const deadClients = [];
+  for (const client of kpiClients) {
+    try {
+      client.write(payload);
+    } catch (_error) {
+      deadClients.push(client);
+    }
+  }
+  for (const client of deadClients) {
+    kpiClients.delete(client);
+  }
+
+  // ── Write structured JSON-Lines record to kpi-metrics.log ─────────────────
+  appendMetricsJsonLine(KPI_METRICS_LOG, {
+    timestamp:      new Date(ts).toISOString(),
+    category:       "broadcast",
+    type:           "broadcast",
+    reason,
+    detail,
+    active_clients: kpiClients.size,
+    ts,
+  });
+}
 
 function snapshotCpuTimes() {
   const cpuStats = os.cpus() || [];
@@ -341,10 +864,30 @@ async function collectAndBroadcastSystemMetrics() {
       disk: { percent: diskPercent },
       gpu,
     };
+
+    systemMetricsHistory.push({
+      timestamp: latestSystemMetrics.timestamp,
+      cpu: cpuPercent ?? 0,
+      ram: ramPercent ?? 0,
+      disk: diskPercent ?? 0,
+      gpu: gpu?.percent ?? 0
+    });
     const payload = `data: ${JSON.stringify(latestSystemMetrics)}\n\n`;
     for (const client of metricsClients) {
       client.write(payload);
     }
+
+    // ── Write structured JSON-Lines record to system-metrics.log ────────────
+    appendMetricsJsonLine(SYSTEM_METRICS_LOG, {
+      timestamp:          latestSystemMetrics.timestamp,
+      seq:                ++metricsSeq,
+      cpu_percent:        cpuPercent,
+      ram_percent:        ramPercent,
+      disk_percent:       diskPercent,
+      gpu_percent:        gpu?.percent ?? null,
+      gpu_status:         gpu?.status  ?? "Not detected",
+      active_sse_clients: metricsClients.size,
+    });
   } catch (error) {
     logger.warn(`Metrics collector error: ${error?.message || error}`);
   } finally {
@@ -455,6 +998,7 @@ async function handleFolderHardDelete(req, res) {
     }
 
     await db.collection("folders").deleteOne({ _id: folderObjectId });
+    broadcastKpiUpdate("folder-deleted", { folder_id: folderObjectId.toString() });
 
     // Best-effort cleanup for legacy folder-level metadata collections.
     await Promise.allSettled([
@@ -609,6 +1153,7 @@ app.post("/api/deployments", async (req, res) => {
     };
 
     await db.collection("deployments").insertOne(deploymentDoc);
+    broadcastKpiUpdate("deployment-created", { deployment_id: deploymentId, project_id: projectId || null });
     res.status(201).json(serializeDeployment(deploymentDoc));
   } catch (error) {
     logger.error("Failed to create deployment", error);
@@ -709,6 +1254,7 @@ app.post("/api/deployments/:deploymentId/activate", async (req, res) => {
     );
 
     const refreshed = await findDeployment(req.params.deploymentId);
+    broadcastKpiUpdate("deployment-activated", { deployment_id: req.params.deploymentId, project_id: refreshed?.project_id || null });
     res.json(serializeDeployment(refreshed));
   } catch (error) {
     logger.error(`Failed to activate deployment ${req.params.deploymentId}`, error);
@@ -724,6 +1270,7 @@ app.delete("/api/deployments/:deploymentId", async (req, res) => {
     }
 
     await db.collection("deployments").deleteOne({ _id: deployment._id });
+    broadcastKpiUpdate("deployment-deleted", { deployment_id: req.params.deploymentId, project_id: deployment.project_id || null });
     res.json({ success: true, deleted_deployment_id: req.params.deploymentId });
   } catch (error) {
     logger.error(`Failed to delete deployment ${req.params.deploymentId}`, error);
@@ -786,6 +1333,7 @@ app.post("/api/projects", async (req, res) => {
     );
 
     const created = await db.collection("projects").findOne({ _id: insertResult.insertedId });
+    broadcastKpiUpdate("project-created", { project_id: projectId });
     res.status(201).json(serializeProject(created));
   } catch (error) {
     if (error?.code === 11000) {
@@ -850,6 +1398,7 @@ app.delete("/api/projects/:projectId", async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
     const result = await hardDeleteProjectByDoc(project);
+    broadcastKpiUpdate("project-deleted", { project_id: req.params.projectId });
     res.json({ success: true, deleted_project_id: result.project_id });
   } catch (error) {
     res.status(500).json({ error: "Failed to delete project" });
@@ -1330,6 +1879,7 @@ app.post("/api/assets", upload.single("file"), async (req, res) => {
       { _id: project._id },
       { $set: { updated_at: nowIso() } }
     );
+    broadcastKpiUpdate("asset-created", { asset_id: assetId.toString(), project_id: projectId });
 
     res.status(201).json(serializeAsset(assetDoc));
   } catch (error) {
@@ -1365,6 +1915,7 @@ app.delete("/api/assets/:assetId", async (req, res) => {
       );
     }
 
+    broadcastKpiUpdate("asset-deleted", { asset_id: asset._id.toString(), project_id: asset.project_id || null });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to delete asset" });
@@ -1507,6 +2058,7 @@ app.post("/api/assets/:assetId/annotations", async (req, res) => {
     }
 
     await db.collection("projects").updateOne({ _id: project._id }, projectUpdate);
+    broadcastKpiUpdate("annotations-updated", { asset_id: assetId, project_id: projectId });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to save annotations" });
@@ -1631,6 +2183,7 @@ app.post("/api/jobs", async (req, res) => {
       { project_id, batch_id },
       { $set: { job_id: jobId.toString(), updated_at: now } }
     );
+    broadcastKpiUpdate("job-created", { job_id: jobId.toString(), project_id });
 
     res.status(201).json(serializeJob(jobDoc));
   } catch (error) {
@@ -1657,8 +2210,9 @@ app.patch("/api/assets/:assetId/review", async (req, res) => {
           review_comment: comment || null,
           updated_at: now 
         } 
-      }
+      } 
     );
+    broadcastKpiUpdate("asset-reviewed", { asset_id: asset._id.toString(), project_id: asset.project_id || null });
 
     // If all assets in a job are approved or rejected, update job progress?
     // For now, simple state update is enough.
@@ -1702,7 +2256,7 @@ async function start() {
       logger.info(`VisionFlow project service listening on http://localhost:${config.port}`);
     });
     collectAndBroadcastSystemMetrics();
-    setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
+    systemMetricsTimer = setInterval(collectAndBroadcastSystemMetrics, METRIC_SAMPLE_MS);
   } catch (err) {
     logger.error("Failed to start project service", err);
     process.exit(1);
@@ -1727,6 +2281,10 @@ async function ensureIndexes() {
   await db.collection("jobs").createIndex({ project_id: 1, updated_at: -1 });
   await db.collection("deployments").createIndex({ deployment_id: 1 }, { unique: true, sparse: true });
   await db.collection("deployments").createIndex({ updated_at: -1 });
+  await db.collection(KPI_EVENT_COLLECTION).createIndex({ type: 1, ts: -1 });
+  await db.collection(KPI_EVENT_COLLECTION).createIndex({ session_id: 1, ts: -1 });
+  await db.collection(KPI_EVENT_COLLECTION).createIndex({ visitor_id: 1, ts: -1 });
+  await db.collection(KPI_EVENT_COLLECTION).createIndex({ route_group: 1, ts: -1 });
   await db.collection("assets").createIndex({ batch_id: 1 });
   await db.collection("assets").createIndex({ job_id: 1 });
 }
@@ -1882,6 +2440,7 @@ app.patch("/api/batches/:batchId/rename", async (req, res) => {
       message: `Successfully renamed batch to "${new_name}"`,
       modifiedCount: result.modifiedCount 
     });
+    broadcastKpiUpdate("batch-renamed", { batch_id: String(batchId), project_id: String(project_id) });
   } catch (error) {
     logger.error(`Failed to rename batch ${req.params.batchId}:`, error);
     res.status(500).json({ error: "Internal server error" });
@@ -1904,6 +2463,7 @@ app.post("/api/batches/:batchId/annotate", async (req, res) => {
     );
 
     res.json({ success: true, message: "Batch status updated to in-progress" });
+    broadcastKpiUpdate("batch-annotate", { batch_id: String(batchId), project_id: String(project_id) });
   } catch (error) {
     logger.error(`Failed to initialize annotation for batch ${req.params.batchId}:`, error);
     res.status(500).json({ error: "Internal server error" });
@@ -1962,6 +2522,7 @@ app.delete("/api/batches/:batchId", async (req, res) => {
       success: true, 
       message: `Successfully deleted batch ${batchId} and its ${assets.length} images.` 
     });
+    broadcastKpiUpdate("batch-deleted", { batch_id: String(batchId), project_id: String(project_id) });
   } catch (error) {
     logger.error(`Failed to delete batch ${req.params.batchId}:`, error);
     res.status(500).json({ error: "Internal server error" });
@@ -1999,6 +2560,7 @@ app.patch("/api/batches/:batchId/unassign", async (req, res) => {
       count: result.modifiedCount,
       message: `Successfully moved batch assets to Unassigned.` 
     });
+    broadcastKpiUpdate("batch-unassigned", { batch_id: String(batchId), project_id: String(project_id) });
   } catch (error) {
     logger.error(`Failed to unassign batch ${req.params.batchId}:`, error);
     res.status(500).json({ error: "Internal server error" });
@@ -2049,6 +2611,7 @@ app.delete("/api/batches/:batchId/annotations", async (req, res) => {
       count: assets.length,
       message: `Successfully deleted ${assets.length} assets from batch ${batchId}.` 
     });
+    broadcastKpiUpdate("batch-annotations-deleted", { batch_id: String(batchId), project_id: String(project_id) });
   } catch (error) {
     logger.error(`Failed to delete annotated assets for batch ${req.params.batchId}:`, error);
     res.status(500).json({ error: "Internal server error" });

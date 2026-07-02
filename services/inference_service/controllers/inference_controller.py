@@ -1,14 +1,43 @@
+import json
 import os
 import tempfile
+import time
+from queue import Empty, Queue
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, jsonify, request, send_file, Response, stream_with_context
 from utils.logger import logger
 
 from services.inference_service import InferenceLogic
+from services.inference_service import kpi_clients
 
 
 inference_bp = Blueprint("inference_bp", __name__)
+
+
+@inference_bp.route("/api/kpi/inference-stream", methods=["GET"])
+def kpi_inference_stream():
+    client_queue = Queue()
+    kpi_clients.add(client_queue)
+
+    @stream_with_context
+    def generate():
+        try:
+            yield f"event: snapshot\ndata: {json.dumps({'source': 'inference-service', 'reason': 'connected', 'ts': int(time.time() * 1000)})}\n\n"
+            while True:
+                try:
+                    message = client_queue.get(timeout=15)
+                    yield message
+                except Empty:
+                    yield ": keep-alive\n\n"
+        finally:
+            kpi_clients.discard(client_queue)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Connection"] = "keep-alive"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @inference_bp.route("/api/auto-label", methods=["POST"])

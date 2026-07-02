@@ -1,6 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useEffect, useMemo } from 'react';
-import logger from '../../utils/logger';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
+import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 
 const AnnotationContext = createContext();
 
@@ -77,6 +75,7 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
   
   const imgRef = useRef(null);
   const containerRef = useRef(null);
+  const viewportRef = useRef(null);
 
   const activeClass = classes[activeClassIdx] || classes[0] || null;
   const activeColor = activeClass?.color || COLORS[0];
@@ -90,6 +89,34 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
     setAnnotations(prev => prev.filter((_, i) => i !== idx));
     if (selectedIdx === idx) setSelectedIdx(-1);
     else if (selectedIdx > idx) setSelectedIdx(prev => prev - 1);
+  };
+
+  const buildManualAnnotation = (draftAnnotation, classObject) => ({
+    id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    source: 'manual',
+    confidence: 1.0,
+    ...draftAnnotation,
+    label: classObject.name,
+    class_id: classObject.id || classObject.name,
+    color: classObject.color || COLORS[0],
+  });
+
+  const addManualAnnotation = (draftAnnotation) => {
+    if (!draftAnnotation) return false;
+    if (!activeClass) {
+      showFeedback("Please add or select a project class first.");
+      setActiveTab('classes');
+      return false;
+    }
+
+    const manualAnnotation = buildManualAnnotation(draftAnnotation, activeClass);
+    setAnnotations((prev) => {
+      const next = [...prev, manualAnnotation];
+      setSelectedIdx(next.length - 1);
+      return next;
+    });
+    setActiveTab('annotations');
+    return true;
   };
 
   const finishPolygon = () => {
@@ -109,9 +136,7 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
         type: 'polygon',
         points: normalizedPoints
       };
-      setPendingAnnotation(draftAnnotation);
-      setPendingClassName(activeClass?.name || "");
-      setShowClassSelector(true);
+      addManualAnnotation(draftAnnotation);
     }
     setCurrentPolygon([]);
   };
@@ -180,6 +205,7 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
       if (res.ok) {
          const data = await res.json();
          nextClasses = data.classes.map((item, idx) => ({
+            id: item.id || item.name,
             name: item.name,
             color: item.color || COLORS[idx % COLORS.length]
          }));
@@ -192,11 +218,7 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
 
     setAnnotations((prev) => [
       ...prev,
-      {
-        ...pendingAnnotation,
-        label: classObject.name,
-        color: classObject.color,
-      },
+      buildManualAnnotation(pendingAnnotation, classObject),
     ]);
     setPendingAnnotation(null);
     setPendingClassName("");
@@ -204,7 +226,7 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
   };
 
   const value = {
-    assets, currentAssetIndex, setCurrentAssetIndex, currentAsset,
+    assets, initialAssetId, currentAssetIndex, setCurrentAssetIndex, currentAsset,
     annotations, setAnnotations,
     autoLabelModel, setAutoLabelModel,
     isClassification, isSegmentation,
@@ -246,10 +268,10 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
     pendingAutoLabelData, setPendingAutoLabelData,
     activeTab, setActiveTab,
     isSidebarOpen, setIsSidebarOpen,
-    imgRef, containerRef,
+    imgRef, containerRef, viewportRef,
     activeClass, activeColor,
     projectId, projectType, classificationType, updateAsset, onBack, onBatchComplete,
-    removeAnnotation, finishPolygon, handleSmartClick, commitPendingAnnotation
+    removeAnnotation, addManualAnnotation, finishPolygon, handleSmartClick, commitPendingAnnotation
   };
 
   return (

@@ -43,7 +43,7 @@ export default function AssetLibrary() {
       <div className="flex items-center gap-3 mb-6">
         <ImageIcon size={22} className="text-gray-600 stroke-[1.5px]" />
         <h2 className="text-[22px] font-semibold text-gray-900 tracking-tight">Workspace</h2>
-        <a href="#" className="text-[#6B21A8] text-[13px] font-bold ml-2 hover:underline tracking-tight">How to Search</a>
+        <a href="#" className="text-[#C41E2A] text-[13px] font-bold ml-2 hover:underline tracking-tight">How to Search</a>
       </div>
 
       {/* Main Search Bar */}
@@ -52,7 +52,7 @@ export default function AssetLibrary() {
           <input 
             type="text" 
             placeholder="Search images" 
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-[6px] text-[14px] outline-none focus:border-[#6B21A8] focus:ring-1 focus:ring-[#6B21A8] bg-white text-gray-800 shadow-sm"
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-[6px] text-[14px] outline-none focus:border-[#C41E2A] focus:ring-1 focus:ring-[#C41E2A] bg-white text-gray-800 shadow-sm"
           />
         </div>
         <button className="flex items-center justify-center gap-2 border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 px-5 py-2.5 rounded-[6px] text-[14px] font-semibold transition shadow-sm whitespace-nowrap active:scale-95">
@@ -68,7 +68,7 @@ export default function AssetLibrary() {
         <input 
           type="text" 
           placeholder="Filter by filename" 
-          className="border border-gray-300 rounded-[6px] px-4 py-2 text-[14px] outline-none focus:border-[#6B21A8] focus:ring-1 focus:ring-[#6B21A8] shadow-sm min-w-[200px]"
+          className="border border-gray-300 rounded-[6px] px-4 py-2 text-[14px] outline-none focus:border-[#C41E2A] focus:ring-1 focus:ring-[#C41E2A] shadow-sm min-w-[200px]"
         />
         
         {/* Split Dropdown */}
@@ -93,7 +93,7 @@ export default function AssetLibrary() {
           </button>
           {activeDropdown === 'tags' && (
              <div className="absolute top-full mt-2 left-0 w-[240px] bg-white border border-gray-200 rounded-[8px] shadow-lg p-2 z-20">
-               <input type="text" placeholder="Search tags" className="w-full px-3 py-1.5 border border-gray-300 rounded-[6px] text-[13px] outline-none focus:border-[#6B21A8] focus:ring-1 focus:ring-[#6B21A8] mb-2 shadow-sm" />
+               <input type="text" placeholder="Search tags" className="w-full px-3 py-1.5 border border-gray-300 rounded-[6px] text-[13px] outline-none focus:border-[#C41E2A] focus:ring-1 focus:ring-[#C41E2A] mb-2 shadow-sm" />
                <CheckToggle label="Toggle All" isClearAll />
                <CheckToggle label="rapid-initial-data" />
              </div>
@@ -107,7 +107,7 @@ export default function AssetLibrary() {
           </button>
           {activeDropdown === 'projects' && (
              <div className="absolute top-full mt-2 left-0 w-[240px] bg-white border border-gray-200 rounded-[8px] shadow-lg p-2 z-20">
-               <input type="text" placeholder="Search projects" className="w-full px-3 py-1.5 border border-gray-300 rounded-[6px] text-[13px] outline-none focus:border-[#6B21A8] focus:ring-1 focus:ring-[#6B21A8] mb-2 shadow-sm" />
+               <input type="text" placeholder="Search projects" className="w-full px-3 py-1.5 border border-gray-300 rounded-[6px] text-[13px] outline-none focus:border-[#C41E2A] focus:ring-1 focus:ring-[#C41E2A] mb-2 shadow-sm" />
                <CheckToggle label="No project" />
                <CheckToggle label="Toggle All" isClearAll />
                <CheckToggle label="Find objects" />
@@ -139,8 +139,8 @@ export default function AssetLibrary() {
       {/* Checkbox and view toggles area */}
       <div className="flex items-center justify-between mb-4 pb-2">
         <div className="flex items-center gap-3">
-           <div className="w-[18px] h-[18px] border-[1.5px] border-gray-300 rounded-[4px] flex items-center justify-center text-transparent hover:border-[#6B21A8] cursor-pointer bg-white transition-colors">
-             {/* Note: In active state, this would have bg-[#6B21A8] */}
+           <div className="w-[18px] h-[18px] border-[1.5px] border-gray-300 rounded-[4px] flex items-center justify-center text-transparent hover:border-[#C41E2A] cursor-pointer bg-white transition-colors">
+             {/* Note: In active state, this would have bg-[#C41E2A] */}
            </div>
            <span className="text-gray-500 text-[14px] font-medium">0 images selected</span>
         </div>
@@ -148,23 +148,23 @@ export default function AssetLibrary() {
         <div className="flex items-center gap-5">
            {/* Toggle Switch */}
            <div className="flex items-center gap-2.5 cursor-pointer" onClick={() => setShowAnnotations(!showAnnotations)}>
-             <div className={`w-[36px] h-[20px] rounded-full p-[2px] transition-colors duration-200 shadow-inner flex items-center ${showAnnotations ? 'bg-[#6B21A8]' : 'bg-gray-300'}`}>
+             <div className={`w-[36px] h-[20px] rounded-full p-[2px] transition-colors duration-200 shadow-inner flex items-center ${showAnnotations ? 'bg-[#C41E2A]' : 'bg-gray-300'}`}>
                 <div className={`bg-white w-[16px] h-[16px] rounded-full shadow-sm transform transition-transform duration-200 ${showAnnotations ? 'translate-x-[16px]' : 'translate-x-[1px]'}`}></div>
              </div>
-             <span className="text-[13px] font-bold text-[#6B21A8]">Show annotations</span>
+             <span className="text-[13px] font-bold text-[#C41E2A]">Show annotations</span>
            </div>
 
            {/* List / Grid Toggles */}
            <div className="flex items-center border border-gray-300 rounded-[6px] overflow-hidden shadow-sm">
              <button 
                onClick={() => setViewMode('list')}
-               className={`p-2 transition border-r border-gray-300 ${viewMode === 'list' ? 'bg-[#F3E8FF] text-[#6B21A8]' : 'bg-white text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}
+               className={`p-2 transition border-r border-gray-300 ${viewMode === 'list' ? 'bg-[#fbe2e2] text-[#C41E2A]' : 'bg-white text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}
              >
                <List size={18} />
              </button>
              <button 
                onClick={() => setViewMode('grid')}
-               className={`p-2 transition ${viewMode === 'grid' ? 'bg-[#F3E8FF] text-[#6B21A8]' : 'bg-white text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}
+               className={`p-2 transition ${viewMode === 'grid' ? 'bg-[#fbe2e2] text-[#C41E2A]' : 'bg-white text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}
              >
                <LayoutGrid size={18} />
              </button>

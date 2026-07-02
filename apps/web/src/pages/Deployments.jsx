@@ -69,6 +69,12 @@ const templateNotes = [
   },
 ];
 
+function normalizeMojibake(value) {
+  return String(value || "")
+    .replaceAll("â€”", "-")
+    .replaceAll("ï¿½", "·");
+}
+
 function getTemplateIcon(template) {
   const label = `${template?.deployment_key || ""} ${template?.name || ""}`.toLowerCase();
 
@@ -399,9 +405,9 @@ export default function Deployments() {
                         {deployment.status}
                       </span>
                     </div>
-                    <div className="font-bold text-[13px] text-gray-900">{deployment.name}</div>
-                    <div className="text-[13px] text-gray-600 font-medium">{deployment.project_name}</div>
-                    <div className="text-[13px] text-gray-600 font-medium">{deployment.workflow_name}</div>
+                    <div className="font-bold text-[13px] text-gray-900">{normalizeMojibake(deployment.name)}</div>
+                    <div className="text-[13px] text-gray-600 font-medium">{normalizeMojibake(deployment.project_name)}</div>
+                    <div className="text-[13px] text-gray-600 font-medium">{normalizeMojibake(deployment.workflow_name)}</div>
                     <div className="text-[12px] text-gray-500 font-mono">{deployment.runtime}</div>
                     <div className="text-[12px] text-gray-500 font-mono">{deployment.version}</div>
                     <div className="flex gap-3 text-[12px] font-bold">
@@ -426,8 +432,8 @@ export default function Deployments() {
                   <div key={`${deployment.id}-detail`} className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <div className="text-lg font-bold text-gray-900">{deployment.name}</div>
-                        <div className="text-sm text-gray-500 mt-1">{deployment.description}</div>
+                        <div className="text-lg font-bold text-gray-900">{normalizeMojibake(deployment.name)}</div>
+                        <div className="text-sm text-gray-500 mt-1">{normalizeMojibake(deployment.description)}</div>
                       </div>
                       <span className="rounded-full bg-violet-50 text-violet-700 px-3 py-1 text-xs font-bold uppercase tracking-wider">
                         {deployment.mode}

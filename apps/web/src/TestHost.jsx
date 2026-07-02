@@ -1,5 +1,5 @@
 import React from 'react';
-import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider, Navigate, Outlet } from 'react-router-dom';
 
 // Import all application pages
 import Dashboard from "./pages/Dashboard";
@@ -13,11 +13,28 @@ import BatchPreview from "./pages/BatchPreview";
 import Settings from "./pages/Settings";
 import ErrorBoundary from "./components/ErrorBoundary";
 import SystemMetricsWidget from "./components/SystemMetricsWidget";
+import { NotificationProvider } from "./components/NotificationProvider";
+
+function KpiToolRedirect() {
+  React.useEffect(() => {
+    window.location.replace("/kpi-tool/index.html");
+  }, []);
+  return null;
+}
+
+function RootShell() {
+  return (
+    <NotificationProvider>
+      <Outlet />
+    </NotificationProvider>
+  );
+}
 
 // Define the global router configuration exactly once outside the React tree
 const globalRouter = createBrowserRouter([
   {
     path: "/",
+    element: <RootShell />,
     errorElement: <ErrorBoundary />,
     children: [
       { path: "/", element: <Dashboard /> },
@@ -29,6 +46,10 @@ const globalRouter = createBrowserRouter([
       { path: "/uploads", element: <Uploads /> },
       { path: "/settings", element: <Settings /> },
       { path: "/annotate/batch/:batchId", element: <BatchPreview /> },
+      { path: "/kpi-tool", element: <KpiToolRedirect /> },
+      { path: "/kpi-tool/", element: <KpiToolRedirect /> },
+      { path: "/kpi-metrics", element: <KpiToolRedirect /> },
+      { path: "/kpi-metrics/", element: <KpiToolRedirect /> },
       { path: "*", element: <Navigate to="/" replace /> }
     ]
   }

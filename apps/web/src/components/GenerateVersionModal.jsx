@@ -22,6 +22,7 @@ import {
   Activity,
   ArrowRight
 } from "lucide-react";
+import { emitVisionFlowNotification } from "../utils/notifications";
 
 const AUGMENTATION_OPTIONS = [
   { id: "horizontal_flip", name: "Horizontal Flip", icon: <Layers size={18} />, description: "Flips the image horizontally." },
@@ -126,6 +127,15 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
       }
       
       const data = payload;
+      emitVisionFlowNotification({
+        id: `version-created-${data.version_id || data.id || Date.now()}`,
+        status: "Success",
+        title: "Version creation completed",
+        description: `${data.name || config.name || "Dataset version"} is ready.`,
+        route: "/upload",
+        projectId,
+        source: "versions",
+      });
       onGenerated(data);
       onClose();
     } catch (err) {

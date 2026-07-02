@@ -1,5 +1,6 @@
 import { useAnnotation, COLORS } from '../AnnotationContext';
 import logger from '../../../utils/logger';
+import { emitVisionFlowNotification } from '../../../utils/notifications';
 
 export function useAnnotationAPI() {
   const {
@@ -23,6 +24,7 @@ export function useAnnotationAPI() {
       const nextClasses = Array.isArray(data.classes) ? data.classes : [];
       logger.info(`Loaded ${nextClasses.length} annotation classes`);
       setClasses(nextClasses.map((item, index) => ({
+        id: item.id || item.name,
         name: item.name,
         color: item.color || COLORS[index % COLORS.length],
         attributes: item.attributes || [],
@@ -41,10 +43,15 @@ export function useAnnotationAPI() {
       if (res.ok) {
         const data = await res.json();
         // data contains { asset, annotations, classes }
-        setAnnotations(data.annotations || []);
+        setAnnotations((data.annotations || []).map((item, index) => ({
+          id: item.id || item._id || item.annotation_id || `loaded-${assetId}-${index}`,
+          ...item,
+          label: item.label || item.class_id || "",
+        })));
         // Optionally update classes if they changed, though they are usually project-wide
         if (Array.isArray(data.classes) && data.classes.length > 0) {
            setClasses(data.classes.map((item, index) => ({
+             id: item.id || item.name,
              name: item.name,
              color: item.color || COLORS[index % COLORS.length],
              attributes: item.attributes || [],
@@ -81,6 +88,7 @@ export function useAnnotationAPI() {
         const data = await res.json();
         const serverClasses = Array.isArray(data.classes) ? data.classes : [];
         nextClasses = serverClasses.map((item, index) => ({
+          id: item.id || item.name,
           name: item.name,
           color: item.color || COLORS[index % COLORS.length],
           attributes: item.attributes || [],
@@ -96,10 +104,15 @@ export function useAnnotationAPI() {
     logger.info(`Saving ${annotations.length} annotations for asset ${currentAsset.id}`);
     setIsSaving(true);
     try {
+      const normalizedAnnotations = annotations.map((ann) => ({
+        ...ann,
+        label: ann.label || ann.class_id || "",
+        class_id: ann.class_id || ann.label || "",
+      }));
       const res = await fetch(`/api/assets/${currentAsset.id}/annotations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ annotations })
+        body: JSON.stringify({ annotations: normalizedAnnotations })
       });
       if (!res.ok) {
         const errorData = await res.json();
@@ -107,6 +120,15 @@ export function useAnnotationAPI() {
         throw new Error(errorData.error || "Failed to save annotations.");
       }
       logger.info(`Successfully saved annotations for ${currentAsset.id}`);
+      emitVisionFlowNotification({
+        id: `annotation-saved-${currentAsset.id}-${Date.now()}`,
+        status: "Success",
+        title: "Annotation saved successfully",
+        description: `${annotations.length} annotation${annotations.length === 1 ? "" : "s"} saved.`,
+        route: "/upload",
+        projectId,
+        source: "manual-annotation",
+      });
     } catch (err) {
       logger.error(`Error in saveAnnotations for ${currentAsset.id}`, err);
       showFeedback(err.message || "Failed to save annotations.");
@@ -138,6 +160,15 @@ export function useAnnotationAPI() {
 
     const activeQueryList = autoLabelAll ? [] : classes.map(c => c.name);
     setIsSaving(true);
+    emitVisionFlowNotification({
+      id: `auto-label-started-${currentAsset?.id || "asset"}-${Date.now()}`,
+      status: "Information",
+      title: "Auto-label started",
+      description: "VisionFlow is generating label suggestions.",
+      route: "/upload",
+      projectId,
+      source: "auto-label",
+    });
     try {
       const endpoint = isClassification ? "/api/classify" : "/api/auto-label";
       const res = await fetch(endpoint, {
@@ -166,6 +197,15 @@ export function useAnnotationAPI() {
           setAnnotations(newAnnotations);
           setAutoLabelDetectedClasses(selectedLabels);
           showFeedback("Classification labels suggested.", "success");
+          emitVisionFlowNotification({
+            id: `auto-label-completed-${currentAsset?.id || "asset"}-${Date.now()}`,
+            status: "Success",
+            title: "Auto-label completed",
+            description: `Suggested ${selectedLabels.length} classification label${selectedLabels.length === 1 ? "" : "s"}.`,
+            route: "/upload",
+            projectId,
+            source: "auto-label",
+          });
         }
       } else {
         const incoming = Array.isArray(data.detections) ? data.detections : [];
@@ -181,12 +221,30 @@ export function useAnnotationAPI() {
         }));
         setAnnotations(mode === 'append' ? [...annotations, ...mapped] : mapped);
         showFeedback(`Added ${mapped.length} suggestions.`, "success");
+        emitVisionFlowNotification({
+          id: `auto-label-completed-${currentAsset?.id || "asset"}-${Date.now()}`,
+          status: "Success",
+          title: "Auto-label completed",
+          description: `Added ${mapped.length} suggestion${mapped.length === 1 ? "" : "s"}.`,
+          route: "/upload",
+          projectId,
+          source: "auto-label",
+        });
       }
       setShowAutoLabelConflict(false);
       setPendingAutoLabelData(null);
     } catch (err) {
       console.error(err);
       showFeedback("AI labeling failed.");
+      emitVisionFlowNotification({
+        id: `auto-label-failed-${currentAsset?.id || "asset"}-${Date.now()}`,
+        status: "Error",
+        title: "Auto-label failed",
+        description: "AI labeling could not complete for this asset.",
+        route: "/upload",
+        projectId,
+        source: "auto-label",
+      });
     }
     setIsSaving(false);
   };

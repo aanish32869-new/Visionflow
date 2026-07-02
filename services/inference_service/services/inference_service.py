@@ -42,6 +42,8 @@ LEGACY_REPO_UPLOADS_ROOT = (REPO_ROOT / "uploads").resolve()
 LEGACY_WORKSPACE_UPLOADS_ROOT = (REPO_ROOT.parent / "uploads").resolve()
 DB_NAME = os.getenv("MONGO_DB_NAME", "visionflow")
 ASSET_FILES_BUCKET = "asset_files"
+KPI_EVENT_COLLECTION = "kpi_events"
+kpi_clients = set()
 
 client = MongoClient(Config.MONGO_URI, serverSelectionTimeoutMS=2000)
 db = client[DB_NAME]
@@ -67,6 +69,34 @@ def slugify(value):
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug[:50] or "project"
+
+
+def broadcast_kpi_update(reason, detail=None):
+    payload = {
+        "source": "inference-service",
+        "reason": reason,
+        "detail": detail or {},
+        "ts": int(datetime.utcnow().timestamp() * 1000),
+    }
+    message = f"event: snapshot\ndata: {json.dumps(payload)}\n\n"
+    dead_clients = []
+    for client_handle in list(kpi_clients):
+        try:
+            client_handle.put_nowait(message)
+        except Exception:
+            dead_clients.append(client_handle)
+    for client_handle in dead_clients:
+        kpi_clients.discard(client_handle)
+
+
+def record_kpi_events(events):
+    payload = [event for event in (events or []) if isinstance(event, dict)]
+    if not payload:
+        return
+    try:
+        db[KPI_EVENT_COLLECTION].insert_many(payload, ordered=False)
+    except Exception as error:
+        logger.warning(f"Failed to record KPI telemetry: {error}")
 
 
 class InferenceLogic:
@@ -1159,6 +1189,10 @@ class InferenceLogic:
             "status": "success"
         }
         db.inference_history.insert_one(inference_log)
+        broadcast_kpi_update("inference-recorded", {
+            "project_id": str(project_id),
+            "model_id": str(model_id),
+        })
 
         return {
             "success": True,
@@ -1419,8 +1453,6 @@ class InferenceLogic:
 
         project_id = asset.get("project_id")
         project = db.projects.find_one({"_id": to_object_id(project_id)}) if to_object_id(project_id) else None
-        if label_queries is None:
-            label_queries = InferenceLogic._project_annotation_queries(project)
         source_input = InferenceLogic._resolve_asset_source(asset)
         if source_input is None:
             return {"success": False, "error": f"File not found for asset {asset_id}", "annotated_assets": 0}

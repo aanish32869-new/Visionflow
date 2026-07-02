@@ -1,5 +1,5 @@
-﻿"""
-VisionFlow Training Service â€” Port 5005
+"""
+VisionFlow Training Service - Port 5005
 Manages training jobs, model registry, and local/server training dispatch.
 Config is read from visionflow.conf at startup and on each request.
 """
@@ -12,6 +12,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,7 +34,7 @@ from architectures.yolo_engine import train_yolo
 from architectures.pytorch_engine import train_pytorch
 from architectures.resnet_engine import train_resnet
 
-# â”€â”€ Dependency Check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Dependency Check ──────────────────────────────────────────────────────────
 def check_dependencies():
     required = ["flask", "flask_cors", "pymongo", "ultralytics", "torch"]
     missing = []
@@ -56,7 +58,7 @@ def check_dependencies():
 
 DEPENDENCIES_OK = check_dependencies()
 
-# â”€â”€ Configuration Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Configuration Loading ──────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 CONF_PATH = ROOT_DIR / "visionflow.conf"
 
@@ -76,7 +78,7 @@ def load_env_from_conf():
 # Load environment before any other setup
 load_env_from_conf()
 
-# â”€â”€ Setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Setup ──────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app)
 
@@ -106,6 +108,22 @@ def _get_db():
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+def _emit_notification(payload):
+    if str(os.getenv("NOTIFICATIONS_ENABLED", "true")).strip().lower() in {"0", "false", "no", "off"}:
+        return
+    try:
+        port = int(os.getenv("PORT_NOTIFICATION_SERVICE", 5009))
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://localhost:{port}/api/notifications",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=1).read()
+    except (OSError, urllib.error.URLError, ValueError):
+        pass
 
 def _serialize(doc):
     """Convert MongoDB doc to JSON-serialisable dict."""
@@ -255,10 +273,10 @@ def to_object_id(value):
         pass
     return None
 
-# â”€â”€ In-memory active job tracker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── In-memory active job tracker ───────────────────────────────────────────────
 _active_processes: dict[str, subprocess.Popen] = {}
 
-# â”€â”€ Architecture registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Architecture registry ───────────────────────────────────────────────────────
 ARCH_MAP = {
     "dinov3_small": {"label": "DINOv3 Small", "weights": "vit_b_16.pt", "task": "classify", "family": "dinov3", "size": "small"},
     "dinov3_base": {"label": "DINOv3 Base", "weights": "vit_b_16.pt", "task": "classify", "family": "dinov3", "size": "base"},
@@ -311,7 +329,7 @@ def _resolve_architecture_variant(architecture, model_size):
         raise ValueError(f"Unsupported architecture variant: {variant}")
     return variant
 
-# â”€â”€ Hardware Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Hardware Cache ────────────────────────────────────────────────────────────
 _hardware_cache = {
     "gpu_available": False, 
     "mps_available": False,
@@ -775,7 +793,7 @@ def _build_training_plan(version_doc, architecture, resolved_params, hw):
         "resolved_params": resolved_params
     }
 
-# â”€â”€ Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/api/training/health")
 def health():
@@ -968,6 +986,15 @@ def _dispatch_training(project_id, data):
     # Provide UI-ready loading representation from the start.
     job_doc.update(_compute_progress_update(job_doc, {"status": "Preparing", "progress": 1}))
     db.training_jobs.insert_one(job_doc)
+    _emit_notification({
+        "id": f"training-started-{job_id}",
+        "status": "Information",
+        "title": "Model training started",
+        "description": f"{arch_info.get('label', architecture)} training has started.",
+        "route": "/upload",
+        "projectId": project_id,
+        "source": "training-service",
+    })
 
     thread = threading.Thread(
         target=_run_training,
@@ -987,9 +1014,43 @@ def _run_training(job_id, project_id, version_id, architecture, arch_info, param
 
     def _update(fields):
         nonlocal job_doc
+        previous_status = job_doc.get("status")
         enriched = _compute_progress_update(job_doc, fields)
         db.training_jobs.update_one({"job_id": job_id}, {"$set": {**enriched, "updated_at": _utc_now()}})
         job_doc = {**job_doc, **enriched}
+        next_status = job_doc.get("status")
+        if previous_status != next_status:
+            label = job_doc.get("model_version_label") or job_doc.get("architecture_label") or architecture
+            if next_status == "Completed":
+                _emit_notification({
+                    "id": f"training-completed-{job_id}",
+                    "status": "Success",
+                    "title": "Model training completed",
+                    "description": f"{label} finished successfully.",
+                    "route": "/upload",
+                    "projectId": project_id,
+                    "source": "training-service",
+                })
+            elif next_status == "Failed":
+                _emit_notification({
+                    "id": f"training-failed-{job_id}",
+                    "status": "Error",
+                    "title": "Model training failed",
+                    "description": job_doc.get("error") or f"{label} failed.",
+                    "route": "/upload",
+                    "projectId": project_id,
+                    "source": "training-service",
+                })
+            elif next_status == "Cancelled":
+                _emit_notification({
+                    "id": f"training-cancelled-{job_id}",
+                    "status": "Warning",
+                    "title": "Model training cancelled",
+                    "description": f"{label} was cancelled.",
+                    "route": "/upload",
+                    "projectId": project_id,
+                    "source": "training-service",
+                })
 
     def _append_log(line):
         text = str(line or "").strip()
@@ -1045,7 +1106,7 @@ def _register_model(job_id, project_id, version_id, architecture, arch_info, met
         db = _get_db()
         version = db.versions.find_one({"version_id": version_id}) or {}
         model_doc = {
-            "model_id": uuid.uuid4().hex, "name": f"{arch_info['label']} â€” {version.get('display_id', version_id[:8])}",
+            "model_id": uuid.uuid4().hex, "name": f"{arch_info['label']} - {version.get('display_id', version_id[:8])}",
             "project_id": project_id, "version_id": version_id, "architecture": architecture,
             "architecture_label": arch_info["label"], "metrics": metrics, "weights_path": str(weights_path),
             "runtime_artifacts": runtime_artifacts or {"pt": str(weights_path)},

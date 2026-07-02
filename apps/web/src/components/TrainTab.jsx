@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Cpu, Monitor, Layers, Play, Loader2, CheckCircle2, Download, Trash2 } from "lucide-react";
+import { emitVisionFlowNotification } from "../utils/notifications";
 
 const ARCHITECTURES = [
   {
@@ -111,6 +112,8 @@ export default function TrainTab({ projectId, onOpenModels }) {
   const [jobToDelete, setJobToDelete] = useState(null);
   const [isDeletingJob, setIsDeletingJob] = useState(false);
   const [deletedJobIds, setDeletedJobIds] = useState([]);
+  const jobStatusRef = useRef({});
+  const hasLoadedJobsRef = useRef(false);
 
   const currentArch = useMemo(() => ARCHITECTURES.find((a) => a.id === architecture) || ARCHITECTURES[0], [architecture]);
   const deletedJobsStorageKey = `visionflow_deleted_jobs_${projectId}`;
@@ -186,6 +189,52 @@ export default function TrainTab({ projectId, onOpenModels }) {
   }, [projectId, deletedJobSet]);
 
   useEffect(() => {
+    if (!hasLoadedJobsRef.current) {
+      jobStatusRef.current = Object.fromEntries(jobs.map((job) => [job.job_id, job.status]));
+      hasLoadedJobsRef.current = true;
+      return;
+    }
+
+    jobs.forEach((job) => {
+      const previousStatus = jobStatusRef.current[job.job_id];
+      if (previousStatus && previousStatus !== job.status) {
+        if (job.status === "Completed") {
+          emitVisionFlowNotification({
+            id: `training-completed-${job.job_id}`,
+            status: "Success",
+            title: "Model training completed",
+            description: `${job.model_version_label || job.architecture_label || "Training job"} finished successfully.`,
+            route: "/upload",
+            projectId,
+            source: "training",
+          });
+        } else if (job.status === "Failed") {
+          emitVisionFlowNotification({
+            id: `training-failed-${job.job_id}`,
+            status: "Error",
+            title: "Model training failed",
+            description: `${job.model_version_label || job.architecture_label || "Training job"} failed.`,
+            route: "/upload",
+            projectId,
+            source: "training",
+          });
+        } else if (job.status === "Cancelled") {
+          emitVisionFlowNotification({
+            id: `training-cancelled-${job.job_id}`,
+            status: "Warning",
+            title: "Model training cancelled",
+            description: `${job.model_version_label || job.architecture_label || "Training job"} was cancelled.`,
+            route: "/upload",
+            projectId,
+            source: "training",
+          });
+        }
+      }
+      jobStatusRef.current[job.job_id] = job.status;
+    });
+  }, [jobs, projectId]);
+
+  useEffect(() => {
     const hasActiveJobs = jobs.some((j) => isActiveJob(j.status));
     if (!hasActiveJobs) return undefined;
 
@@ -242,6 +291,15 @@ export default function TrainTab({ projectId, onOpenModels }) {
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Failed to start training");
       setMessage({ type: "success", text: `Training started. Job: ${data.job_id?.slice(0, 8) || "created"}` });
+      emitVisionFlowNotification({
+        id: `training-started-${data.job_id || Date.now()}`,
+        status: "Information",
+        title: "Model training started",
+        description: `${currentArch.name} training has started.`,
+        route: "/upload",
+        projectId,
+        source: "training",
+      });
       if (data?.job_id) setActiveLogJob(data.job_id);
       const refreshJobs = async () => {
         const jRes = await fetch(`/api/projects/${projectId}/jobs`);

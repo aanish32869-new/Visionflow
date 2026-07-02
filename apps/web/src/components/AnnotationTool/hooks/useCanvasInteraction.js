@@ -1,51 +1,93 @@
+import { useRef } from 'react';
 import { useAnnotation } from '../AnnotationContext';
+
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 10;
+const WHEEL_ZOOM_SENSITIVITY = 0.0025;
+
+const clampZoom = (value) => Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM);
 
 export function useCanvasInteraction() {
   const {
-    containerRef, pan, zoom, setPan, setZoom, spacePressed, setIsPanning, setLastPanPos,
+    containerRef, viewportRef, pan, zoom, setPan, setZoom, spacePressed, setIsPanning, setLastPanPos,
     isClassification, tool, annotations, selectedIdx, setIsResizing, setResizeHandle,
     setDragStartPos, setInitialAnnState, setSelectedIdx, setActiveClassIdx, classes,
     setIsMoving, setStartPoint, setIsDrawingBox, currentPolygon, setCurrentPolygon,
     finishPolygon, handleSmartClick, activeClass, setMousePos, setCrosshair,
     isPanning, lastPanPos, isMoving, dragStartPos, initialAnnState, setAnnotations,
     isResizing, resizeHandle, isDrawingBox, startPoint, setCurrentBox, currentBox,
-    setShowClassSelector, setPendingAnnotation, setPendingClassName, showFeedback,
+    addManualAnnotation, showFeedback,
     lockAnnotationClasses
   } = useAnnotation();
+  const touchGestureRef = useRef(null);
+
+  const getViewport = () => viewportRef.current || containerRef.current?.parentElement || null;
+
+  const getBaseOffset = () => {
+    const viewport = getViewport();
+    const canvas = containerRef.current;
+    if (!viewport || !canvas) return { x: 0, y: 0 };
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    return {
+      x: canvasRect.left - viewportRect.left - pan.x,
+      y: canvasRect.top - viewportRect.top - pan.y,
+    };
+  };
 
   const getPos = (e) => {
     if (!containerRef.current) return { x: 0, y: 0 };
     const rect = containerRef.current.getBoundingClientRect();
-    const scaleX = rect.width / containerRef.current.offsetWidth;
-    const scaleY = rect.height / containerRef.current.offsetHeight;
-    const x = ((e.clientX - rect.left) / scaleX) / zoom;
-    const y = ((e.clientY - rect.top) / scaleY) / zoom;
+    const scaleX = rect.width / containerRef.current.offsetWidth || zoom;
+    const scaleY = rect.height / containerRef.current.offsetHeight || zoom;
+    const x = (e.clientX - rect.left) / scaleX;
+    const y = (e.clientY - rect.top) / scaleY;
     return { x, y, rw: containerRef.current.offsetWidth, rh: containerRef.current.offsetHeight, cx: e.clientX, cy: e.clientY };
   };
 
-  const performZoom = (newZoom, centerX, centerY) => {
-    // centerX and centerY should be relative to the parent container's top-left
-    const scaleChange = newZoom / zoom;
-    const newPan = {
-      x: centerX - (centerX - pan.x) * scaleChange,
-      y: centerY - (centerY - pan.y) * scaleChange
+  const performZoom = (requestedZoom, focalX, focalY) => {
+    const viewport = getViewport();
+    if (!viewport || !containerRef.current) return;
+
+    const nextZoom = clampZoom(requestedZoom);
+    if (Math.abs(nextZoom - zoom) < 0.0001) return;
+
+    const base = getBaseOffset();
+    const scaleChange = nextZoom / zoom;
+    const nextPan = {
+      x: focalX - base.x - (focalX - base.x - pan.x) * scaleChange,
+      y: focalY - base.y - (focalY - base.y - pan.y) * scaleChange,
     };
-    setZoom(newZoom);
-    setPan(newPan);
+
+    setZoom(nextZoom);
+    setPan(nextPan);
+  };
+
+  const performZoomAtViewportCenter = (requestedZoom) => {
+    const viewport = getViewport();
+    if (!viewport) return;
+    performZoom(requestedZoom, viewport.clientWidth / 2, viewport.clientHeight / 2);
   };
 
   const handleZoom = (e) => {
+    const viewport = getViewport();
+    if (!viewport) return;
     e.preventDefault();
-    const rect = containerRef.current.parentElement.getBoundingClientRect();
-    const scaleX = rect.width / containerRef.current.parentElement.offsetWidth;
-    const scaleY = rect.height / containerRef.current.parentElement.offsetHeight;
-    const delta = e.deltaY > 0 ? 0.85 : 1.15;
-    const nextZoom = Math.min(Math.max(0.5, zoom * delta), 5);
-    
-    // Convert viewport clientX/Y to parent-relative CSS coordinates
-    const rx = (e.clientX - rect.left) / scaleX;
-    const ry = (e.clientY - rect.top) / scaleY;
-    performZoom(nextZoom, rx, ry);
+    const rect = viewport.getBoundingClientRect();
+    const focalX = e.clientX - rect.left;
+    const focalY = e.clientY - rect.top;
+
+    if (e.ctrlKey || e.metaKey) {
+      const zoomFactor = Math.exp(-e.deltaY * WHEEL_ZOOM_SENSITIVITY);
+      performZoom(zoom * zoomFactor, focalX, focalY);
+      return;
+    }
+
+    setPan((currentPan) => ({
+      x: currentPan.x - e.deltaX,
+      y: currentPan.y - e.deltaY,
+    }));
   };
 
   const handleMouseDown = (e) => {
@@ -133,13 +175,13 @@ export function useCanvasInteraction() {
   };
 
   const handleMouseMove = (e) => {
-    const { x: xMouse, y: yMouse, cx, cy } = getPos(e);
+    const { x: xMouse, y: yMouse } = getPos(e);
     setMousePos({ x: xMouse, y: yMouse });
     setCrosshair({ x: xMouse, y: yMouse });
     if (isPanning) {
       const dx = e.clientX - lastPanPos.x;
       const dy = e.clientY - lastPanPos.y;
-      setPan({ x: pan.x + dx, y: pan.y + dy });
+      setPan((currentPan) => ({ x: currentPan.x + dx, y: currentPan.y + dy }));
       setLastPanPos({ x: e.clientX, y: e.clientY });
       return;
     }
@@ -190,11 +232,13 @@ export function useCanvasInteraction() {
   };
 
   const handleMouseUp = () => {
+    const wasDrawingBox = isDrawingBox;
+    const completedBox = currentBox;
     setIsPanning(false); setIsMoving(false); setIsResizing(false); setIsDrawingBox(false);
     setStartPoint(null); setCurrentBox(null);
     if (isClassification) return;
-    if (tool === 'box' && isDrawingBox) {
-      if (currentBox && currentBox.w > 5 && currentBox.h > 5) {
+    if (tool === 'box' && wasDrawingBox) {
+      if (completedBox && completedBox.w > 5 && completedBox.h > 5) {
         if (!activeClass && lockAnnotationClasses) {
            showFeedback("Please add at least one project class first.");
            return;
@@ -203,17 +247,87 @@ export function useCanvasInteraction() {
         const rh = containerRef.current?.offsetHeight || 1;
         const draftAnnotation = {
           type: 'box',
-          x_center: (currentBox.x + currentBox.w / 2) / rw,
-          y_center: (currentBox.y + currentBox.h / 2) / rh,
-          width: currentBox.w / rw,
-          height: currentBox.h / rh,
+          x_center: (completedBox.x + completedBox.w / 2) / rw,
+          y_center: (completedBox.y + completedBox.h / 2) / rh,
+          width: completedBox.w / rw,
+          height: completedBox.h / rh,
         };
-        setPendingAnnotation(draftAnnotation);
-        setPendingClassName(activeClass?.name || "");
-        setShowClassSelector(true);
+        addManualAnnotation(draftAnnotation);
       }
     }
   };
 
-  return { getPos, handleZoom, performZoom, handleMouseDown, handleMouseMove, handleMouseUp };
+  const getTouchCenter = (touches) => ({
+    x: (touches[0].clientX + touches[1].clientX) / 2,
+    y: (touches[0].clientY + touches[1].clientY) / 2,
+  });
+
+  const getTouchDistance = (touches) => Math.hypot(
+    touches[0].clientX - touches[1].clientX,
+    touches[0].clientY - touches[1].clientY
+  );
+
+  const handleTouchStart = (e) => {
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    const center = getTouchCenter(e.touches);
+    const viewport = getViewport();
+    if (!viewport) return;
+    const rect = viewport.getBoundingClientRect();
+    touchGestureRef.current = {
+      distance: getTouchDistance(e.touches),
+      zoom,
+      pan,
+      base: getBaseOffset(),
+      focal: {
+        x: center.x - rect.left,
+        y: center.y - rect.top,
+      },
+    };
+  };
+
+  const handleTouchMove = (e) => {
+    const gesture = touchGestureRef.current;
+    if (e.touches.length !== 2 || !gesture?.distance) return;
+    const viewport = getViewport();
+    if (!viewport) return;
+    e.preventDefault();
+
+    const center = getTouchCenter(e.touches);
+    const rect = viewport.getBoundingClientRect();
+    const nextZoom = clampZoom(gesture.zoom * (getTouchDistance(e.touches) / gesture.distance));
+    const scaleChange = nextZoom / gesture.zoom;
+    const base = gesture.base;
+    const focal = {
+      x: center.x - rect.left,
+      y: center.y - rect.top,
+    };
+
+    setZoom(nextZoom);
+    setPan({
+      x: focal.x - base.x - (gesture.focal.x - base.x - gesture.pan.x) * scaleChange,
+      y: focal.y - base.y - (gesture.focal.y - base.y - gesture.pan.y) * scaleChange,
+    });
+  };
+
+  const handleTouchEnd = (e) => {
+    if (e.touches.length < 2) {
+      touchGestureRef.current = null;
+    }
+  };
+
+  return {
+    getPos,
+    handleZoom,
+    performZoom,
+    performZoomAtViewportCenter,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    MIN_ZOOM,
+    MAX_ZOOM,
+  };
 }

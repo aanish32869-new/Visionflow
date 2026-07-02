@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import EcrioLogo from "../components/EcrioLogo";
 import { X } from "lucide-react";
+import { emitVisionFlowNotification } from "../utils/notifications";
 
 export default function CreateProject() {
   const navigate = useNavigate();
@@ -64,6 +66,15 @@ export default function CreateProject() {
       }
 
       const data = await res.json();
+      emitVisionFlowNotification({
+        id: `project-created-${data.id || trimmedName}-${Date.now()}`,
+        status: "Success",
+        title: "Project created successfully",
+        description: `${trimmedName} is ready for data upload.`,
+        route: "/projects",
+        projectId: data.id,
+        source: "projects",
+      });
       navigate((data.tool || "Rapid") === "Rapid" ? "/rapid-upload" : "/upload", {
         state: {
           visibility: data.visibility || (data.public ? "Public" : "Private") || "Public",
@@ -90,12 +101,7 @@ export default function CreateProject() {
     <div className="h-screen overflow-y-auto bg-white flex flex-col font-sans animate-page-enter">
       <header className="flex justify-between items-center px-6 py-3 border-b border-gray-100">
         <div className="text-[22px] font-bold flex items-center gap-2">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M2 17L12 22L22 17" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M2 12L12 17L22 12" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span className="text-violet-600 tracking-tight lowercase">VisionFlow</span>
+          <EcrioLogo size={36} />
         </div>
         <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-gray-800 transition p-1 hover:bg-gray-100 rounded">
           <X size={20} />

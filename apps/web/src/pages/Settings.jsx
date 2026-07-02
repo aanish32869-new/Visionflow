@@ -1,10 +1,14 @@
 import React, { useState } from "react";
 import Layout from "../components/Layout";
+import { Bell } from "lucide-react";
+import { useNotifications } from "../components/notificationContext";
 import { getActiveTheme, getThemePreference, saveAndApplyTheme, setThemePreference } from "../utils/theme";
 
 export default function Settings() {
   const [theme, setTheme] = useState(getThemePreference());
   const [message, setMessage] = useState("");
+  const { featureEnabled, preference, requestPermission, disableNotifications } = useNotifications();
+  const browserPermission = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
 
   const onApply = () => {
     setThemePreference(theme);
@@ -49,6 +53,45 @@ export default function Settings() {
           </div>
           <div className="mt-2 text-sm text-violet-700 min-h-5">
             {message}
+          </div>
+        </div>
+
+        <div className="card p-6">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-xl bg-violet-50 text-violet-700 flex items-center justify-center">
+              <Bell size={20} />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-gray-900">Notifications</h2>
+              <p className="text-sm text-gray-600 mt-2">
+                Receive browser and system notifications when background jobs finish.
+              </p>
+              <div className="mt-3 text-sm text-gray-600">
+                Preference: <span className="font-semibold">{preference}</span>
+                <span className="mx-2 text-gray-300">|</span>
+                Browser permission: <span className="font-semibold">{browserPermission}</span>
+                <span className="mx-2 text-gray-300">|</span>
+                Config: <span className="font-semibold">{featureEnabled ? "enabled" : "disabled"}</span>
+              </div>
+              <div className="mt-4 flex gap-3">
+                <button onClick={requestPermission} disabled={!featureEnabled} className="btn-primary disabled:opacity-50">
+                  Enable Notifications
+                </button>
+                <button onClick={disableNotifications} className="btn-secondary">
+                  Disable
+                </button>
+              </div>
+              {!featureEnabled && (
+                <p className="mt-3 text-sm font-semibold text-gray-600">
+                  Notifications are turned off in visionflow.conf. Set NOTIFICATIONS_ENABLED = true and restart the web app to enable them.
+                </p>
+              )}
+              {browserPermission === "denied" && (
+                <p className="mt-3 text-sm font-semibold text-amber-700">
+                  Browser permission is blocked. Re-enable notifications from your browser site settings, then return here.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>

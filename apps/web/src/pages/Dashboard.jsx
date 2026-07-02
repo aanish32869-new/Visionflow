@@ -8,6 +8,12 @@ function fmtPct(value) {
   return `${Math.max(0, Math.min(100, Math.round(n)))}%`;
 }
 
+function normalizeMojibake(value) {
+  return String(value || "")
+    .replaceAll("â€”", "-")
+    .replaceAll("ï¿½", "·");
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
@@ -76,9 +82,9 @@ export default function Dashboard() {
                 <div key={d.id} className="rounded-xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="font-bold text-gray-900">{d.name}</div>
+                      <div className="font-bold text-gray-900">{normalizeMojibake(d.name)}</div>
                       <div className="text-xs text-gray-500 mt-1">
-                        Model: {d.model_name || "N/A"} · Score: {fmtPct((Number(d.success_score || 0) * 100))}
+                        Model: {normalizeMojibake(d.model_name || "N/A")} · Score: {fmtPct((Number(d.success_score || 0) * 100))}
                       </div>
                     </div>
                     <div className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">
@@ -102,12 +108,12 @@ export default function Dashboard() {
         {selected?.type === "docs" && (
           <div className="card p-5">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold">Docs: {selected.deployment.name}</h3>
+              <h3 className="font-bold">Docs: {normalizeMojibake(selected.deployment.name)}</h3>
               <button onClick={closePanel} className="text-sm text-gray-500">Close</button>
             </div>
             <div className="mt-3 text-sm text-gray-700 space-y-2">
               <p>Endpoint: <span className="font-mono text-xs">{selected.deployment.endpoint_url}</span></p>
-              <p>Model: {selected.deployment.model_name || "N/A"}</p>
+              <p>Model: {normalizeMojibake(selected.deployment.model_name || "N/A")}</p>
               <p>Version: {selected.deployment.version_display_id || selected.deployment.version || "v1"}</p>
               <p>How to use: send `POST` multipart/form-data with `file` to the endpoint and parse `predictions` from response.</p>
             </div>
@@ -117,7 +123,7 @@ export default function Dashboard() {
         {selected?.type === "api" && (
           <div className="card p-5">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold">API Key: {selected.deployment.name}</h3>
+              <h3 className="font-bold">API Key: {normalizeMojibake(selected.deployment.name)}</h3>
               <button onClick={closePanel} className="text-sm text-gray-500">Close</button>
             </div>
             <div className="mt-3 flex items-center gap-2">

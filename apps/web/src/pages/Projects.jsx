@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import AssetLibrary from "../components/AssetLibrary";
+import { emitVisionFlowNotification } from "../utils/notifications";
 
 const EMPTY_ARRAY = [];
 const EMPTY_OBJECT = {};
@@ -133,6 +134,15 @@ export default function Projects() {
         const errorBody = await res.json().catch(() => ({}));
         throw new Error(errorBody.error || "Failed to delete project");
       }
+      emitVisionFlowNotification({
+        id: `project-deleted-${projectToDelete.id}-${Date.now()}`,
+        status: "Success",
+        title: "Project deleted successfully",
+        description: `${projectToDelete.name} was removed from the workspace.`,
+        route: "/projects",
+        projectId: projectToDelete.id,
+        source: "projects",
+      });
       await loadOverview();
       setProjectToDelete(null);
     } catch (err) {
@@ -241,7 +251,7 @@ export default function Projects() {
                       handleCreateFolder();
                     }
                   }}
-                  className="w-full px-4 py-2.5 border border-[#6B21A8] rounded-[6px] outline-none shadow-[0_0_0_2px_rgba(107,33,168,0.1)] text-[14px] text-gray-900 font-medium"
+                  className="w-full px-4 py-2.5 border border-[#C41E2A] rounded-[6px] outline-none shadow-[0_0_0_2px_rgba(107,33,168,0.1)] text-[14px] text-gray-900 font-medium"
                   autoFocus
                 />
               </div>
@@ -255,7 +265,7 @@ export default function Projects() {
                 <button
                   onClick={handleCreateFolder}
                   disabled={!folderName.trim() || isCreatingFolder}
-                  className="px-6 py-2.5 rounded-[6px] bg-[#6B21A8] hover:bg-[#581c87] text-white font-semibold text-[13px] transition flex items-center gap-2 shadow-sm disabled:opacity-70"
+                  className="px-6 py-2.5 rounded-[6px] bg-[#C41E2A] hover:bg-[#a5151f] text-white font-semibold text-[13px] transition flex items-center gap-2 shadow-sm disabled:opacity-70"
                 >
                   {isCreatingFolder && <Loader2 size={16} className="animate-spin" />}
                   Create Folder
@@ -368,13 +378,13 @@ export default function Projects() {
         <div className="flex items-center gap-6 border-b border-gray-200 mb-8 px-1">
           <button
             onClick={() => setActiveTab("projects")}
-            className={`font-bold pb-3.5 text-[14px] px-1 tracking-tight transition-colors ${activeTab === "projects" ? "text-[#6B21A8] border-b-2 border-[#6B21A8]" : "text-gray-500 hover:text-gray-800"}`}
+            className={`font-bold pb-3.5 text-[14px] px-1 tracking-tight transition-colors ${activeTab === "projects" ? "text-[#C41E2A] border-b-2 border-[#C41E2A]" : "text-gray-500 hover:text-gray-800"}`}
           >
             Projects
           </button>
           <button
             onClick={() => setActiveTab("asset_library")}
-            className={`font-bold pb-3.5 text-[14px] px-1 tracking-tight transition-colors ${activeTab === "asset_library" ? "text-[#6B21A8] border-b-2 border-[#6B21A8]" : "text-gray-500 hover:text-gray-800"}`}
+            className={`font-bold pb-3.5 text-[14px] px-1 tracking-tight transition-colors ${activeTab === "asset_library" ? "text-[#C41E2A] border-b-2 border-[#C41E2A]" : "text-gray-500 hover:text-gray-800"}`}
           >
             Asset Library
           </button>
@@ -393,7 +403,7 @@ export default function Projects() {
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Search projects, folders, or annotation groups"
-                    className="w-full pl-9 pr-4 py-2.5 border border-gray-300 rounded-[6px] text-[13px] outline-none focus:border-[#6B21A8] focus:ring-1 focus:ring-[#6B21A8] transition shadow-sm bg-white font-medium placeholder-gray-400"
+                    className="w-full pl-9 pr-4 py-2.5 border border-gray-300 rounded-[6px] text-[13px] outline-none focus:border-[#C41E2A] focus:ring-1 focus:ring-[#C41E2A] transition shadow-sm bg-white font-medium placeholder-gray-400"
                   />
                 </div>
                 <button
@@ -413,7 +423,7 @@ export default function Projects() {
                 </button>
                 <button
                   onClick={() => navigate("/create")}
-                  className="bg-[#6B21A8] hover:bg-[#581c87] text-white px-5 py-2.5 rounded-[6px] font-bold text-[13px] flex items-center justify-center gap-1 transition shadow-sm"
+                  className="bg-[#C41E2A] hover:bg-[#a5151f] text-white px-5 py-2.5 rounded-[6px] font-bold text-[13px] flex items-center justify-center gap-1 transition shadow-sm"
                 >
                   <span className="font-normal text-[15px]">+</span> New Project
                 </button>
@@ -458,7 +468,7 @@ export default function Projects() {
                 </p>
                 <button
                   onClick={() => navigate("/create")}
-                  className="px-5 py-2.5 rounded-[6px] bg-[#6B21A8] hover:bg-[#581c87] text-white font-bold text-[13px] transition shadow-sm"
+                  className="px-5 py-2.5 rounded-[6px] bg-[#C41E2A] hover:bg-[#a5151f] text-white font-bold text-[13px] transition shadow-sm"
                 >
                   Create Project
                 </button>
@@ -469,7 +479,7 @@ export default function Projects() {
                   <div
                     key={project.id}
                     onClick={() => openProject(project)}
-                    className="bg-white border border-gray-200 rounded-[14px] overflow-hidden hover:border-[#6B21A8]/50 hover:shadow-[0_12px_30px_rgba(0,0,0,0.06)] cursor-pointer group relative transition-all"
+                    className="bg-white border border-gray-200 rounded-[14px] overflow-hidden hover:border-[#C41E2A]/50 hover:shadow-[0_12px_30px_rgba(0,0,0,0.06)] cursor-pointer group relative transition-all"
                   >
                     <button
                       onClick={(event) => openDeleteDialog(project, event)}
@@ -499,7 +509,7 @@ export default function Projects() {
                     <div className="p-5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <h3 className="font-bold text-gray-900 text-[17px] tracking-tight group-hover:text-[#6B21A8] transition-colors">
+                          <h3 className="font-bold text-gray-900 text-[17px] tracking-tight group-hover:text-[#C41E2A] transition-colors">
                             {project.name}
                           </h3>
                           <p className="text-[12px] text-gray-500 mt-1">

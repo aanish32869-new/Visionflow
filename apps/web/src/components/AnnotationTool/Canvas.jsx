@@ -1,22 +1,52 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useAnnotation } from './AnnotationContext';
 import { useCanvasInteraction } from './hooks/useCanvasInteraction';
 
 export default function Canvas() {
   const {
-    containerRef, imgRef, currentAsset, pan, zoom, isClassification, tool,
+    containerRef, viewportRef, imgRef, currentAsset, pan, zoom, isClassification, tool,
     spacePressed, annotations, classes, selectedIdx, setSelectedIdx,
     isSaving, crosshair, activeColor, isDrawingBox, currentBox,
     currentPolygon, mousePos, removeAnnotation, setZoom, setPan
   } = useAnnotation();
 
   const {
-    handleMouseDown, handleMouseMove, handleMouseUp, handleZoom, performZoom
+    handleMouseDown, handleMouseMove, handleMouseUp, handleZoom,
+    performZoomAtViewportCenter, handleTouchStart, handleTouchMove, handleTouchEnd,
+    MIN_ZOOM, MAX_ZOOM
   } = useCanvasInteraction();
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+
+  const updateCanvasSize = useCallback(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    setCanvasSize({
+      width: node.offsetWidth,
+      height: node.offsetHeight,
+    });
+  }, [containerRef]);
+
+  useEffect(() => {
+    updateCanvasSize();
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(updateCanvasSize);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [containerRef, currentAsset?.url, updateCanvasSize]);
 
   return (
-    <div className={`flex-1 relative bg-gray-100 p-8 flex items-center justify-center overflow-auto select-none ${!isClassification && (tool === 'drag' ? 'cursor-grab' : 'cursor-crosshair')}`}>
+    <div
+      ref={viewportRef}
+      className={`flex-1 relative bg-gray-100 p-8 flex items-center justify-center overflow-hidden select-none ${!isClassification && (tool === 'drag' ? 'cursor-grab' : 'cursor-crosshair')}`}
+      onWheel={handleZoom}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+      style={{ touchAction: 'none' }}
+    >
        <div 
          ref={containerRef}
          className={`relative inline-block shadow-lg ${!isClassification ? (spacePressed || tool === 'drag' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair') : ''}`}
@@ -25,11 +55,11 @@ export default function Canvas() {
          onMouseUp={handleMouseUp}
          onMouseLeave={handleMouseUp} // fallback to mouseUp on leave
          onContextMenu={(e) => e.preventDefault()}
-         onWheel={handleZoom}
          style={{ 
            touchAction: 'none',
            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-           transformOrigin: '0 0'
+           transformOrigin: '0 0',
+           willChange: 'transform'
          }}
       >
         <img 
@@ -38,9 +68,10 @@ export default function Canvas() {
            alt="Annotate" 
            className="max-h-[70vh] object-contain select-none shadow-md pointer-events-none block" 
            draggable="false"
+           onLoad={updateCanvasSize}
         />
         
-        {containerRef.current && (
+        {canvasSize.width > 0 && canvasSize.height > 0 && (
           <svg className="absolute inset-0 pointer-events-none w-full h-full" style={{ zIndex: 10 }}>
             {crosshair && !isSaving && !isClassification && (
               <g className="opacity-60">
@@ -51,10 +82,12 @@ export default function Canvas() {
             
             {annotations.map((ann, idx) => {
                const c = classes.find(cl => cl.name === ann.label)?.color || ann.color || '#8b5cf6';
+               const label = ann.label || ann.class_id || 'Unlabeled';
+               const annotationKey = ann.id || ann._id || ann.annotation_id || `${ann.type || 'box'}-${idx}`;
                if (ann.type === 'tag') return null; 
 
-               const rw = containerRef.current.offsetWidth;
-               const rh = containerRef.current.offsetHeight;
+               const rw = canvasSize.width;
+               const rh = canvasSize.height;
                
                if ((ann.type === 'box' || (!ann.type && ann.width)) && !isClassification) {
                   const w = ann.width * rw;
@@ -63,7 +96,7 @@ export default function Canvas() {
                   const y = ann.y_center * rh - h / 2;
                   const isSelected = idx === selectedIdx;
                   return (
-                     <g key={idx}>
+                     <g key={annotationKey}>
                          <rect 
                            x={x} y={y} width={w} height={h} 
                            fill={isSelected ? `${c}44` : `${c}33`} 
@@ -79,8 +112,8 @@ export default function Canvas() {
                               <circle cx={x + w} cy={y + h} r={4 / zoom} fill="white" stroke={c} strokeWidth="1" className="cursor-se-resize" />
                            </g>
                         )}
-                        <rect x={x} y={y - 20 / zoom} width={Math.max(60, ann.label.length * 8) / zoom} height={20 / zoom} fill={c} />
-                        <text x={x + 4 / zoom} y={y - 5 / zoom} fill="white" fontSize={12 / zoom} fontWeight="bold">{ann.label}</text>
+                        <rect x={x} y={y - 20} width={Math.max(60, label.length * 8)} height={20} fill={c} />
+                        <text x={x + 4} y={y - 5} fill="white" fontSize={12} fontWeight="bold">{label}</text>
                         <foreignObject x={x + w - 24 / zoom} y={y - 24 / zoom} width={24 / zoom} height={24 / zoom} className="pointer-events-auto">
                            <button onClick={(e) => { e.stopPropagation(); removeAnnotation(idx); }} className="bg-red-500 w-full h-full rounded text-white flex items-center justify-center hover:bg-red-600 transition annotation-toolbar">
                              <X size={14 / zoom} />
@@ -92,11 +125,20 @@ export default function Canvas() {
                   const pts = ann.points.map(p => `${p.x * rw},${p.y * rh}`).join(" ");
                   const px = ann.points[0].x * rw;
                   const py = ann.points[0].y * rh;
+                  const isSelected = idx === selectedIdx;
                  return (
-                    <g key={idx}>
-                       <polygon points={pts} fill={`${c}33`} stroke={c} strokeWidth="2" strokeLinejoin="round" />
-                       <rect x={px} y={py - 20} width={Math.max(60, ann.label.length * 8)} height={20} fill={c} />
-                       <text x={px + 4} y={py - 5} fill="white" fontSize="12" fontWeight="bold">{ann.label}</text>
+                    <g key={annotationKey}>
+                       <polygon
+                         points={pts}
+                         fill={isSelected ? `${c}44` : `${c}33`}
+                         stroke={c}
+                         strokeWidth={isSelected ? "3" : "2"}
+                         strokeLinejoin="round"
+                         className="pointer-events-auto cursor-pointer"
+                         onClick={(e) => { e.stopPropagation(); setSelectedIdx(idx); }}
+                       />
+                       <rect x={px} y={py - 20} width={Math.max(60, label.length * 8)} height={20} fill={c} />
+                       <text x={px + 4} y={py - 5} fill="white" fontSize={12} fontWeight="bold">{label}</text>
                     </g>
                  );
                }
@@ -131,30 +173,31 @@ export default function Canvas() {
           </div>
         )}
 
-        {/* Floating Zoom Controls */}
-        <div className="absolute bottom-4 right-4 flex flex-col gap-2 pointer-events-auto bg-white/90 backdrop-blur-md p-1.5 rounded-xl border border-gray-200 shadow-xl z-20">
-           <button 
-             onClick={() => {
-               const rect = containerRef.current.parentElement.getBoundingClientRect();
-               performZoom(Math.min(zoom * 1.25, 5), rect.width / 2, rect.height / 2);
-             }} 
-             className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-gray-700 transition"
-             title="Zoom In"
-           >
-             <Plus size={18} />
-           </button>
-           <button 
-             onClick={() => {
-               const rect = containerRef.current.parentElement.getBoundingClientRect();
-               performZoom(Math.max(zoom * 0.75, 0.5), rect.width / 2, rect.height / 2);
-             }} 
-             className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-gray-700 transition"
-             title="Zoom Out"
-           >
-             <X size={14} className="rotate-45" />
-           </button>
-           <button onClick={() => { setZoom(1); setPan({x: 0, y: 0}); }} className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-gray-500 hover:text-violet-600 transition font-bold text-[10px]">100%</button>
-        </div>
+      </div>
+
+      {/* Floating Zoom Controls */}
+      <div className="absolute bottom-4 right-4 flex flex-col gap-2 pointer-events-auto bg-white/90 backdrop-blur-md p-1.5 rounded-xl border border-gray-200 shadow-xl z-20">
+         <button
+           onClick={() => performZoomAtViewportCenter(Math.min(zoom * 1.25, MAX_ZOOM))}
+           className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-gray-700 transition"
+           title="Zoom In"
+         >
+           <Plus size={18} />
+         </button>
+         <button
+           onClick={() => performZoomAtViewportCenter(Math.max(zoom * 0.8, MIN_ZOOM))}
+           className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-gray-700 transition"
+           title="Zoom Out"
+         >
+           <X size={14} className="rotate-45" />
+         </button>
+         <button
+           onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+           className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded-lg text-gray-500 hover:text-violet-600 transition font-bold text-[10px]"
+           title="Reset Zoom"
+         >
+           {Math.round(zoom * 100)}%
+         </button>
       </div>
     </div>
   );
