@@ -90,7 +90,7 @@ export default function Canvas() {
                const rw = canvasSize.width;
                const rh = canvasSize.height;
                
-               if ((ann.type === 'box' || (!ann.type && ann.width)) && canRenderBoxes) {
+               if ((ann.type === 'box' || (!ann.type && ann.width))) {
                   const w = ann.width * rw;
                   const h = ann.height * rh;
                   const x = ann.x_center * rw - w / 2;
@@ -164,14 +164,14 @@ export default function Canvas() {
           </svg>
         )}
 
-        {isClassification && (
-          <div className="absolute top-4 left-4 flex flex-wrap gap-2 pointer-events-none">
+        {isClassification && classificationType !== "Multi-Label" && (
+           <div className="absolute top-4 left-4 flex gap-2 pointer-events-auto">
              {annotations.filter(a => a.type === 'tag').map((ann, idx) => (
                 <div key={idx} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-white font-bold text-sm shadow-md pointer-events-auto" style={{ backgroundColor: ann.color || '#222' }}>
                    <span>{ann.label}</span>
                 </div>
              ))}
-          </div>
+           </div>
         )}
 
       </div>
