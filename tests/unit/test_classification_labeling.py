@@ -366,6 +366,7 @@ def test_run_classification_labeling_single_label_ppe_persists_boxes(monkeypatch
     assert ppe_model.kwargs["conf"] == 0.2
     assert ppe_model.kwargs["augment"] is True
 
+
 def test_run_assets_classification_labeling_rejects_empty_target_set():
     result = InferenceLogic.run_assets_classification_labeling([], model_name="yolo26s.pt")
 
@@ -438,9 +439,6 @@ def test_run_project_classification_labeling_rejects_empty_asset_query(monkeypat
 
     with pytest.raises(ValueError, match="No assets found"):
         InferenceLogic.run_project_classification_labeling(str(project_oid), model_name="yolo26s.pt")
-
-
-
 
 
 def test_run_classification_labeling_multi_label_persists_duplicate_class_boxes(monkeypatch):
@@ -532,3 +530,371 @@ def test_run_classification_labeling_multi_label_whitelists_annotation_group(mon
     assert [item["label"] for item in fake_db.annotations.inserted] == ["Helmet", "Vest"]
     assert all(item["type"] == "box" for item in fake_db.annotations.inserted)
 
+
+# ===========================================================================
+# REGRESSION TESTS
+# Verify the PPE-vs-standard-classification routing split is correct.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Regression Test 1: Weather (Single-Label) → CLIP tag, NO boxes
+# ---------------------------------------------------------------------------
+
+
+def test_regression_weather_single_label_produces_tag_no_boxes(monkeypatch):
+    """
+    Weather project: Sunny / Cloudy / Rainy
+    Expected:
+      - Routes through CLIP zero-shot (not detector).
+      - Persists a classification tag.
+      - NO bounding boxes are produced.
+      - ppe_requested is False.
+    """
+    from bson.objectid import ObjectId
+    import services.inference_service as inference_module
+
+    asset_oid = ObjectId()
+    project_oid = ObjectId()
+    fake_db = FakeDb(
+        asset={"_id": asset_oid, "project_id": str(project_oid), "url": "/uploads/weather.jpg"},
+        project={
+            "_id": project_oid,
+            "project_type": "Classification",
+            "classification_type": "Single-Label",
+            "annotation_group_terms": [
+                {"name": "Sunny",  "slug": "sunny",  "unmapped": True},
+                {"name": "Cloudy", "slug": "cloudy", "unmapped": True},
+                {"name": "Rainy",  "slug": "rainy",  "unmapped": True},
+            ],
+        },
+    )
+    monkeypatch.setattr(inference_module, "db", fake_db)
+    monkeypatch.setattr(InferenceLogic, "_resolve_asset_source", staticmethod(lambda asset: "dummy.jpg"))
+    monkeypatch.setattr(
+        InferenceLogic,
+        "classify_image_zero_shot",
+        staticmethod(lambda *args, **kwargs: {
+            "success": True,
+            "labels": ["Sunny"],
+            "scores": {"Sunny": 0.88, "Cloudy": 0.08, "Rainy": 0.04},
+            "model": "CLIP ViT-B/32",
+            "classification_mode": "zero-shot",
+        }),
+    )
+
+    result = InferenceLogic.run_classification_labeling(
+        str(asset_oid), model_name="yolo26s.pt", confidence=0.5
+    )
+
+    assert result["success"] is True, result.get("error")
+    assert result["count"] == 1
+    assert result["annotated_assets"] == 1
+    # Must be a tag, never a box
+    for ann in fake_db.annotations.inserted:
+        assert ann["type"] == "tag", f"Expected tag, got {ann['type']}"
+    assert fake_db.annotations.inserted[0]["label"] == "Sunny"
+    # The PPE branch must not have been triggered
+    plan = InferenceLogic._classification_detection_plan(fake_db.projects.find_one_result)
+    assert plan["ppe_requested"] is False
+
+
+# ---------------------------------------------------------------------------
+# Regression Test 2: Animal Multi-Label → detection boxes, NOT PPE model
+# ---------------------------------------------------------------------------
+
+
+def test_regression_animal_multi_label_produces_boxes_not_ppe(monkeypatch):
+    """
+    Animal project: Dog / Cat / Horse (Multi-Label)
+    Expected:
+      - Standard detection boxes (Multi-Label path).
+      - PPE model is NOT activated.
+      - ppe_requested is False.
+    """
+    from bson.objectid import ObjectId
+    import services.inference_service as inference_module
+
+    class AnimalResult:
+        names = {0: "dog", 1: "cat", 2: "horse"}
+        boxes = [
+            DummyBox(cls_id=0, conf=0.91, xywhn=(0.3, 0.3, 0.15, 0.2)),
+            DummyBox(cls_id=1, conf=0.85, xywhn=(0.6, 0.5, 0.1, 0.15)),
+        ]
+
+    class AnimalModel:
+        names = AnimalResult.names
+
+        def predict(self, *args, **kwargs):
+            return [AnimalResult()]
+
+    asset_oid = ObjectId()
+    project_oid = ObjectId()
+    fake_db = FakeDb(
+        asset={"_id": asset_oid, "project_id": str(project_oid), "url": "/uploads/animals.jpg"},
+        project={
+            "_id": project_oid,
+            "project_type": "Classification",
+            "classification_type": "Multi-Label",
+            "annotation_group_terms": [
+                {"name": "Dog",   "slug": "dog",   "unmapped": False},
+                {"name": "Cat",   "slug": "cat",   "unmapped": False},
+                {"name": "Horse", "slug": "horse", "unmapped": False},
+            ],
+        },
+    )
+    monkeypatch.setattr(inference_module, "db", fake_db)
+    monkeypatch.setattr(InferenceLogic, "_resolve_asset_source", staticmethod(lambda asset: "dummy.jpg"))
+    monkeypatch.setattr(
+        InferenceLogic,
+        "get_auto_label_model",
+        classmethod(lambda cls, model_name=None, classes=None: AnimalModel()),
+    )
+    monkeypatch.setattr(
+        InferenceLogic,
+        "_inference_runtime_options",
+        staticmethod(lambda: {"device": "cpu", "batch": 1, "imgsz": 768, "half": False}),
+    )
+
+    result = InferenceLogic.run_classification_labeling(
+        str(asset_oid), model_name="yolo26s.pt", confidence=0.5
+    )
+
+    assert result["success"] is True, result.get("error")
+    assert result["count"] == 2
+    # All annotations are bounding boxes
+    for ann in fake_db.annotations.inserted:
+        assert ann["type"] == "box", f"Expected box, got {ann['type']}"
+    labels = {ann["label"] for ann in fake_db.annotations.inserted}
+    assert "Dog" in labels
+    assert "Cat" in labels
+    # PPE must not be triggered
+    plan = InferenceLogic._classification_detection_plan(fake_db.projects.find_one_result)
+    assert plan["ppe_requested"] is False
+
+
+# ---------------------------------------------------------------------------
+# Regression Test 3: PPE Multi-Label → PPE model, boxes, original names kept
+# ---------------------------------------------------------------------------
+
+
+def test_regression_ppe_multi_label_produces_boxes_with_original_names(monkeypatch):
+    """
+    PPE project: Helmet / Safety Helmet / Vest / Safety Vest (Multi-Label)
+    Expected:
+      - PPE model (yolov8m.pt) activated.
+      - Bounding boxes generated.
+      - Original user-entered labels preserved (NOT normalised "helmet"/"vest").
+      - unmatched_classes is empty.
+      - ppe_requested is True.
+    """
+    from bson.objectid import ObjectId
+    import services.inference_service as inference_module
+
+    class PpeResult:
+        names = {0: "helmet", 1: "vest"}
+        boxes = [
+            DummyBox(cls_id=0, conf=0.93, xywhn=(0.25, 0.20, 0.12, 0.10)),
+            DummyBox(cls_id=1, conf=0.88, xywhn=(0.50, 0.55, 0.18, 0.22)),
+        ]
+
+    class PpeModel:
+        names = PpeResult.names
+
+        def predict(self, *args, **kwargs):
+            self.last_kwargs = kwargs
+            return [PpeResult()]
+
+    ppe_model = PpeModel()
+    asset_oid = ObjectId()
+    project_oid = ObjectId()
+    fake_db = FakeDb(
+        asset={"_id": asset_oid, "project_id": str(project_oid), "url": "/uploads/workers.jpg"},
+        project={
+            "_id": project_oid,
+            "project_type": "Classification",
+            "classification_type": "Multi-Label",
+            "annotation_group_terms": [
+                {"name": "Helmet",        "slug": "helmet",       "unmapped": True},
+                {"name": "Safety Helmet", "slug": "safety helmet","unmapped": True},
+                {"name": "Vest",          "slug": "vest",         "unmapped": True},
+                {"name": "Safety Vest",   "slug": "safety vest",  "unmapped": True},
+            ],
+        },
+    )
+    monkeypatch.setattr(inference_module, "db", fake_db)
+    monkeypatch.setattr(InferenceLogic, "_resolve_asset_source", staticmethod(lambda asset: "dummy.jpg"))
+    monkeypatch.setattr(
+        InferenceLogic,
+        "get_auto_label_model",
+        classmethod(lambda cls, model_name=None, classes=None: ppe_model),
+    )
+    monkeypatch.setattr(
+        InferenceLogic,
+        "_classification_detection_runtime_options",
+        staticmethod(lambda ppe_requested=False: {
+            "device": "cpu", "batch": 1, "imgsz": 960, "half": False,
+            "iou": 0.45, "augment": True, "max_det": 300,
+        }),
+    )
+
+    result = InferenceLogic.run_classification_labeling(
+        str(asset_oid), model_name="yolo26s.pt", confidence=0.5
+    )
+
+    assert result["success"] is True, result.get("error")
+    # PPE model must have been selected
+    assert result["model"] == "yolov8m.pt"
+    assert result["count"] == 2
+    assert result["unmatched_classes"] == []
+    for ann in fake_db.annotations.inserted:
+        assert ann["type"] == "box"
+        assert "bbox" in ann
+    # Original display names must be preserved (first-seen canonical wins per target_key)
+    labels_stored = {ann["label"] for ann in fake_db.annotations.inserted}
+    assert labels_stored == {"Helmet", "Vest"}
+    # PPE plan flag
+    plan = InferenceLogic._classification_detection_plan(fake_db.projects.find_one_result)
+    assert plan["ppe_requested"] is True
+
+
+# ---------------------------------------------------------------------------
+# Regression Test 4: Mixed (Person + PPE) → PPE path, boxes for all classes
+# ---------------------------------------------------------------------------
+
+
+def test_regression_mixed_person_ppe_produces_boxes(monkeypatch):
+    """
+    Mixed project: Person / Helmet / Safety Vest (Multi-Label)
+    Expected:
+      - PPE path triggered because PPE classes are present.
+      - Bounding boxes for all three classes.
+      - Person label preserved as-is.
+    """
+    from bson.objectid import ObjectId
+    import services.inference_service as inference_module
+
+    class MixedResult:
+        names = {0: "person", 1: "helmet", 2: "vest"}
+        boxes = [
+            DummyBox(cls_id=0, conf=0.95, xywhn=(0.5, 0.5, 0.4, 0.8)),
+            DummyBox(cls_id=1, conf=0.90, xywhn=(0.5, 0.2, 0.12, 0.12)),
+            DummyBox(cls_id=2, conf=0.87, xywhn=(0.5, 0.55, 0.20, 0.30)),
+        ]
+
+    class MixedModel:
+        names = MixedResult.names
+
+        def predict(self, *args, **kwargs):
+            return [MixedResult()]
+
+    asset_oid = ObjectId()
+    project_oid = ObjectId()
+    fake_db = FakeDb(
+        asset={"_id": asset_oid, "project_id": str(project_oid), "url": "/uploads/site.jpg"},
+        project={
+            "_id": project_oid,
+            "project_type": "Classification",
+            "classification_type": "Multi-Label",
+            "annotation_group_terms": [
+                {"name": "Person",      "slug": "person",      "unmapped": False},
+                {"name": "Helmet",      "slug": "helmet",      "unmapped": True},
+                {"name": "Safety Vest", "slug": "safety vest", "unmapped": True},
+            ],
+        },
+    )
+    monkeypatch.setattr(inference_module, "db", fake_db)
+    monkeypatch.setattr(InferenceLogic, "_resolve_asset_source", staticmethod(lambda asset: "dummy.jpg"))
+    monkeypatch.setattr(
+        InferenceLogic,
+        "get_auto_label_model",
+        classmethod(lambda cls, model_name=None, classes=None: MixedModel()),
+    )
+    monkeypatch.setattr(
+        InferenceLogic,
+        "_classification_detection_runtime_options",
+        staticmethod(lambda ppe_requested=False: {
+            "device": "cpu", "batch": 1, "imgsz": 960, "half": False,
+            "iou": 0.45, "augment": True, "max_det": 300,
+        }),
+    )
+
+    result = InferenceLogic.run_classification_labeling(
+        str(asset_oid), model_name="yolo26s.pt", confidence=0.5
+    )
+
+    assert result["success"] is True, result.get("error")
+    assert result["count"] == 3
+    for ann in fake_db.annotations.inserted:
+        assert ann["type"] == "box"
+    labels_stored = {ann["label"] for ann in fake_db.annotations.inserted}
+    assert "Person" in labels_stored
+    assert "Helmet" in labels_stored
+    assert "Safety Vest" in labels_stored
+    plan = InferenceLogic._classification_detection_plan(fake_db.projects.find_one_result)
+    assert plan["ppe_requested"] is True
+
+
+# ---------------------------------------------------------------------------
+# Regression Test 5: Unknown class → no fake boxes, unmatched_classes populated
+# ---------------------------------------------------------------------------
+
+
+def test_regression_unknown_class_returns_unmatched_no_fake_boxes(monkeypatch):
+    """
+    Project contains only "Alien Helmet" which has no PPE alias mapping and the
+    model returns zero detections.
+    Expected:
+      - No fabricated bounding boxes.
+      - unmatched_classes contains "Alien Helmet".
+      - success is True (the inference ran correctly, just nothing matched).
+    """
+    from bson.objectid import ObjectId
+    import services.inference_service as inference_module
+
+    class EmptyResult:
+        names = {0: "helmet", 1: "vest"}
+        boxes = []  # model finds nothing for an unknown class
+
+    class EmptyModel:
+        names = EmptyResult.names
+
+        def predict(self, *args, **kwargs):
+            return [EmptyResult()]
+
+    asset_oid = ObjectId()
+    project_oid = ObjectId()
+    fake_db = FakeDb(
+        asset={"_id": asset_oid, "project_id": str(project_oid), "url": "/uploads/alien.jpg"},
+        project={
+            "_id": project_oid,
+            "project_type": "Classification",
+            "classification_type": "Multi-Label",
+            "annotation_group_terms": [
+                {"name": "Alien Helmet", "slug": "alien helmet", "unmapped": True},
+            ],
+        },
+    )
+    monkeypatch.setattr(inference_module, "db", fake_db)
+    monkeypatch.setattr(InferenceLogic, "_resolve_asset_source", staticmethod(lambda asset: "dummy.jpg"))
+    monkeypatch.setattr(
+        InferenceLogic,
+        "get_auto_label_model",
+        classmethod(lambda cls, model_name=None, classes=None: EmptyModel()),
+    )
+    monkeypatch.setattr(
+        InferenceLogic,
+        "_inference_runtime_options",
+        staticmethod(lambda: {"device": "cpu", "batch": 1, "imgsz": 768, "half": False}),
+    )
+
+    result = InferenceLogic.run_classification_labeling(
+        str(asset_oid), model_name="yolo26s.pt", confidence=0.5
+    )
+
+    assert result["success"] is True, result.get("error")
+    # No fake annotations must have been fabricated
+    assert result["count"] == 0
+    assert fake_db.annotations.inserted == []
+    # The unrecognised class must be reported
+    assert "Alien Helmet" in result.get("unmatched_classes", [])
