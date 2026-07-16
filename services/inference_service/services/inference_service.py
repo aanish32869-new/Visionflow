@@ -168,8 +168,6 @@ class InferenceLogic:
             cls.models[cache_key] = model
 
         model = cls.models[cache_key]
-        if is_world_model and normalized_classes:
-            model.set_classes(list(normalized_classes))
         return model
 
     @staticmethod
@@ -1999,10 +1997,23 @@ class InferenceLogic:
                     "agnostic_nms": True,
                     "max_det": runtime.get("max_det", 300),
                 })
-            results = model.predict(
-                source_input,
-                **predict_kwargs,
-            )
+            try:
+                results = model.predict(
+                    source_input,
+                    **predict_kwargs,
+                )
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                if 'wrapper_CUDA__index_select' in str(e) or 'agnostic_nms' in predict_kwargs:
+                    logger.warning(f'Prediction failed with agnostic_nms=True for {asset_oid}, falling back without agnostic_nms. Error: {str(e)}')
+                    predict_kwargs.pop('agnostic_nms', None)
+                    results = model.predict(
+                        source_input,
+                        **predict_kwargs,
+                    )
+                else:
+                    raise e
             detections, _classes = InferenceLogic._extract_box_detections(
                 results,
                 model,
