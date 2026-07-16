@@ -209,8 +209,18 @@ class InferenceLogic:
 
     @staticmethod
     def resolve_classification_detection_model_name(model_name=None, classification_type=None, ppe_requested=False):
+        """Return the best model for classification-based detection.
+
+        For PPE projects (or any Multi-Label project) we use a YOLO-World model
+        (default: yolov8s-world.pt) that supports open-vocabulary set_classes(),
+        allowing it to detect arbitrary classes like 'Safety Helmet', 'Safety Vest',
+        'Person' etc. without needing a dataset-specific trained model.
+
+        Standard COCO models (yolov8n/s/m/x) only know 80 fixed classes and
+        cannot detect PPE equipment, which is why only 'person' boxes appeared.
+        """
         if ppe_requested or str(classification_type or "").strip() == "Multi-Label":
-            return str(Config.PPE_MULTI_LABEL_MODEL or "yolov8m.pt").strip() or "yolov8m.pt"
+            return str(Config.PPE_MULTI_LABEL_MODEL or "yolov8s-world.pt").strip() or "yolov8s-world.pt"
         candidate = str(model_name or "").strip()
         candidate_name = Path(candidate).name.lower() if candidate else ""
         if candidate and "-cls" not in candidate_name and "classif" not in candidate_name:
@@ -1967,19 +1977,26 @@ class InferenceLogic:
             )
             model = InferenceLogic.get_auto_label_model(model_name=detection_model_name, classes=label_queries)
             runtime = InferenceLogic._classification_detection_runtime_options(ppe_requested=ppe_requested)
+            # YOLO-World (world model) uses open-vocabulary detection via set_classes().
+            # World models output lower raw confidence scores than supervised COCO models,
+            # so we use a lower floor (0.15) to avoid silently suppressing real detections.
+            is_world_model_active = "world" in Path(str(detection_model_name or "")).name.lower()
+            ppe_conf_floor = float(os.getenv("PPE_INFERENCE_CONF", "0.15"))
             predict_kwargs = {
                 "verbose": False,
-                "conf": min(threshold, float(os.getenv("PPE_INFERENCE_CONF", "0.20"))) if ppe_requested else threshold,
+                "conf": min(threshold, ppe_conf_floor) if (ppe_requested or is_world_model_active) else threshold,
                 "device": runtime["device"],
                 "batch": runtime["batch"],
                 "imgsz": runtime["imgsz"],
                 "half": runtime["half"],
             }
-            if ppe_requested:
+            if ppe_requested or is_world_model_active:
                 predict_kwargs.update({
                     "iou": runtime.get("iou", 0.45),
-                    "augment": runtime.get("augment", True),
-                    "agnostic_nms": False,
+                    # agnostic_nms=True prevents NMS from suppressing boxes of
+                    # different PPE classes that overlap (e.g. helmet over head
+                    # and vest over torso on the same person).
+                    "agnostic_nms": True,
                     "max_det": runtime.get("max_det", 300),
                 })
             results = model.predict(

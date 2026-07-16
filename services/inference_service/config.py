@@ -14,7 +14,7 @@ class Config:
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
     YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "yolov8s.pt")
     YOLO_AUTO_LABEL_MODEL = os.getenv("YOLO_AUTO_LABEL_MODEL", "yolov8s.pt")
-    PPE_MULTI_LABEL_MODEL = os.getenv("PPE_MULTI_LABEL_MODEL", "yolov8m.pt")
+    PPE_MULTI_LABEL_MODEL = os.getenv("PPE_MULTI_LABEL_MODEL", "yolov8s-world.pt")
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "storage/uploads")
     PORT = int(os.getenv("PORT_INFERENCE_SERVICE", 5006))
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-123")

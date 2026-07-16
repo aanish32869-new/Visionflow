@@ -161,7 +161,7 @@ def test_classification_detection_model_ignores_classifier_weights():
     assert InferenceLogic.resolve_classification_detection_model_name(
         "yolo26s.pt",
         classification_type="Multi-Label",
-    ) == "yolov8m.pt"
+    ) == "yolov8s-world.pt"
 
 
 class DummyTensor:
@@ -357,14 +357,14 @@ def test_run_classification_labeling_single_label_ppe_persists_boxes(monkeypatch
     result = InferenceLogic.run_classification_labeling(str(asset_oid), model_name="yolo26s.pt", confidence=0.5)
 
     assert result["success"] is True
-    assert result["model"] == "yolov8m.pt"
+    assert result["model"] == "yolov8s-world.pt"
     assert result["count"] == 2
     assert result["unmatched_classes"] == []
     assert [item["label"] for item in fake_db.annotations.inserted] == ["Safety Helmet", "Safety Vest"]
     assert all(item["type"] == "box" for item in fake_db.annotations.inserted)
     assert fake_db.annotations.inserted[0]["bbox"]["width"] == 0.1
-    assert ppe_model.kwargs["conf"] == 0.2
-    assert ppe_model.kwargs["augment"] is True
+    assert ppe_model.kwargs["conf"] == 0.15
+    assert ppe_model.kwargs["agnostic_nms"] is True
 
 
 def test_run_assets_classification_labeling_rejects_empty_target_set():
@@ -525,7 +525,7 @@ def test_run_classification_labeling_multi_label_whitelists_annotation_group(mon
     result = InferenceLogic.run_classification_labeling(str(asset_oid), model_name="yolo26s.pt", confidence=0.5)
 
     assert result["success"] is True
-    assert result["model"] == "yolov8m.pt"
+    assert result["model"] == "yolov8s-world.pt"
     assert result["count"] == 2
     assert [item["label"] for item in fake_db.annotations.inserted] == ["Helmet", "Vest"]
     assert all(item["type"] == "box" for item in fake_db.annotations.inserted)
@@ -743,8 +743,8 @@ def test_regression_ppe_multi_label_produces_boxes_with_original_names(monkeypat
     )
 
     assert result["success"] is True, result.get("error")
-    # PPE model must have been selected
-    assert result["model"] == "yolov8m.pt"
+    # PPE model must have been selected (yolov8s-world.pt supports open-vocabulary detection)
+    assert result["model"] == "yolov8s-world.pt"
     assert result["count"] == 2
     assert result["unmatched_classes"] == []
     for ann in fake_db.annotations.inserted:
