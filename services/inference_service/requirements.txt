@@ -3,5 +3,6 @@ Flask-CORS
 pymongo
 mongomock
 ultralytics
+clip
 opencv-python-headless
 Pillow

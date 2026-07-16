@@ -5,11 +5,12 @@ import { useCanvasInteraction } from './hooks/useCanvasInteraction';
 
 export default function Canvas() {
   const {
-    containerRef, viewportRef, imgRef, currentAsset, pan, zoom, isClassification, tool,
+    containerRef, viewportRef, imgRef, currentAsset, pan, zoom, isClassification, classificationType, tool,
     spacePressed, annotations, classes, selectedIdx, setSelectedIdx,
     isSaving, crosshair, activeColor, isDrawingBox, currentBox,
     currentPolygon, mousePos, removeAnnotation, setZoom, setPan
   } = useAnnotation();
+  const canRenderBoxes = !isClassification || classificationType === "Multi-Label";
 
   const {
     handleMouseDown, handleMouseMove, handleMouseUp, handleZoom,
@@ -39,7 +40,7 @@ export default function Canvas() {
   return (
     <div
       ref={viewportRef}
-      className={`flex-1 relative bg-gray-100 p-8 flex items-center justify-center overflow-hidden select-none ${!isClassification && (tool === 'drag' ? 'cursor-grab' : 'cursor-crosshair')}`}
+      className={`flex-1 relative bg-gray-100 p-8 flex items-center justify-center overflow-hidden select-none ${canRenderBoxes && (tool === 'drag' ? 'cursor-grab' : 'cursor-crosshair')}`}
       onWheel={handleZoom}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -49,7 +50,7 @@ export default function Canvas() {
     >
        <div 
          ref={containerRef}
-         className={`relative inline-block shadow-lg ${!isClassification ? (spacePressed || tool === 'drag' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair') : ''}`}
+         className={`relative inline-block shadow-lg ${canRenderBoxes ? (spacePressed || tool === 'drag' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair') : ''}`}
          onMouseDown={handleMouseDown}
          onMouseMove={handleMouseMove}
          onMouseUp={handleMouseUp}
@@ -73,7 +74,7 @@ export default function Canvas() {
         
         {canvasSize.width > 0 && canvasSize.height > 0 && (
           <svg className="absolute inset-0 pointer-events-none w-full h-full" style={{ zIndex: 10 }}>
-            {crosshair && !isSaving && !isClassification && (
+            {crosshair && !isSaving && canRenderBoxes && (
               <g className="opacity-60">
                 <line x1="0" y1={crosshair.y} x2="100%" y2={crosshair.y} stroke="#6b7280" strokeWidth="1.5" strokeDasharray="4,4" />
                 <line x1={crosshair.x} y1="0" x2={crosshair.x} y2="100%" stroke="#6b7280" strokeWidth="1.5" strokeDasharray="4,4" />
@@ -89,7 +90,7 @@ export default function Canvas() {
                const rw = canvasSize.width;
                const rh = canvasSize.height;
                
-               if ((ann.type === 'box' || (!ann.type && ann.width)) && !isClassification) {
+               if ((ann.type === 'box' || (!ann.type && ann.width)) && canRenderBoxes) {
                   const w = ann.width * rw;
                   const h = ann.height * rh;
                   const x = ann.x_center * rw - w / 2;

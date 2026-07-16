@@ -101,6 +101,7 @@ def record_kpi_events(events):
 
 class InferenceLogic:
     models = {}
+    clip_models = {}
     _device_cache = None
 
     @classmethod
@@ -133,6 +134,18 @@ class InferenceLogic:
             "imgsz": int(os.getenv("INFERENCE_IMGSZ", "768")),
             "half": str(os.getenv("INFERENCE_FP16", "true")).strip().lower() in {"1", "true", "yes", "on"} and str(device).startswith("cuda"),
         }
+
+    @staticmethod
+    def _classification_detection_runtime_options(ppe_requested=False):
+        runtime = InferenceLogic._inference_runtime_options()
+        if ppe_requested:
+            runtime.update({
+                "imgsz": int(os.getenv("PPE_INFERENCE_IMGSZ", "960")),
+                "iou": float(os.getenv("PPE_INFERENCE_IOU", "0.45")),
+                "augment": str(os.getenv("PPE_INFERENCE_AUGMENT", "true")).strip().lower() in {"1", "true", "yes", "on"},
+                "max_det": int(os.getenv("PPE_INFERENCE_MAX_DET", "300")),
+            })
+        return runtime
 
     @classmethod
     def get_model(cls, model_name=None):
@@ -195,6 +208,16 @@ class InferenceLogic:
         return candidate
 
     @staticmethod
+    def resolve_classification_detection_model_name(model_name=None, classification_type=None, ppe_requested=False):
+        if ppe_requested or str(classification_type or "").strip() == "Multi-Label":
+            return str(Config.PPE_MULTI_LABEL_MODEL or "yolov8m.pt").strip() or "yolov8m.pt"
+        candidate = str(model_name or "").strip()
+        candidate_name = Path(candidate).name.lower() if candidate else ""
+        if candidate and "-cls" not in candidate_name and "classif" not in candidate_name:
+            return candidate
+        return "yolo26s.pt"
+
+    @staticmethod
     def get_timestamp():
         return now_iso()
 
@@ -230,6 +253,271 @@ class InferenceLogic:
             # Generic group means detect all.
             return []
         return InferenceLogic._normalize_queries(items)
+
+    @staticmethod
+    def _parse_annotation_group_terms(raw_group):
+        terms = []
+        seen = set()
+        for item in str(raw_group or "").replace("\n", ",").split(","):
+            text = str(item or "").strip()
+            slug = InferenceLogic._normalize_label_text(text)
+            if not text or not slug or slug in seen:
+                continue
+            seen.add(slug)
+            terms.append({"name": text, "slug": slug})
+        return terms
+
+    @staticmethod
+    def _project_classification_type(project):
+        value = str((project or {}).get("classification_type") or "Multi-Label").strip()
+        return value if value in {"Single-Label", "Multi-Label"} else "Multi-Label"
+
+    @staticmethod
+    def _project_classification_queries(project, include_unmapped=False):
+        if not project:
+            raise ValueError("Project not found for classification inference.")
+        if str(project.get("project_type") or "").strip() != "Classification":
+            raise ValueError("Classification inference is only supported for Classification projects.")
+
+        generic = {"object", "objects", "all", "any"}
+        stored_terms = project.get("annotation_group_terms") or []
+        terms = []
+        if isinstance(stored_terms, list) and stored_terms:
+            for term in stored_terms:
+                if isinstance(term, dict):
+                    name = str(term.get("name") or "").strip()
+                    slug = InferenceLogic._normalize_label_text(term.get("slug") or name)
+                    detector_label = str(term.get("detector_label") or name).strip()
+                    unmapped = bool(term.get("unmapped"))
+                else:
+                    name = str(term or "").strip()
+                    slug = InferenceLogic._normalize_label_text(name)
+                    detector_label = name
+                    unmapped = False
+                if name and slug:
+                    terms.append({
+                        "name": name,
+                        "slug": slug,
+                        "detector_label": detector_label,
+                        "unmapped": unmapped,
+                    })
+        else:
+            terms = [
+                {**term, "unmapped": False}
+                for term in InferenceLogic._parse_annotation_group_terms(project.get("annotation_group"))
+            ]
+
+        if not terms:
+            class_names = []
+            for item in project.get("classes") or []:
+                name = str((item or {}).get("name") if isinstance(item, dict) else item).strip()
+                if name:
+                    class_names.append(name)
+            terms = [
+                {**term, "unmapped": False}
+                for term in InferenceLogic._parse_annotation_group_terms(",".join(class_names))
+            ]
+
+        if not terms:
+            raise ValueError("Classification annotation group must contain at least one label before inference.")
+        if any(term["slug"] in generic for term in terms):
+            raise ValueError("Classification annotation group requires explicit labels; object/all/any are not valid.")
+
+        mapped = [
+            (term["name"] if include_unmapped else (term.get("detector_label") or term["name"]))
+            for term in terms
+            if include_unmapped or not term.get("unmapped")
+        ]
+        if not mapped:
+            raise ValueError("Classification annotation group has no mapped detector labels for automatic inference.")
+        return InferenceLogic._normalize_queries(mapped)
+
+    @staticmethod
+    def _ppe_canonical_label(value):
+        text = InferenceLogic._normalize_label_text(value)
+        if not text:
+            return None
+        helmet_terms = {
+            "helmet",
+            "safety helmet",
+            "construction helmet",
+            "yellow helmet",
+            "hard hat",
+            "hardhat",
+            "industrial helmet",
+            "worker helmet",
+            "work helmet",
+            "ppe helmet",
+        }
+        vest_terms = {
+            "vest",
+            "safety vest",
+            "reflective vest",
+            "high visibility vest",
+            "hi vis vest",
+            "hi-vis vest",
+            "orange vest",
+            "green vest",
+            "yellow vest",
+            "worker vest",
+            "ppe vest",
+        }
+        if text in helmet_terms or ("helmet" in text and any(word in text for word in ("safety", "construction", "worker", "industrial", "yellow", "ppe"))):
+            return "helmet"
+        if text in vest_terms or ("vest" in text and any(word in text for word in ("safety", "reflective", "visibility", "worker", "orange", "yellow", "green", "ppe"))):
+            return "vest"
+        return None
+
+    @staticmethod
+    def _classification_detection_plan(project):
+        labels = InferenceLogic._project_classification_queries(project, include_unmapped=True)
+        allowed = {}
+        queries = []
+        requested_targets = []
+        seen_queries = set()
+        ppe_requested = False
+
+        for label in labels:
+            user_label = str(label or "").strip()
+            normalized = InferenceLogic._normalize_label_text(user_label)
+            if not user_label or not normalized:
+                continue
+
+            ppe_canonical = InferenceLogic._ppe_canonical_label(user_label)
+            target_key = ppe_canonical or normalized
+            query_label = ppe_canonical or user_label
+            ppe_requested = ppe_requested or bool(ppe_canonical)
+
+            if target_key not in allowed:
+                allowed[target_key] = user_label
+            if normalized not in allowed:
+                allowed[normalized] = user_label
+            if query_label.lower() not in seen_queries:
+                seen_queries.add(query_label.lower())
+                queries.append(query_label)
+            requested_targets.append({"name": user_label, "target_key": target_key})
+
+        return {
+            "label_queries": InferenceLogic._normalize_queries(queries),
+            "allowed_label_map": allowed,
+            "requested_targets": requested_targets,
+            "ppe_requested": ppe_requested,
+        }
+
+    @staticmethod
+    def _classification_allowed_label_map(project):
+        return InferenceLogic._classification_detection_plan(project)["allowed_label_map"]
+
+    @staticmethod
+    def _project_classification_label_options(project):
+        if not project:
+            raise ValueError("Project not found for classification inference.")
+        if str(project.get("project_type") or "").strip() != "Classification":
+            raise ValueError("Classification inference is only supported for Classification projects.")
+
+        generic = {"object", "objects", "all", "any"}
+        labels = []
+        stored_terms = project.get("annotation_group_terms") or []
+        if isinstance(stored_terms, list) and stored_terms:
+            for term in stored_terms:
+                if isinstance(term, dict):
+                    name = str(term.get("name") or "").strip()
+                else:
+                    name = str(term or "").strip()
+                if name:
+                    labels.append(name)
+        else:
+            labels = [
+                term["name"]
+                for term in InferenceLogic._parse_annotation_group_terms(project.get("annotation_group"))
+            ]
+
+        if not labels:
+            for item in project.get("classes") or []:
+                name = str((item or {}).get("name") if isinstance(item, dict) else item).strip()
+                if name:
+                    labels.append(name)
+
+        normalized = []
+        seen = set()
+        for label in labels:
+            slug = InferenceLogic._normalize_label_text(label)
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            normalized.append(str(label).strip())
+
+        if not normalized:
+            raise ValueError("Classification annotation group must contain at least one label before inference.")
+        if any(InferenceLogic._normalize_label_text(label) in generic for label in normalized):
+            raise ValueError("Classification annotation group requires explicit labels; object/all/any are not valid.")
+        return normalized
+
+    @staticmethod
+    def _select_classification_detections(detections, classification_type):
+        ordered = sorted(
+            detections or [],
+            key=lambda item: float(item.get("confidence") or 0),
+            reverse=True,
+        )
+        if classification_type == "Single-Label":
+            return ordered[:1]
+        return ordered
+
+    @staticmethod
+    def _classification_tag_annotation(asset_id, project_id, label, confidence, timestamp, model_used, classification_type):
+        label_text = str(label or "").strip()
+        return {
+            "asset_id": str(asset_id),
+            "project_id": project_id,
+            "label": label_text,
+            "class_id": label_text,
+            "confidence": float(confidence or 0),
+            "type": "tag",
+            "source": "model_inference",
+            "project_type": "Classification",
+            "classification_type": classification_type,
+            "model_used": model_used,
+            "inference_run_at": timestamp,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+
+    @staticmethod
+    def _classification_box_annotation(asset_id, project_id, detection, timestamp, model_used, classification_type):
+        label = str(detection.get("label") or "")
+        x_center = float(detection.get("x_center") or 0.5)
+        y_center = float(detection.get("y_center") or 0.5)
+        width = float(detection.get("width") or 0)
+        height = float(detection.get("height") or 0)
+        return {
+            "asset_id": str(asset_id),
+            "image_id": str(asset_id),
+            "project_id": project_id,
+            "label": label,
+            "class_name": label,
+            "class_id": detection.get("class_id"),
+            "confidence": float(detection.get("confidence") or 0),
+            "type": "box",
+            "x_center": x_center,
+            "y_center": y_center,
+            "width": width,
+            "height": height,
+            "bbox": {
+                "x": max(0.0, x_center - width / 2),
+                "y": max(0.0, y_center - height / 2),
+                "width": width,
+                "height": height,
+            },
+            "annotation_group": label,
+            "source": "model_inference",
+            "project_type": "Classification",
+            "classification_type": classification_type,
+            "model_used": model_used,
+            "inference_run_at": timestamp,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
 
     @staticmethod
     def _normalize_label_text(value):
@@ -617,10 +905,11 @@ class InferenceLogic:
         return text
 
     @staticmethod
-    def _extract_box_detections(results, model, label_queries=None):
+    def _extract_box_detections(results, model, label_queries=None, exact_label_map=None):
         detections = []
         classes = []
         seen_classes = set()
+        strict_labels = exact_label_map if isinstance(exact_label_map, dict) else None
 
         for result in results:
             if getattr(result, "boxes", None) is None:
@@ -631,7 +920,16 @@ class InferenceLogic:
                 class_id = int(box.cls[0].item())
                 label = InferenceLogic._label_from_names(names, class_id)
 
-                if not InferenceLogic._label_matches_queries(label, label_queries):
+                if strict_labels is not None:
+                    label_key = InferenceLogic._normalize_label_text(label)
+                    canonical_label = strict_labels.get(label_key)
+                    if not canonical_label:
+                        ppe_key = InferenceLogic._ppe_canonical_label(label)
+                        canonical_label = strict_labels.get(ppe_key) if ppe_key else None
+                    if not canonical_label:
+                        continue
+                    label = canonical_label
+                elif not InferenceLogic._label_matches_queries(label, label_queries):
                     continue
 
                 x_center, y_center, width, height = box.xywhn[0].tolist()
@@ -804,6 +1102,90 @@ class InferenceLogic:
             "labels": labels,
             "model": os.path.basename(resolved_model_name),
         }
+
+    @staticmethod
+    def _load_clip_runtime(model_name=None):
+        if torch is None:
+            raise RuntimeError("PyTorch runtime unavailable for CLIP classification")
+        try:
+            import clip
+        except Exception as error:
+            raise RuntimeError("CLIP runtime unavailable for zero-shot classification") from error
+
+        clip_model_name = str(model_name or "").strip()
+        if not clip_model_name or clip_model_name.lower() in {"clip", "zero-shot", "zero_shot"} or clip_model_name.lower().endswith(".pt"):
+            clip_model_name = os.getenv("CLIP_MODEL_NAME", "ViT-B/32")
+
+        device = InferenceLogic.get_inference_device()
+        cache_key = (clip_model_name, device)
+        if cache_key not in InferenceLogic.clip_models:
+            model, preprocess = clip.load(clip_model_name, device=device)
+            model.eval()
+            InferenceLogic.clip_models[cache_key] = (model, preprocess)
+        return InferenceLogic.clip_models[cache_key], clip, clip_model_name, device
+
+    @staticmethod
+    def classify_image_zero_shot(source, candidate_labels, model_name=None, confidence=None, single_label=True):
+        resolved_source = InferenceLogic._resolve_source_input(source)
+        if not resolved_source:
+            return {"success": False, "error": "Missing or invalid image source", "labels": []}
+
+        labels = []
+        seen = set()
+        for label in candidate_labels or []:
+            text = str(label or "").strip()
+            key = InferenceLogic._normalize_label_text(text)
+            if text and key and key not in seen:
+                seen.add(key)
+                labels.append(text)
+        if not labels:
+            return {"success": False, "error": "No classification labels provided", "labels": []}
+
+        threshold = InferenceLogic._parse_confidence(confidence, default=0.25)
+        try:
+            (model, preprocess), clip, clip_model_name, device = InferenceLogic._load_clip_runtime(model_name)
+            if isinstance(resolved_source, Image.Image):
+                image = resolved_source.convert("RGB")
+            else:
+                with Image.open(resolved_source) as opened:
+                    image = opened.convert("RGB")
+
+            prompts = [f"a photo of {label}" for label in labels]
+            image_input = preprocess(image).unsqueeze(0).to(device)
+            text_input = clip.tokenize(prompts).to(device)
+            with torch.no_grad():
+                image_features = model.encode_image(image_input)
+                text_features = model.encode_text(text_input)
+                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                logits = 100.0 * image_features @ text_features.T
+                probabilities = logits.softmax(dim=-1)[0]
+
+            scored = []
+            for label, score_tensor in zip(labels, probabilities):
+                scored.append((label, float(score_tensor.item())))
+            scored.sort(key=lambda item: item[1], reverse=True)
+
+            if single_label:
+                selected = scored[:1]
+            else:
+                selected = [item for item in scored if item[1] >= threshold] or scored[:1]
+
+            return {
+                "success": True,
+                "labels": [label for label, _score in selected],
+                "scores": {label: score for label, score in scored},
+                "model": f"CLIP {clip_model_name}",
+                "classification_mode": "zero-shot",
+            }
+        except Exception as error:
+            return {
+                "success": False,
+                "error": str(error),
+                "labels": [],
+                "model": "CLIP",
+                "classification_mode": "zero-shot",
+            }
 
     @staticmethod
     def _extract_state_dict(raw_state):
@@ -1407,8 +1789,16 @@ class InferenceLogic:
                 except Exception as e:
                     logger.error(f"Failed to update job progress for {job_id}: {e}")
 
+        successful_results = [item for item in results if item.get("success")]
+        failed_results = [item for item in results if not item.get("success")]
+        success = bool(successful_results) and len(failed_results) < len(results)
+        if not success and failed_results:
+            error = failed_results[0].get("error") or "Classification labeling failed for all assets."
+        else:
+            error = None
+
         return {
-            "success": True,
+            "success": success,
             "asset_count": len(unique_asset_ids),
             "annotated_assets": annotated_assets,
             "count": total_annotations,
@@ -1416,6 +1806,7 @@ class InferenceLogic:
             "results": results,
             "model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
             "confidence_threshold": threshold,
+            **({"error": error} if error else {}),
         }
 
     @staticmethod
@@ -1442,7 +1833,7 @@ class InferenceLogic:
         return result
 
     @staticmethod
-    def run_classification_labeling(asset_id, model_name=None, confidence=None, job_id=None):
+    def run_classification_labeling(asset_id, model_name=None, confidence=None, job_id=None, expected_project_id=None):
         asset_oid = to_object_id(asset_id)
         if not asset_oid:
             return {"success": False, "error": f"Invalid asset id: {asset_id}", "annotated_assets": 0}
@@ -1452,7 +1843,24 @@ class InferenceLogic:
             return {"success": False, "error": f"Asset {asset_id} not found", "annotated_assets": 0}
 
         project_id = asset.get("project_id")
+        if expected_project_id is not None and str(project_id) != str(expected_project_id):
+            return {"success": False, "error": f"Asset {asset_id} does not belong to project {expected_project_id}", "annotated_assets": 0}
         project = db.projects.find_one({"_id": to_object_id(project_id)}) if to_object_id(project_id) else None
+        try:
+            classification_type = InferenceLogic._project_classification_type(project)
+            detection_plan = InferenceLogic._classification_detection_plan(project)
+            ppe_requested = bool(detection_plan.get("ppe_requested"))
+            if classification_type == "Single-Label":
+                label_options = InferenceLogic._project_classification_label_options(project)
+                label_queries = detection_plan["label_queries"] if ppe_requested else []
+                allowed_label_map = detection_plan["allowed_label_map"] if ppe_requested else {}
+            else:
+                label_options = []
+                label_queries = detection_plan["label_queries"]
+                allowed_label_map = detection_plan["allowed_label_map"]
+        except ValueError as error:
+            return {"success": False, "error": str(error), "annotated_assets": 0}
+
         source_input = InferenceLogic._resolve_asset_source(asset)
         if source_input is None:
             return {"success": False, "error": f"File not found for asset {asset_id}", "annotated_assets": 0}
@@ -1461,43 +1869,164 @@ class InferenceLogic:
 
         try:
             threshold = InferenceLogic._parse_confidence(confidence, default=0.5)
-            classification_result = InferenceLogic.classify_image(
-                source_input,
-                model_name=model_name,
-                confidence=threshold,
-            )
-            if not classification_result.get("success"):
+            if classification_type == "Single-Label" and not ppe_requested:
+                classification_result = InferenceLogic.classify_image_zero_shot(
+                    source_input,
+                    label_options,
+                    model_name=model_name,
+                    confidence=threshold,
+                    single_label=True,
+                )
+                if not classification_result.get("success"):
+                    raise RuntimeError(classification_result.get("error") or "Single-label classification failed")
+
+                selected_labels = [
+                    str(label or "").strip()
+                    for label in classification_result.get("labels", [])[:1]
+                    if str(label or "").strip()
+                ]
+                scores = classification_result.get("scores") or {}
+                detected_classes = set(selected_labels)
+                model_used = str(classification_result.get("model") or "CLIP")
+                asset_id_str = str(asset_oid)
+                annotations = [
+                    InferenceLogic._classification_tag_annotation(
+                        asset_id_str,
+                        project_id,
+                        label,
+                        scores.get(label, 1.0),
+                        timestamp,
+                        model_used,
+                        classification_type,
+                    )
+                    for label in selected_labels
+                ]
+
+                desired_state = "annotated" if annotations else "unannotated"
+                desired_status = "annotated" if annotations else "needs_review"
+                next_url = asset.get("url") or InferenceLogic._build_asset_url(
+                    asset_id_str,
+                    asset.get("unique_filename") or asset.get("filename") or "asset",
+                )
+                InferenceLogic._write_session_file(None, asset_id_str, project_id, annotations, timestamp, model_name)
+
+                db.annotations.delete_many({"asset_id": asset_id_str})
+                if annotations:
+                    db.annotations.insert_many([dict(annotation) for annotation in annotations])
+
+                db.assets.update_one(
+                    {"_id": asset_oid},
+                    {
+                        "$set": {
+                            "url": next_url,
+                            "upload_state": desired_state,
+                            "is_annotated": bool(annotations),
+                            "annotation_count": len(annotations),
+                            "detected_classes": sorted(detected_classes),
+                            "annotated_at": timestamp if annotations else None,
+                            "updated_at": timestamp,
+                            "status": desired_status,
+                            "auto_labeled": True,
+                            "auto_label_model": model_used,
+                            "auto_label_confidence_threshold": threshold,
+                        }
+                    },
+                )
+
+                if project:
+                    project_update = {"$set": {"updated_at": timestamp}}
+                    if detected_classes:
+                        project_update["$addToSet"] = {
+                            "detected_classes": {"$each": sorted(detected_classes)}
+                        }
+                    db.projects.update_one({"_id": project["_id"]}, project_update)
+
                 return {
-                    "success": False,
-                    "error": classification_result.get("error") or "Classification failed for this image",
-                    "annotated_assets": 0,
+                    "success": True,
+                    "count": len(annotations),
+                    "classes": sorted(detected_classes),
+                    "annotations": annotations,
+                    "annotated_assets": 1 if annotations else 0,
+                    "asset": InferenceLogic._serialize_auto_label_asset(
+                        asset_id_str,
+                        next_url,
+                        len(annotations),
+                        detected_classes,
+                    ),
+                    "model": model_used,
+                    "confidence_threshold": threshold,
+                    "classification_type": classification_type,
+                    "label_options": label_options,
+                    "classification_mode": classification_result.get("classification_mode") or "zero-shot",
                 }
-            labels = classification_result.get("labels", []) if classification_result.get("success") else []
-            label = labels[0] if labels else None
+
+            detection_model_name = InferenceLogic.resolve_classification_detection_model_name(
+                model_name,
+                classification_type=classification_type,
+                ppe_requested=ppe_requested,
+            )
+            model = InferenceLogic.get_auto_label_model(model_name=detection_model_name, classes=label_queries)
+            runtime = InferenceLogic._classification_detection_runtime_options(ppe_requested=ppe_requested)
+            predict_kwargs = {
+                "verbose": False,
+                "conf": min(threshold, float(os.getenv("PPE_INFERENCE_CONF", "0.20"))) if ppe_requested else threshold,
+                "device": runtime["device"],
+                "batch": runtime["batch"],
+                "imgsz": runtime["imgsz"],
+                "half": runtime["half"],
+            }
+            if ppe_requested:
+                predict_kwargs.update({
+                    "iou": runtime.get("iou", 0.45),
+                    "augment": runtime.get("augment", True),
+                    "agnostic_nms": False,
+                    "max_det": runtime.get("max_det", 300),
+                })
+            results = model.predict(
+                source_input,
+                **predict_kwargs,
+            )
+            detections, _classes = InferenceLogic._extract_box_detections(
+                results,
+                model,
+                label_queries=label_queries,
+                exact_label_map=allowed_label_map,
+            )
+            selected_detections = InferenceLogic._select_classification_detections(detections, classification_type)
+            if ppe_requested:
+                selected_detections = detections
 
             asset_id_str = str(asset_oid)
             annotations = []
             detected_classes = set()
-            if label:
-                detected_classes.add(str(label))
-                annotations.append(
-                    {
-                        "asset_id": asset_id_str,
-                        "project_id": project_id,
-                        "label": str(label),
-                        "class_id": None,
-                        "confidence": None,
-                        "type": "classification",
-                        "x_center": 0.5,
-                        "y_center": 0.5,
-                        "width": 1.0,
-                        "height": 1.0,
-                        "created_at": timestamp,
-                        "updated_at": timestamp,
-                    }
-                )
+            matched_target_keys = set()
+            model_used = os.path.basename(InferenceLogic.resolve_model_name(detection_model_name))
 
+            for detection in selected_detections:
+                label = str(detection.get("label") or "").strip()
+                if not label:
+                    continue
+                detected_classes.add(label)
+                target_key = InferenceLogic._ppe_canonical_label(label) or InferenceLogic._normalize_label_text(label)
+                if target_key:
+                    matched_target_keys.add(target_key)
+                annotations.append(
+                    InferenceLogic._classification_box_annotation(
+                        asset_id_str,
+                        project_id,
+                        detection,
+                        timestamp,
+                        model_used,
+                        classification_type,
+                    )
+                )
+            unmatched_classes = [
+                item["name"]
+                for item in detection_plan.get("requested_targets", [])
+                if item.get("target_key") not in matched_target_keys
+            ]
             desired_state = "annotated" if annotations else "unannotated"
+            desired_status = "annotated" if annotations else ("needs_review" if classification_type == "Single-Label" else "unassigned")
             next_url = asset.get("url") or InferenceLogic._build_asset_url(
                 asset_id_str,
                 asset.get("unique_filename") or asset.get("filename") or "asset",
@@ -1519,9 +2048,9 @@ class InferenceLogic:
                         "detected_classes": sorted(detected_classes),
                         "annotated_at": timestamp if annotations else None,
                         "updated_at": timestamp,
-                        "status": "annotated" if annotations else "unassigned",
+                        "status": desired_status,
                         "auto_labeled": True,
-                        "auto_label_model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+                        "auto_label_model": model_used,
                         "auto_label_confidence_threshold": threshold,
                     }
                 },
@@ -1547,8 +2076,11 @@ class InferenceLogic:
                     len(annotations),
                     detected_classes,
                 ),
-                "model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+                "model": model_used,
                 "confidence_threshold": threshold,
+                "classification_type": classification_type,
+                "label_queries": label_queries,
+                "unmatched_classes": unmatched_classes,
             }
         except Exception as error:
             db.assets.update_one(
@@ -1570,8 +2102,23 @@ class InferenceLogic:
         total_annotations = 0
         annotated_assets = 0
         detected_classes = set()
+        models_used = set()
+        unmatched_classes = set()
         results = []
-        threshold = InferenceLogic._parse_confidence(confidence, default=0.3)
+        threshold = InferenceLogic._parse_confidence(confidence, default=0.5)
+
+        if not unique_asset_ids:
+            return {
+                "success": False,
+                "error": "No assets found for classification labeling.",
+                "asset_count": 0,
+                "annotated_assets": 0,
+                "count": 0,
+                "classes": [],
+                "results": [],
+                "model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+                "confidence_threshold": threshold,
+            }
 
         for asset_id in unique_asset_ids:
             result = InferenceLogic.run_classification_labeling(
@@ -1583,34 +2130,73 @@ class InferenceLogic:
             total_annotations += int(result.get("count", 0) or 0)
             annotated_assets += int(result.get("annotated_assets", 0) or 0)
             detected_classes.update(result.get("classes", []))
+            unmatched_classes.update(result.get("unmatched_classes", []))
+            if result.get("model"):
+                models_used.add(str(result.get("model")))
             results.append(
                 {
                     "asset_id": asset_id,
                     "success": bool(result.get("success")),
                     "count": int(result.get("count", 0) or 0),
                     "classes": result.get("classes", []),
+                    "annotations": result.get("annotations", []),
                     "asset": result.get("asset"),
+                    "model": result.get("model"),
+                    "unmatched_classes": result.get("unmatched_classes", []),
                     "error": result.get("error"),
                 }
             )
+            if job_id and ObjectId.is_valid(str(job_id)):
+                try:
+                    update_op = {"$set": {"updated_at": now_iso()}}
+                    if result.get("annotated_assets", 0) > 0:
+                        update_op["$inc"] = {"annotated_count": 1}
+                    else:
+                        update_op["$inc"] = {"unassigned_count": 1}
+                    db.jobs.update_one({"_id": ObjectId(str(job_id))}, update_op)
+                except Exception as e:
+                    logger.error(f"Failed to update classification job progress for {job_id}: {e}")
+
+        successful_results = [item for item in results if item.get("success")]
+        failed_results = [item for item in results if not item.get("success")]
+        success = bool(successful_results) and len(failed_results) < len(results)
+        if not success and failed_results:
+            error = failed_results[0].get("error") or "Classification labeling failed for all assets."
+        else:
+            error = None
 
         return {
-            "success": True,
+            "success": success,
             "asset_count": len(unique_asset_ids),
             "annotated_assets": annotated_assets,
             "count": total_annotations,
             "classes": sorted(detected_classes),
+            "unmatched_classes": sorted(unmatched_classes),
             "results": results,
-            "model": os.path.basename(InferenceLogic.resolve_model_name(model_name)),
+            "model": sorted(models_used)[0] if len(models_used) == 1 else os.path.basename(InferenceLogic.resolve_model_name(model_name)),
             "confidence_threshold": threshold,
+            **({"error": error} if error else {}),
         }
 
     @staticmethod
     def run_project_classification_labeling(project_id, model_name=None, confidence=None, batch_id=None):
-        query = {"project_id": str(project_id)}
+        project = db.projects.find_one({"_id": to_object_id(project_id)}) if to_object_id(project_id) else None
+        InferenceLogic._classification_detection_plan(project)
+        query = {
+            "project_id": str(project_id),
+            "$or": [
+                {"is_annotated": {"$ne": True}},
+                {"annotation_count": {"$in": [0, None]}},
+                {"status": {"$in": ["unassigned", "needs_review", None]}},
+            ],
+        }
         if batch_id:
             query["batch_id"] = str(batch_id)
         assets = list(db.assets.find(query))
+        if not assets:
+            scope = f"batch {batch_id}" if batch_id else f"project {project_id}"
+            raise ValueError(f"No assets found for classification labeling in {scope}.")
+
         result = InferenceLogic.run_assets_classification_labeling(
             [str(asset["_id"]) for asset in assets],
             model_name=model_name,

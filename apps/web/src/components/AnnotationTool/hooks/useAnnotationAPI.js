@@ -170,24 +170,62 @@ export function useAnnotationAPI() {
       source: "auto-label",
     });
     try {
-      const endpoint = isClassification ? "/api/classify" : "/api/auto-label";
+      const isMultiLabelClassification = isClassification && classificationType === "Multi-Label";
+      const endpoint = isMultiLabelClassification
+        ? "/api/infer/classification-label"
+        : (isClassification ? "/api/classify" : "/api/auto-label");
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: currentAsset.url,
-          model: autoLabelModel,
-          queries: activeQueryList,
-          auto_label_all: autoLabelAll,
-          conf: confidenceThreshold
-        })
+        body: JSON.stringify(isMultiLabelClassification
+          ? {
+              asset_id: currentAsset?.id,
+              model: autoLabelModel,
+              conf: confidenceThreshold,
+            }
+          : {
+              url: currentAsset.url,
+              model: autoLabelModel,
+              queries: activeQueryList,
+              auto_label_all: autoLabelAll,
+              conf: confidenceThreshold
+            })
       });
 
       if (!res.ok) throw new Error("Backend auto-label failed");
 
       const data = await res.json();
       if (isClassification) {
-        if (data.success && Array.isArray(data.labels) && data.labels.length > 0) {
+        if (classificationType === "Multi-Label") {
+          const incomingAnnotations = Array.isArray(data.annotations) ? data.annotations : [];
+          const boxAnnotations = incomingAnnotations
+            .filter((ann) => ann?.type === "box")
+            .map((ann, index) => ({
+              id: ann.id || ann._id || ann.annotation_id || `auto-box-${currentAsset?.id || "asset"}-${index}`,
+              ...ann,
+              type: "box",
+              label: ann.label || ann.class_id || "",
+              class_id: ann.class_id || ann.label || "",
+              color: classes.find(c => c.name.toLowerCase() === String(ann.label || ann.class_id || "").toLowerCase())?.color || COLORS[index % COLORS.length],
+            }));
+          if (boxAnnotations.length > 0) {
+            await ensureProjectClasses([...new Set(boxAnnotations.map((ann) => ann.label).filter(Boolean))]);
+            setAnnotations(boxAnnotations);
+            setAutoLabelDetectedClasses([...new Set(boxAnnotations.map((ann) => ann.label).filter(Boolean))]);
+            showFeedback(`Added ${boxAnnotations.length} bounding box suggestion${boxAnnotations.length === 1 ? "" : "s"}.`, "success");
+            emitVisionFlowNotification({
+              id: `auto-label-completed-${currentAsset?.id || "asset"}-${Date.now()}`,
+              status: "Success",
+              title: "Auto-label completed",
+              description: `Suggested ${boxAnnotations.length} bounding box${boxAnnotations.length === 1 ? "" : "es"}.`,
+              route: "/upload",
+              projectId,
+              source: "auto-label",
+            });
+          } else {
+            showFeedback("No allowed objects were detected for this image.");
+          }
+        } else if (data.success && Array.isArray(data.labels) && data.labels.length > 0) {
           const selectedLabels = classificationType === "Single-Label" ? [data.labels[0]] : data.labels;
           let updatedClasses = await ensureProjectClasses(selectedLabels);
           const newAnnotations = selectedLabels.map(label => {

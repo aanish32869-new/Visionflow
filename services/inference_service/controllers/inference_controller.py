@@ -275,9 +275,62 @@ def classification_label():
             )
 
         logger.info("Classification labeling completed successfully")
-        return jsonify(result), 200
+        return jsonify(result), 200 if result.get("success", True) else 400
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
     except Exception as error:
         logger.error(f"Classification labeling failed: {error}")
+        return jsonify({"error": str(error)}), 500
+
+
+@inference_bp.route("/api/projects/<project_id>/images/<image_id>/infer", methods=["POST"])
+def infer_classification_image(project_id, image_id):
+    data = request.json or {}
+    model = data.get("model")
+    confidence = data.get("conf")
+
+    logger.info(f"Classification image inference request for project {project_id} / image {image_id}")
+    try:
+        result = InferenceLogic.run_classification_labeling(
+            image_id,
+            model_name=model,
+            confidence=confidence,
+            job_id=data.get("job_id"),
+            expected_project_id=project_id,
+        )
+        if not result.get("success"):
+            message = str(result.get("error") or "")
+            status_code = 400 if "Classification" in message or "annotation group" in message else 404
+            return jsonify(result), status_code
+        result["project_id"] = str(project_id)
+        return jsonify(result), 200
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        logger.error(f"Classification image inference failed: {error}")
+        return jsonify({"error": str(error)}), 500
+
+
+@inference_bp.route("/api/projects/<project_id>/infer-batch", methods=["POST"])
+def infer_classification_batch(project_id):
+    data = request.json or {}
+    model = data.get("model")
+    confidence = data.get("conf")
+    batch_id = data.get("batch_id")
+
+    logger.info(f"Classification batch inference request for project {project_id} / batch {batch_id}")
+    try:
+        result = InferenceLogic.run_project_classification_labeling(
+            project_id,
+            model_name=model,
+            confidence=confidence,
+            batch_id=batch_id,
+        )
+        return jsonify(result), 200 if result.get("success", True) else 400
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        logger.error(f"Classification batch inference failed: {error}")
         return jsonify({"error": str(error)}), 500
 
 

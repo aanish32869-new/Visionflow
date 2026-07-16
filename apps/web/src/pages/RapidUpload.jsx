@@ -4,6 +4,9 @@ import { Globe, Lock, Bell, HelpCircle, ArrowUp, Minus, Plus, RotateCcw, Eye, Se
 import { useRef, useState, useEffect } from "react";
 import EcrioLogo from "../components/EcrioLogo";
 
+const PPE_MULTI_LABEL_MODEL = import.meta.env.VITE_PPE_MULTI_LABEL_MODEL || "yolov8m.pt";
+const DEFAULT_DETECTION_MODEL = "yolo26s.pt";
+
 export default function RapidUpload() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -11,7 +14,10 @@ export default function RapidUpload() {
   const storedProjectName = localStorage.getItem("visionflow_active_project_name");
   const visibility = location.state?.visibility || "Public";
   const [projectId, setProjectId] = useState(location.state?.projectId || storedProjectId || null);
-  const [projectMeta, setProjectMeta] = useState({ project_type: "Object Detection", classification_type: null });
+  const [projectMeta, setProjectMeta] = useState({
+    project_type: location.state?.projectType || "Object Detection",
+    classification_type: location.state?.classificationType || null,
+  });
   const projectName = location.state?.projectName || storedProjectName || "My First Project";
 
   // Flow State: 'upload' -> 'build' -> 'review'
@@ -38,7 +44,7 @@ export default function RapidUpload() {
   const [lastQuery, setLastQuery] = useState("");
   const [foundObjectsByAsset, setFoundObjectsByAsset] = useState({});
   const [sliderValues, setSliderValues] = useState({});
-  const [selectedModel, setSelectedModel] = useState("yolo26s.pt");
+  const [selectedModel, setSelectedModel] = useState(PPE_MULTI_LABEL_MODEL);
   const [isAutoLabeling, setIsAutoLabeling] = useState(false);
   const [labelActionError, setLabelActionError] = useState(null);
   const [labelActionStatus, setLabelActionStatus] = useState(null);
@@ -59,6 +65,10 @@ export default function RapidUpload() {
   const processingImageAssets = uploadedAssets.filter((asset) => asset?.uploadStatus === "processing");
   const readyForLabelingCount = uploadedImageAssets.length + localReadyAssets.length;
   const canStartLabeling = readyForLabelingCount > 0 && processingImageAssets.length === 0 && !isUploading;
+  const isClassificationMultiLabelProject =
+    String(projectMeta.project_type || "").trim() === "Classification" &&
+    String(projectMeta.classification_type || "").trim() === "Multi-Label";
+  const rapidAutoLabelModel = isClassificationMultiLabelProject ? PPE_MULTI_LABEL_MODEL : DEFAULT_DETECTION_MODEL;
 
   useEffect(() => {
     if (projectId) {
@@ -117,6 +127,46 @@ export default function RapidUpload() {
       };
     });
     setSliderValues((prev) => ({ ...prev, [newObject.id]: 50 }));
+  };
+
+  const boxFromAnnotation = (annotation) => {
+    const width = Number(annotation?.width);
+    const height = Number(annotation?.height);
+    const xCenter = Number(annotation?.x_center);
+    const yCenter = Number(annotation?.y_center);
+    if (![width, height, xCenter, yCenter].every(Number.isFinite) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return {
+      x: Math.max(0, (xCenter - width / 2) * 100),
+      y: Math.max(0, (yCenter - height / 2) * 100),
+      w: Math.min(100, width * 100),
+      h: Math.min(100, height * 100),
+      confidence: Number(annotation?.confidence || 0),
+    };
+  };
+
+  const groupedObjectsFromAnnotations = (annotations, seed = 0) => {
+    const grouped = new Map();
+    for (const annotation of annotations || []) {
+      if (annotation?.type !== "box") continue;
+      const label = String(annotation?.label || "").trim();
+      const box = boxFromAnnotation(annotation);
+      if (!label || !box) continue;
+      if (!grouped.has(label)) {
+        grouped.set(label, {
+          id: `auto-${seed}-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          text: label,
+          count: 0,
+          color: MOCK_COLORS[grouped.size % MOCK_COLORS.length],
+          boxes: [],
+        });
+      }
+      const item = grouped.get(label);
+      item.boxes.push(box);
+      item.count = item.boxes.length;
+    }
+    return Array.from(grouped.values());
   };
 
   const removeFoundObjectForAsset = (assetId, objectId) => {
@@ -431,7 +481,7 @@ export default function RapidUpload() {
     setIsAutoLabeling(true);
     setLabelActionError(null);
     setLabelActionStatus(null);
-    const isClassificationProject = projectMeta.project_type === "Classification";
+    const isClassificationProject = String(projectMeta.project_type || "").trim() === "Classification";
 
     try {
       const persistedAssets = await persistAssetsForLabeling();
@@ -465,7 +515,7 @@ export default function RapidUpload() {
         body: JSON.stringify({
           project_id: projectId,
           asset_ids: persistedAssets.map((asset) => asset.id),
-          model: "yolo26s.pt",
+          model: rapidAutoLabelModel,
           conf: AUTO_LABEL_SCORE_THRESHOLD,
           job_id: jobId
         })
@@ -486,6 +536,16 @@ export default function RapidUpload() {
         const resultsByAssetId = new Map(
           batchResults.map((result) => [String(result.asset_id), result])
         );
+        const autoObjectsByAsset = {};
+        const nextSliderValues = {};
+        batchResults.forEach((result, index) => {
+          const groupedObjects = groupedObjectsFromAnnotations(result?.annotations || [], `${result?.asset_id || index}`);
+          if (groupedObjects.length === 0) return;
+          autoObjectsByAsset[String(result.asset_id)] = groupedObjects;
+          groupedObjects.forEach((item) => {
+            nextSliderValues[item.id] = 50;
+          });
+        });
 
         setUploadedAssets((prev) =>
           prev.map((asset) => {
@@ -499,15 +559,21 @@ export default function RapidUpload() {
             };
           })
         );
+        if (Object.keys(autoObjectsByAsset).length > 0) {
+          setFoundObjectsByAsset((prev) => ({ ...prev, ...autoObjectsByAsset }));
+          setSliderValues((prev) => ({ ...prev, ...nextSliderValues }));
+        }
       }
 
-      if (annotatedAssets === 0) {
+      if (annotatedAssets === 0 && !isClassificationProject) {
         const firstFailure = batchResults.find((result) => result?.error)?.error;
         throw new Error(normalizeLabelingError(firstFailure || "YOLOv26s could not process any uploaded images."));
       }
 
       setLabelActionStatus(isClassificationProject
-        ? `Summary: Total: ${totalImages} | Classified: ${annotatedAssets} | Failed: ${failedFiles}. Move to Annotate to review image labels.`
+        ? (annotatedAssets > 0
+          ? `Summary: Total: ${totalImages} | Classified: ${annotatedAssets} | Failed: ${failedFiles}. Move to Annotate to review image labels.`
+          : `Summary: Total: ${totalImages} | Auto-detected labels: 0 | Failed: ${failedFiles}. Move to Annotate to review manually.`)
         : `Summary: Total: ${totalImages} | Labeled: ${annotatedAssets} | Failed: ${failedFiles}. Move to the Annotate page to review results.`
       );
 
@@ -553,7 +619,7 @@ export default function RapidUpload() {
           body: JSON.stringify({
             url: currentUrl,
             queries: [q],
-            model: "yolo26s.pt",
+            model: rapidAutoLabelModel,
             conf: AUTO_LABEL_SCORE_THRESHOLD,
           })
         });
@@ -642,7 +708,7 @@ export default function RapidUpload() {
           body: JSON.stringify({
             url: currentUrl,
             queries: [query],
-            model: "yolo26s.pt",
+            model: rapidAutoLabelModel,
             conf: AUTO_LABEL_SCORE_THRESHOLD,
           })
         });
@@ -1008,7 +1074,7 @@ export default function RapidUpload() {
                      onChange={(e) => setSelectedModel(e.target.value)}
                      className="text-[11px] font-bold border border-gray-200 bg-gray-50 rounded text-gray-600 px-1 py-1 outline-none"
                    >
-                     <option value="yolo26s.pt">YOLOv26s (High Precision)</option>
+                     <option value="yolov8m.pt">YOLOv8m (PPE)</option>
                    </select>
                  </div>
                </div>
@@ -1244,4 +1310,3 @@ export default function RapidUpload() {
     </div>
   );
 }
-

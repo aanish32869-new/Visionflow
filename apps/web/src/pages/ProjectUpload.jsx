@@ -24,6 +24,10 @@ import * as mobilenet from '@tensorflow-models/mobilenet';
 import logger from "../utils/logger";
 import { emitVisionFlowNotification } from "../utils/notifications";
 
+const PPE_MULTI_LABEL_MODEL = import.meta.env.VITE_PPE_MULTI_LABEL_MODEL || "yolov8m.pt";
+const DEFAULT_DETECTION_MODEL = "yolo26s.pt";
+const DEFAULT_CLASSIFICATION_MODEL = "yolov8n-cls.pt";
+
 function buildBatchId(label) {
   return `${(label || "uploaded-batch").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "uploaded-batch"}-${Date.now()}`;
 }
@@ -517,6 +521,10 @@ export default function ProjectUpload() {
     setAutoLabelError("");
     setAutoLabelStatus("");
     const isClassificationProject = projectType === "Classification";
+    const isClassificationMultiLabelProject = isClassificationProject && classificationType === "Multi-Label";
+    const autoLabelModel = isClassificationMultiLabelProject
+      ? PPE_MULTI_LABEL_MODEL
+      : (isClassificationProject ? DEFAULT_CLASSIFICATION_MODEL : DEFAULT_DETECTION_MODEL);
     const batchConfidenceThreshold = isClassificationProject ? 0.5 : 0.75;
     emitVisionFlowNotification({
       id: `batch-auto-label-started-${asset?.id || activeAnnotationBatchId || projectId}-${Date.now()}`,
@@ -531,10 +539,10 @@ export default function ProjectUpload() {
     try {
       const endpoint = isClassificationProject ? "/api/infer/classification-label" : "/api/infer/yolo-label";
       const payload = asset
-        ? { asset_id: asset.id, model: isClassificationProject ? "yolov8n-cls.pt" : "yolo26s.pt", conf: batchConfidenceThreshold }
+        ? { asset_id: asset.id, model: autoLabelModel, conf: batchConfidenceThreshold }
         : activeAnnotationBatchId
-          ? { project_id: projectId, batch_id: activeAnnotationBatchId, model: isClassificationProject ? "yolov8n-cls.pt" : "yolo26s.pt", conf: batchConfidenceThreshold }
-          : { project_id: projectId, model: isClassificationProject ? "yolov8n-cls.pt" : "yolo26s.pt", conf: batchConfidenceThreshold };
+          ? { project_id: projectId, batch_id: activeAnnotationBatchId, model: autoLabelModel, conf: batchConfidenceThreshold }
+          : { project_id: projectId, model: autoLabelModel, conf: batchConfidenceThreshold };
       
       const res = await fetch(endpoint, {
         method: "POST",

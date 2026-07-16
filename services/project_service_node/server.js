@@ -76,10 +76,33 @@ const upload = multer({
 });
 
 const allowedProjectTypes = new Set(["Object Detection", "Classification"]);
-const KNOWN_OBJECT_VOCAB = new Set([
-  "person","car","truck","bus","motorcycle","bicycle","wheel","helmet","dog","cat","bird","bottle","cup","chair","table","laptop","phone","book","box","bag","boat","train","traffic light","stop sign"
+const CLASSIFICATION_TYPES = new Set(["Single-Label", "Multi-Label"]);
+const GENERIC_ANNOTATION_GROUPS = new Set(["object", "objects", "all", "any"]);
+const DETECTOR_CLASS_NAMES = [
+  "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
+  "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+  "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+  "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
+  "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+  "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed",
+  "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven",
+  "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+];
+const DETECTOR_LABEL_ALIASES = new Map([
+  ["phone", "cell phone"],
+  ["mobile phone", "cell phone"],
+  ["smartphone", "cell phone"],
+  ["television", "tv"],
+  ["monitor", "tv"],
+  ["sofa", "couch"],
+  ["table", "dining table"],
+  ["bike", "bicycle"],
+  ["motorbike", "motorcycle"],
 ]);
-const PROJECT_LABEL_COLORS = ["#8b5cf6", "#ef4444", "#10b981", "#f59e0b", "#3b82f6", "#ec4899", "#14b8a6"];
+const KNOWN_OBJECT_VOCAB = new Set([
+  ...DETECTOR_CLASS_NAMES.map(annotationSlug),
+  ...Array.from(DETECTOR_LABEL_ALIASES.keys()).map(annotationSlug),
+]);const PROJECT_LABEL_COLORS = ["#8b5cf6", "#ef4444", "#10b981", "#f59e0b", "#3b82f6", "#ec4899", "#14b8a6"];
 const ASSET_FILES_BUCKET = "asset_files";
 
 let client;
@@ -176,7 +199,6 @@ function getRequestHeader(req, name) {
   if (Array.isArray(value)) return String(value[0] || "").trim();
   return String(value || "").trim();
 }
-
 function getRequestIdentity(req) {
   const forwardedFor = getRequestHeader(req, "x-forwarded-for");
   const remoteAddress = forwardedFor || req.socket?.remoteAddress || req.ip || "unknown";
@@ -1389,6 +1411,72 @@ app.post("/api/annotation-groups/validate", async (req, res) => {
         ? "Using generic object mode. Auto-label will detect all objects."
         : null,
   });
+});
+
+app.post("/api/projects/:projectId/annotation-group", async (req, res) => {
+  try {
+    const project = await findProjectById(req.params.projectId);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    if (project.project_type !== "Classification") {
+      return res.status(400).json({ error: "Annotation group updates are only supported for Classification projects." });
+    }
+
+    const projectId = project._id.toString();
+    const requestedType = String(req.body?.classification_type || project.classification_type || "Multi-Label").trim();
+    if (!CLASSIFICATION_TYPES.has(requestedType)) {
+      return res.status(400).json({ error: "classification_type must be Single-Label or Multi-Label." });
+    }
+
+    const existingAnnotationCount = await db.collection("annotations").countDocuments({ project_id: projectId });
+    const currentType = String(project.classification_type || "Multi-Label");
+    if (existingAnnotationCount > 0 && requestedType !== currentType) {
+      return res.status(400).json({ error: "Cannot switch classification mode after annotations exist." });
+    }
+
+    const rawGroup = String(req.body?.annotation_group || "").trim();
+    const terms = parseAnnotationGroupTerms(rawGroup);
+    if (!terms.length) {
+      return res.status(400).json({ error: "Annotation group must contain at least one label." });
+    }
+    if (hasGenericAnnotationTerm(terms)) {
+      return res.status(400).json({ error: "Classification annotation groups require explicit labels; object/all/any are not valid." });
+    }
+
+    const classes = classesFromAnnotationTerms(terms);
+    const now = nowIso();
+    const update = {
+      annotation_group: terms.map((term) => term.name).join(", "),
+      annotation_group_terms: terms,
+      classes,
+      detected_classes: classes.map((item) => item.name),
+      classification_type: requestedType,
+      updated_at: now,
+    };
+
+    const previousTerms = parseAnnotationGroupTerms(project.annotation_group || "");
+    const previousKey = previousTerms.map((term) => term.slug).join("|");
+    const nextKey = terms.map((term) => term.slug).join("|");
+    if (existingAnnotationCount > 0 && previousKey !== nextKey) {
+      update.annotationGroupModifiedAt = now;
+    }
+
+    await db.collection("projects").updateOne({ _id: project._id }, { $set: update });
+    const refreshed = await findProjectById(projectId);
+    res.json({
+      success: true,
+      annotation_group: refreshed.annotation_group,
+      annotation_group_terms: refreshed.annotation_group_terms || [],
+      mapped: (refreshed.annotation_group_terms || []).filter((term) => !term.unmapped),
+      unmapped: (refreshed.annotation_group_terms || []).filter((term) => term.unmapped),
+      classes: buildProjectClasses(refreshed),
+      classification_type: refreshed.classification_type || "Multi-Label",
+      annotationGroupModifiedAt: refreshed.annotationGroupModifiedAt || null,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update annotation group" });
+  }
 });
 
 app.delete("/api/projects/:projectId", async (req, res) => {
@@ -2860,6 +2948,46 @@ function dedupeStrings(values) {
   return deduped;
 }
 
+function annotationSlug(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function parseAnnotationGroupTerms(value) {
+  const seen = new Set();
+  const terms = [];
+  for (const item of String(value || "").split(/[,\n]/)) {
+    const name = String(item || "").trim();
+    const slug = annotationSlug(name);
+    if (!name || !slug || seen.has(slug)) continue;
+    seen.add(slug);
+    const detectorLabel = DETECTOR_LABEL_ALIASES.get(slug) || (KNOWN_OBJECT_VOCAB.has(slug) ? slug : null);
+    terms.push({
+      name,
+      slug,
+      detector_label: detectorLabel,
+      unmapped: !detectorLabel,
+    });
+  }
+  return terms;
+}
+
+function hasGenericAnnotationTerm(terms) {
+  return (terms || []).some((term) => GENERIC_ANNOTATION_GROUPS.has(term.slug));
+}
+
+function classesFromAnnotationTerms(terms) {
+  return (terms || []).map((term, index) => ({
+    name: term.name,
+    color: PROJECT_LABEL_COLORS[index % PROJECT_LABEL_COLORS.length],
+    attributes: [],
+    keypoints: [],
+  }));
+}
+
 function normalizeProjectClass(input, index = 0) {
   const source = typeof input === "string" ? { name: input } : (input || {});
   const name = String(source.name || "").trim();
@@ -3031,32 +3159,28 @@ function normalizeProjectPayload(body) {
   }
 
   const normalizedName = name.toLocaleLowerCase();
-  const annotationGroup = String(body?.annotation_group || "objects").trim() || "objects";
-  const annotationItems = annotationGroup
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const genericAll = new Set(["object", "objects", "all", "any"]);
-  const hasGenericAll = annotationItems.some((item) => genericAll.has(item.toLowerCase()));
-  const effectiveAnnotationItems = hasGenericAll ? [] : annotationItems;
+  const annotationGroupDefault = projectType === "Classification" ? "" : "objects";
+  const annotationGroup = String(body?.annotation_group || annotationGroupDefault).trim() || annotationGroupDefault;
+  const annotationTerms = parseAnnotationGroupTerms(annotationGroup);
+  const hasGenericAll = hasGenericAnnotationTerm(annotationTerms);
+  const effectiveAnnotationTerms = projectType === "Object Detection" && hasGenericAll ? [] : annotationTerms;
 
   // Do not hard-block unknown object names for object-detection projects.
   // Allow generic "object(s)" to represent detect-all behavior.
 
-  const seededClasses = effectiveAnnotationItems.map((item, index) => ({
-    name: item,
-    color: PROJECT_LABEL_COLORS[index % PROJECT_LABEL_COLORS.length],
-    attributes: [],
-    keypoints: [],
-  }));
+  const seededClasses = classesFromAnnotationTerms(effectiveAnnotationTerms);
+  const classificationType = projectType === "Classification" && CLASSIFICATION_TYPES.has(String(body?.classification_type || "Multi-Label"))
+    ? String(body?.classification_type || "Multi-Label")
+    : (projectType === "Classification" ? "Multi-Label" : null);
 
   return {
     name,
     normalized_name: normalizedName,
     tool: String(body?.tool || "Rapid").trim() || "Rapid",
     project_type: projectType,
-    classification_type: projectType === "Classification" ? String(body?.classification_type || "Multi-Label") : null,
+    classification_type: classificationType,
     annotation_group: annotationGroup,
+    annotation_group_terms: projectType === "Classification" ? annotationTerms : effectiveAnnotationTerms,
     classes: seededClasses,
     license: String(body?.license || "Public Domain").trim() || "Public Domain",
     visibility: String(body?.visibility || "Public").trim() === "Private" ? "Private" : "Public",
@@ -3209,6 +3333,8 @@ function serializeProject(project) {
     project_type: project.project_type,
     classification_type: project.classification_type || null,
     annotation_group: project.annotation_group,
+    annotation_group_terms: Array.isArray(project.annotation_group_terms) ? project.annotation_group_terms : [],
+    annotationGroupModifiedAt: project.annotationGroupModifiedAt || null,
     annotation: project.annotation_group,
     license: project.license,
     visibility: project.visibility || "Public",

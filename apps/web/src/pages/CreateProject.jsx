@@ -137,8 +137,7 @@ export default function CreateProject() {
             <label className="text-[13px] font-bold text-gray-800 mb-2 flex items-center gap-1">
               Annotation Group <span className="text-gray-300 font-normal">i</span>
             </label>
-            <input
-              type="text"
+            <textarea
               value={annotationGroup}
               onChange={(e) => {
                 setAnnotationGroup(e.target.value);
@@ -162,7 +161,8 @@ export default function CreateProject() {
                   setAnnotationGroupError("");
                 }
               }}
-              className="border border-gray-300 rounded-md px-3 py-[9px] text-[13px] text-gray-900 focus:border-violet-500 focus:outline-none transition"
+              rows={4}
+              className="min-h-[42px] resize-y border border-gray-300 rounded-md px-3 py-[9px] text-[13px] text-gray-900 focus:border-violet-500 focus:outline-none transition"
             />
             {annotationGroupError && (
               <p className="mt-1 text-[12px] font-semibold text-rose-600">{annotationGroupError}</p>

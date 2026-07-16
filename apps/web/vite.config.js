@@ -52,6 +52,7 @@ const trainingTarget = `http://localhost:${Number(visionflowConfig.PORT_TRAINING
 const inferenceTarget = `http://localhost:${Number(visionflowConfig.PORT_INFERENCE_SERVICE || 5006)}`
 const notificationTarget = `http://localhost:${Number(visionflowConfig.PORT_NOTIFICATION_SERVICE || 5009)}`
 const notificationsEnabled = String(visionflowConfig.NOTIFICATIONS_ENABLED ?? 'true').toLowerCase() !== 'false'
+const ppeMultiLabelModel = String(visionflowConfig.PPE_MULTI_LABEL_MODEL || 'yolov8m.pt')
 
 const createProxy = (target) => ({
   target,
@@ -63,6 +64,7 @@ export default defineConfig({
   plugins: [react()],
   define: {
     'import.meta.env.VITE_NOTIFICATIONS_ENABLED': JSON.stringify(String(notificationsEnabled)),
+    'import.meta.env.VITE_PPE_MULTI_LABEL_MODEL': JSON.stringify(ppeMultiLabelModel),
   },
   server: {
     host: '0.0.0.0',
@@ -74,6 +76,7 @@ export default defineConfig({
       // Inference Service. Keep the concrete infer route before the generic
       // project model registry route below.
       '^/api/projects/[^/]+/models/[^/]+/infer(?:$|[/?])': createProxy(inferenceTarget),
+      '^/api/projects/[^/]+/infer-batch(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/projects/[^/]+/inference-history(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/kpi/inference-stream(?:$|[/?])': createProxy(inferenceTarget),
       '^/api/(auto-label|classify|infer(?:/.*)?)(?:$|[/?])': createProxy(inferenceTarget),
