@@ -174,7 +174,7 @@ class InferenceLogic:
     def resolve_model_name(model_name=None):
         candidate = str(model_name or Config.YOLO_AUTO_LABEL_MODEL or Config.YOLO_MODEL_PATH).strip()
         if not candidate:
-            candidate = "yolo26s.pt"
+            candidate = "yolov8s-world.pt"
 
         # Backward-compatible aliases for local model names.
         aliases = {
@@ -223,7 +223,7 @@ class InferenceLogic:
         candidate_name = Path(candidate).name.lower() if candidate else ""
         if candidate and "-cls" not in candidate_name and "classif" not in candidate_name:
             return candidate
-        return "yolo26s.pt"
+        return "yolov8s-world.pt"
 
     @staticmethod
     def get_timestamp():
@@ -372,7 +372,7 @@ class InferenceLogic:
         }
         if text in helmet_terms or ("helmet" in text and any(word in text for word in ("safety", "construction", "worker", "industrial", "yellow", "ppe"))):
             return "helmet"
-        if text in vest_terms or ("vest" in text and any(word in text for word in ("safety", "reflective", "visibility", "worker", "orange", "yellow", "green", "ppe"))):
+        if text in vest_terms or ("vest" in text and any(word in text for word in ("safety", "reflective", "reflecting", "visibility", "worker", "orange", "yellow", "green", "ppe"))):
             return "vest"
         return None
 
