@@ -37,6 +37,7 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [datasetStats, setDatasetStats] = useState(null);
   
   const [config, setConfig] = useState({
     name: "",
@@ -99,8 +100,19 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
       setStep(1);
       setError(null);
       setPreviews([]);
+      setDatasetStats(null);
+    } else {
+      fetch(`/api/projects/${projectId}/annotation-status`)
+        .then(res => res.json())
+        .then(data => setDatasetStats(data))
+        .catch(err => console.error("Failed to fetch dataset stats", err));
     }
-  }, [isOpen]);
+  }, [isOpen, projectId]);
+
+  const totalOriginal = datasetStats ? datasetStats.total_assets : 0;
+  const trainOriginal = Math.round(totalOriginal * (config.split.train / 100));
+  const totalAugmented = config.augmentations.length > 0 ? trainOriginal * (config.max_version_size - 1) : 0;
+  const finalDatasetSize = totalOriginal + totalAugmented;
 
   const handleGenerate = async () => {
     const splitTotal =
@@ -432,9 +444,16 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <p className="text-sm font-black">Dataset Multiplier</p>
-                    <p className="text-xs font-bold text-gray-400">Total number of versions per original image.</p>
+                    <p className="text-xs font-bold text-gray-400">Total number of versions per original image in the training set.</p>
                   </div>
-                  <div className="text-2xl font-black text-emerald-400">{config.max_version_size}x</div>
+                  <div className="text-right">
+                    <div className="text-2xl font-black text-emerald-400">{config.max_version_size}x</div>
+                    {totalOriginal > 0 && config.augmentations.length > 0 && (
+                      <div className="text-[10px] font-bold text-gray-500 mt-1">
+                        Generates ~{totalAugmented} augmented copies
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   {[1, 2, 3, 5].map(m => (
@@ -470,8 +489,26 @@ export default function GenerateVersionModal({ projectId, isOpen, onClose, onGen
                 <div className="space-y-3">
                   <SummaryItem label="Version Name" value={config.name || "Untitled Version"} />
                   <SummaryItem label="Preprocessing" value={`${config.preprocessing.resize.enabled ? 'Resize ' + config.preprocessing.resize.width + 'x' + config.preprocessing.resize.height : 'Original Size'}`} />
-                  <SummaryItem label="Augmentations" value={`${config.augmentations.length} Active (x${config.max_version_size} total images)`} />
-                  <SummaryItem label="Image Improvement" value={config.augmentations.length > 0 ? (config.image_improvement ? "Enabled" : "Disabled") : "Available after augmentation changes"} />
+                  <SummaryItem label="Augmentations" value={`${config.augmentations.length} Active (x${config.max_version_size} train multiplier)`} />
+                  
+                  {totalOriginal > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-100 space-y-2">
+                       <div className="flex justify-between items-center text-xs">
+                          <span className="font-bold text-gray-500">Original Images</span>
+                          <span className="font-black text-gray-700">{totalOriginal}</span>
+                       </div>
+                       {config.augmentations.length > 0 && config.max_version_size > 1 && (
+                         <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-emerald-600">Generated Copies (Train Set Only)</span>
+                            <span className="font-black text-emerald-600">+{totalAugmented}</span>
+                         </div>
+                       )}
+                       <div className="flex justify-between items-center pt-2">
+                          <span className="text-sm font-black text-gray-900 uppercase">Total Version Size</span>
+                          <span className="text-lg font-black text-violet-600">{finalDatasetSize} images</span>
+                       </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

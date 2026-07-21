@@ -1,16 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Square, Hexagon, Hand, Sparkles, Tag } from 'lucide-react';
 import { useAnnotation } from './AnnotationContext';
 import { useCanvasInteraction } from './hooks/useCanvasInteraction';
 
 export default function Canvas() {
   const {
-    containerRef, viewportRef, imgRef, currentAsset, pan, zoom, isClassification, classificationType, tool,
+    containerRef, viewportRef, imgRef, currentAsset, pan, zoom, isClassification, classificationType, tool, setTool,
     spacePressed, annotations, classes, selectedIdx, setSelectedIdx,
     isSaving, crosshair, activeColor, isDrawingBox, currentBox,
     currentPolygon, mousePos, removeAnnotation, setZoom, setPan
   } = useAnnotation();
-  const canRenderBoxes = !isClassification || classificationType === "Multi-Label";
+  const canRenderBoxes = true; // Allow boxes for all project types so auto-labeled boxes can be edited
+
 
   const {
     handleMouseDown, handleMouseMove, handleMouseUp, handleZoom,
@@ -38,6 +39,50 @@ export default function Canvas() {
   }, [containerRef, currentAsset?.url, updateCanvasSize]);
 
   return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── Canvas Drawing Toolbar ─────────────────────────────────────── */}
+      <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border-b border-gray-100 shrink-0 shadow-sm">
+        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest mr-2">Tools</span>
+        <div className="flex bg-gray-100/80 p-0.5 rounded-xl border border-gray-200/50">
+            <>
+              <button
+                onClick={() => setTool('box')}
+                title="Bounding Box (B)"
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${tool === 'box' ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+              >
+                <Square size={14} /> Box
+              </button>
+              <button
+                onClick={() => { setTool('polygon'); }}
+                title="Polygon Tool (P)"
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${tool === 'polygon' ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+              >
+                <Hexagon size={14} /> Polygon
+              </button>
+              <button
+                onClick={() => setTool('drag')}
+                title="Pan / Drag (Space)"
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${tool === 'drag' ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+              >
+                <Hand size={14} /> Pan
+              </button>
+              <button
+                onClick={() => setTool('magic')}
+                title="Smart Click – AI Prompt"
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${tool === 'magic' ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+              >
+                <Sparkles size={14} /> Smart
+              </button>
+              {isClassification && (
+                <div className="px-3 py-1.5 text-[11px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5 border-l border-gray-200/50 ml-1">
+                  <Tag size={13} strokeWidth={3} /> Tagging Mode
+                </div>
+              )}
+            </>
+        </div>
+      </div>
+
+      {/* ── Canvas Viewport ────────────────────────────────────────────── */}
     <div
       ref={viewportRef}
       className={`flex-1 relative bg-gray-100 p-8 flex items-center justify-center overflow-hidden select-none ${canRenderBoxes && (tool === 'drag' ? 'cursor-grab' : 'cursor-crosshair')}`}
@@ -122,7 +167,7 @@ export default function Canvas() {
                         </foreignObject>
                      </g>
                   );
-               } else if (ann.type === 'polygon' && ann.points && !isClassification) {
+               } else if (ann.type === 'polygon' && ann.points) {
                   const pts = ann.points.map(p => `${p.x * rw},${p.y * rh}`).join(" ");
                   const px = ann.points[0].x * rw;
                   const py = ann.points[0].y * rh;
@@ -199,7 +244,8 @@ export default function Canvas() {
          >
            {Math.round(zoom * 100)}%
          </button>
-      </div>
+       </div>
+     </div>
     </div>
   );
 }

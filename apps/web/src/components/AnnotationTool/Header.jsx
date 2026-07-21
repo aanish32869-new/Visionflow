@@ -51,7 +51,6 @@ export default function Header() {
 
         {/* Canvas Tools */}
         <div className="flex bg-gray-100/80 p-0.5 rounded-xl border border-gray-200/50">
-           {!isClassification ? (
              <>
                 <button 
                   onClick={() => setTool('box')} 
@@ -81,12 +80,12 @@ export default function Header() {
                 >
                    <Sparkles size={16} />
                 </button>
+                {isClassification && (
+                  <div className="px-3 py-1.5 text-[11px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5 border-l border-gray-200/50 ml-1">
+                    <Tag size={13} strokeWidth={3} /> Tagging Mode
+                  </div>
+                )}
              </>
-           ) : (
-             <div className="px-3 py-1.5 text-[11px] font-black text-violet-700 uppercase tracking-widest flex items-center gap-1.5">
-               <Tag size={13} strokeWidth={3} /> Tagging Mode
-             </div>
-           )}
         </div>
       </div>
 

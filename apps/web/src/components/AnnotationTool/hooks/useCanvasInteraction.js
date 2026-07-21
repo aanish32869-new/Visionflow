@@ -97,7 +97,7 @@ export function useCanvasInteraction() {
       setLastPanPos({ x: e.clientX, y: e.clientY });
       return;
     }
-    if (isClassification) return;
+    if (tool === 'tag') return;
     const { x: xMouse, y: yMouse, rw, rh } = getPos(e);
     
     if (tool === 'box') {
@@ -185,7 +185,7 @@ export function useCanvasInteraction() {
       setLastPanPos({ x: e.clientX, y: e.clientY });
       return;
     }
-    if (isClassification) return;
+    if (tool === 'tag') return;
     if (isMoving && dragStartPos && initialAnnState) {
       const dx = (xMouse - dragStartPos.x) / containerRef.current.offsetWidth;
       const dy = (yMouse - dragStartPos.y) / containerRef.current.offsetHeight;
@@ -236,7 +236,7 @@ export function useCanvasInteraction() {
     const completedBox = currentBox;
     setIsPanning(false); setIsMoving(false); setIsResizing(false); setIsDrawingBox(false);
     setStartPoint(null); setCurrentBox(null);
-    if (isClassification) return;
+    if (tool === 'tag') return;
     if (tool === 'box' && wasDrawingBox) {
       if (completedBox && completedBox.w > 5 && completedBox.h > 5) {
         if (!activeClass && lockAnnotationClasses) {

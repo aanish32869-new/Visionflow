@@ -134,11 +134,20 @@ class VersionManager:
         classes = set()
         
         class_remap = options.get("class_remap", {})
-        # Dataset multiplier is treated as virtual expansion during training time.
-        # We keep immutable snapshots physically compact (original assets only).
-        max_version_size = int(options.get("max_version_size", 1) or 1)
+        
+        from dataset_exporter import (
+            _load_asset_image, 
+            _prepare_image, 
+            _transform_annotation,
+            _normalize_augmentation_config,
+            _normalize_preprocessing
+        )
+        preprocessing_config = _normalize_preprocessing(options)
+        augmentation_config = _normalize_augmentation_config(options)
+        enabled_augmentations = augmentation_config["enabled"]
+        max_version_size = augmentation_config["max_version_size"]
 
-        # 4. Apply Preprocessing & Augmentations to Snapshot
+        # 4. Apply Preprocessing to Snapshot
         for asset_meta in snapshot_assets:
             orig_id = asset_meta["original_asset_id"]
             asset_anns = [dict(a) for a in live_annotations if str(a.get("asset_id")) == orig_id]
@@ -158,16 +167,17 @@ class VersionManager:
                 if "_id" in ann_copy: del ann_copy["_id"]
                 final_annotations.append(ann_copy)
 
-            # No physical duplication for multiplier in immutable snapshot.
-            # Augmentation randomness is applied dynamically by training dataloaders.
-
-        # 5. Split Logic (Apply to Originals)
+        # 5. Split & Materialize Logic
         rebalance = options.get("rebalance", False)
         split = options.get("split", {"train": 70, "valid": 20, "test": 10})
         
         final_version_assets = []
         final_version_annotations = []
         split_counts = {"train": 0, "valid": 0, "test": 0}
+
+        augmented_dir = os.path.join(Config.DATASET_DIR, version_id, "augmented_assets")
+        if max_version_size > 1 and enabled_augmentations:
+            os.makedirs(augmented_dir, exist_ok=True)
 
         def assign_splits(assets_to_split):
             random.shuffle(assets_to_split)
@@ -182,15 +192,57 @@ class VersionManager:
                 
                 final_version_assets.append(asset)
                 
-                # Multiplier is virtual; do not materialize extra assets here.
+                # Materialize augmented copies for train split
+                if s_name == "train" and max_version_size > 1 and enabled_augmentations:
+                    orig_id = asset["original_asset_id"]
+                    asset_anns = [a for a in final_annotations if a["asset_id"] == orig_id]
+                    
+                    source_image = None
+                    extra = max_version_size - 1
+                    for c_idx in range(extra):
+                        if source_image is None:
+                            source_image = _load_asset_image(db, asset, Config.UPLOAD_DIR)
+                            if source_image is None:
+                                break
+                        
+                        aug_name = enabled_augmentations[c_idx % len(enabled_augmentations)]
+                        # Pass empty preprocessing so the exporter handles resize/crop uniformly later
+                        processed_image, prep_meta = _prepare_image(source_image, {}, augmentation_name=aug_name, return_meta=True)
+                        
+                        # Save the new image
+                        aug_asset_id = f"{orig_id}_aug_{c_idx}"
+                        aug_filename = f"{aug_asset_id}.jpg"
+                        aug_path = os.path.join(augmented_dir, aug_filename)
+                        processed_image.save(aug_path)
+                        
+                        # Create new asset record
+                        new_asset = dict(asset)
+                        new_asset["original_asset_id"] = aug_asset_id
+                        new_asset["parent_asset_id"] = orig_id
+                        new_asset["is_augmented"] = True
+                        new_asset["augmentation_type"] = aug_name
+                        new_asset["path"] = aug_path
+                        final_version_assets.append(new_asset)
+                        split_counts[s_name] += 1
+                        
+                        # Transform annotations
+                        for ann in asset_anns:
+                            ann_copy = dict(ann)
+                            if prep_meta.get("crop_box"):
+                                ann_copy = _transform_annotation(ann_copy, "crop", meta=prep_meta)
+                            if aug_name in ["horizontal_flip", "vertical_flip", "rotate"]:
+                                ann_copy = _transform_annotation(ann_copy, aug_name)
+                                
+                            ann_copy["version_id"] = version_id
+                            ann_copy["asset_id"] = aug_asset_id
+                            if "_id" in ann_copy: del ann_copy["_id"]
+                            
+                            final_version_annotations.append(ann_copy)
 
         if rebalance:
-            # Group by class (using the first annotation as the anchor)
             class_groups = {}
             for asset in snapshot_assets:
                 orig_id = asset["original_asset_id"]
-                # Find annotations for this specific original asset
-                # We can use the live_annotations we already have
                 asset_anns = [a for a in live_annotations if str(a.get("asset_id")) == orig_id]
                 
                 if asset_anns:
@@ -201,16 +253,11 @@ class VersionManager:
                     if "unlabeled" not in class_groups: class_groups["unlabeled"] = []
                     class_groups["unlabeled"].append(asset)
             
-            # Split each group independently
             for label, group in class_groups.items():
                 assign_splits(group)
         else:
-            # Standard shuffle split
             assign_splits(snapshot_assets)
 
-        # We need to filter final_annotations to only include those for assets in final_version_assets
-        # but actually we can just re-collect them or use the ones we already added
-        
         # Add all original annotations
         orig_ids_in_version = [a["original_asset_id"] for a in final_version_assets if not a.get("is_augmented")]
         for ann in final_annotations:
