@@ -6,6 +6,7 @@ import Canvas from './Canvas';
 import Sidebar from './Sidebar';
 import ConflictModal from './Modals/ConflictModal';
 import RejectModal from './Modals/RejectModal';
+import ClassSelectorModal from './Modals/ClassSelectorModal';
 import { useAnnotationAPI } from './hooks/useAnnotationAPI';
 
 function AnnotationToolInner() {
@@ -80,6 +81,7 @@ function AnnotationToolInner() {
 
       <ConflictModal />
       <RejectModal />
+      <ClassSelectorModal />
     </div>
   );
 }

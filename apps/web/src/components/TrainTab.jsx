@@ -99,8 +99,8 @@ export default function TrainTab({ projectId, onOpenModels }) {
   const [message, setMessage] = useState(null);
 
   const [device, setDevice] = useState("auto");
-  const [architecture, setArchitecture] = useState("dinov3");
-  const [modelSize, setModelSize] = useState("base");
+  const [architecture, setArchitecture] = useState("yolov8");
+  const [modelSize, setModelSize] = useState("small");
   const [versionId, setVersionId] = useState("");
 
   const [epochs, setEpochs] = useState("50");

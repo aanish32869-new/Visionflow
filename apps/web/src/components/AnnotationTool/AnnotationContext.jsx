@@ -103,9 +103,21 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
 
   const addManualAnnotation = (draftAnnotation) => {
     if (!draftAnnotation) return false;
+    if (!activeClass && classes.length > 0) {
+      // Just use the first available class
+      const manualAnnotation = buildManualAnnotation(draftAnnotation, classes[0]);
+      setAnnotations((prev) => {
+        const next = [...prev, manualAnnotation];
+        setSelectedIdx(next.length - 1);
+        return next;
+      });
+      setActiveClassIdx(0);
+      setActiveTab('annotations');
+      return true;
+    }
     if (!activeClass) {
-      showFeedback("Please add or select a project class first.");
-      setActiveTab('classes');
+      setPendingAnnotation(draftAnnotation);
+      setShowClassSelector(true);
       return false;
     }
 
@@ -121,11 +133,6 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
 
   const finishPolygon = () => {
     if (currentPolygon.length > 2) {
-      if (!activeClass && lockAnnotationClasses) {
-         showFeedback("Please add at least one project class first.");
-         setCurrentPolygon([]);
-         return;
-      }
       const rect = containerRef.current.getBoundingClientRect();
       const normalizedPoints = currentPolygon.map(p => ({
         x: p.x / rect.width,
@@ -136,6 +143,13 @@ export function AnnotationProvider({ assets, initialAssetId, projectId, projectT
         type: 'polygon',
         points: normalizedPoints
       };
+      
+      if (!activeClass && lockAnnotationClasses) {
+         showFeedback("Please add at least one project class first.");
+         setCurrentPolygon([]);
+         return;
+      }
+      
       addManualAnnotation(draftAnnotation);
     }
     setCurrentPolygon([]);
