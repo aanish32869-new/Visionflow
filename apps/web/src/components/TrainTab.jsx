@@ -115,7 +115,20 @@ export default function TrainTab({ projectId, onOpenModels }) {
   const jobStatusRef = useRef({});
   const hasLoadedJobsRef = useRef(false);
 
-  const currentArch = useMemo(() => ARCHITECTURES.find((a) => a.id === architecture) || ARCHITECTURES[0], [architecture]);
+  const availableArchitectures = useMemo(() => {
+    if (!project) return ARCHITECTURES;
+    const isDetection = project.project_type === "Object Detection";
+    return ARCHITECTURES.filter((a) => (isDetection ? a.id === "yolov8" : a.id !== "yolov8"));
+  }, [project]);
+
+  const currentArch = useMemo(() => availableArchitectures.find((a) => a.id === architecture) || availableArchitectures[0] || ARCHITECTURES[0], [architecture, availableArchitectures]);
+
+  useEffect(() => {
+    if (availableArchitectures.length > 0 && !availableArchitectures.find(a => a.id === architecture)) {
+      setArchitecture(availableArchitectures[0].id);
+    }
+  }, [availableArchitectures, architecture]);
+
   const deletedJobsStorageKey = `visionflow_deleted_jobs_${projectId}`;
   const deletedJobSet = useMemo(() => new Set(deletedJobIds.map((id) => String(id))), [deletedJobIds]);
   const filterDeletedJobs = (rows) => (Array.isArray(rows) ? rows.filter((j) => !deletedJobSet.has(String(j?.job_id || ""))) : []);
@@ -131,17 +144,19 @@ export default function TrainTab({ projectId, onOpenModels }) {
   };
 
   useEffect(() => {
-    if (!currentArch.sizes.includes(modelSize)) {
+    if (currentArch && !currentArch.sizes.includes(modelSize)) {
       setModelSize(currentArch.sizes[0]);
     }
   }, [currentArch, modelSize]);
 
   useEffect(() => {
-    setEpochs(String(currentArch.defaults.epochs));
-    setBatchSize(String(currentArch.defaults.batch));
-    setImageSize(String(currentArch.defaults.image));
-    setWorkers(String(currentArch.defaults.workers));
-  }, [architecture]);
+    if (currentArch) {
+      setEpochs(String(currentArch.defaults.epochs));
+      setBatchSize(String(currentArch.defaults.batch));
+      setImageSize(String(currentArch.defaults.image));
+      setWorkers(String(currentArch.defaults.workers));
+    }
+  }, [currentArch]);
 
   useEffect(() => {
     try {
@@ -385,7 +400,7 @@ export default function TrainTab({ projectId, onOpenModels }) {
 
         <Step n={2} title="Select Architecture">
           <div className="space-y-2">
-            {ARCHITECTURES.map((a) => (
+            {availableArchitectures.map((a) => (
               <button 
                 key={a.id} 
                 onClick={() => setArchitecture(a.id)} 
