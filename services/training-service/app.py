@@ -911,6 +911,10 @@ def _dispatch_training(project_id, data):
 
     db = _get_db()
     version = db.versions.find_one({"version_id": version_id}) or {}
+    project = db.projects.find_one({"project_id": str(project_id)}) or {}
+    classification_type = project.get("classification_type", "Single-Label")
+    params["classification_type"] = classification_type
+
     dataset_multiplier = _extract_dataset_multiplier(version)
     auto_params = _calculate_auto_params(project_id, version_id, architecture)
     def _resolve(val, key):
@@ -969,6 +973,7 @@ def _dispatch_training(project_id, data):
             "img_size": img_size,
             "workers": workers,
             "device": device,
+            "classification_type": params.get("classification_type", "Single-Label"),
             "export": export_cfg,
         },
         "status": "Preparing", "progress": 0, "created_at": _utc_now(), "updated_at": _utc_now(),

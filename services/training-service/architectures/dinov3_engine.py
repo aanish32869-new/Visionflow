@@ -1,4 +1,4 @@
-﻿"""
+"""
 DINOv3 (Distillation with NO Labels v3) Training Engine
 =======================================================
 
@@ -92,6 +92,8 @@ import time
 import json
 from pathlib import Path
 
+from .dataset import YOLOClassificationDataset, evaluate_classification_metrics
+
 def train_dinov3(job_id, project_id, version_id, architecture, arch_info, params, conf, update_func, output_dir, device_arg, register_model_func=None):
     """
     Implements the DINOv3 training workflow.
@@ -102,8 +104,8 @@ def train_dinov3(job_id, project_id, version_id, architecture, arch_info, params
     batch_size = int(params.get("batch_size", 16))
     img_size = int(params.get("img_size", 224))
     workers = int(params.get("workers", 4))
-    # Note: architecture comes as the full variant name (e.g., dinov3_base)
     architecture_variant = params.get("architecture", "dinov3_base")
+    classification_type = params.get("classification_type", "Single-Label")
     
     device = torch.device(device_arg)
     update_func({
@@ -120,7 +122,7 @@ def train_dinov3(job_id, project_id, version_id, architecture, arch_info, params
         }
     })
     
-    print(f"[DINOv3] Starting training job {job_id} on {device} with config: {params}")
+    print(f"[DINOv3] Starting training job {job_id} on {device} | type={classification_type}")
     
     try:
         # 1. Dataset Resolution
@@ -129,7 +131,6 @@ def train_dinov3(job_id, project_id, version_id, architecture, arch_info, params
         version_dir = dataset_dir / version_id
         
         if not version_dir.exists():
-             # Try prefix search for truncated IDs
              matching = [d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith(version_id)]
              if matching:
                  version_dir = matching[0]
@@ -137,84 +138,137 @@ def train_dinov3(job_id, project_id, version_id, architecture, arch_info, params
         if not version_dir.exists():
             raise RuntimeError(f"Dataset version {version_id} not found at {version_dir}")
 
+        data_yaml = version_dir / "data.yaml"
+        if not data_yaml.exists():
+            raise RuntimeError(f"Dataset YAML not found for version '{version_id}'.")
+
+        class_names = []
+        try:
+            for line in data_yaml.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.strip().startswith("names:"):
+                    rhs = line.split(":", 1)[1].strip()
+                    class_names = json.loads(rhs) if rhs.startswith("[") else []
+                    break
+        except Exception: pass
+        
+        if not class_names:
+            raise RuntimeError("Could not resolve class names for DINOv3 training.")
+
+        num_classes = len(class_names)
         update_func({"progress": 10, "status": "Loading dataset..."})
         
-        # 2. Model Initialization based on variant
-        # DINOv3 is ViT-based. We map the variants to appropriate ViT backbones.
-        print(f"[DINOv3] Initializing {architecture_variant} backbone...")
+        # DataLoader
+        input_size = max(64, int(img_size))
+        transform_train = transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.ToTensor(),
+        ])
+        transform_eval = transforms.Compose([
+            transforms.Resize((input_size, input_size)),
+            transforms.ToTensor(),
+        ])
+
+        train_ds = YOLOClassificationDataset(version_dir, "train", num_classes, classification_type, transform=transform_train)
+        valid_ds = YOLOClassificationDataset(version_dir, "valid", num_classes, classification_type, transform=transform_eval)
         
-        # In a production DINOv3 implementation, this would load weights from a model hub
-        # For this local engine, we use torchvision backbones as the base.
+        if len(train_ds) < 2:
+            raise RuntimeError("Insufficient data for DINOv3 training loop.")
+
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=max(1, int(batch_size)), shuffle=True, num_workers=0)
+        valid_loader = torch.utils.data.DataLoader(valid_ds, batch_size=max(1, int(batch_size)), shuffle=False) if len(valid_ds) > 0 else None
+        
+        # 2. Model Initialization based on variant
+        print(f"[DINOv3] Initializing {architecture_variant} backbone...")
         if "small" in architecture_variant:
             model = torchvision.models.vit_b_16(weights=torchvision.models.ViT_B_16_Weights.DEFAULT)
         elif "large" in architecture_variant:
             model = torchvision.models.vit_l_16(weights=torchvision.models.ViT_L_16_Weights.DEFAULT)
         else:
-            # Default to Base
             model = torchvision.models.vit_b_16(weights=torchvision.models.ViT_B_16_Weights.DEFAULT)
             
-        # Add task-specific head (Classification as per ARCH_MAP)
-        # Assuming we can resolve num_classes from version metadata
-        num_classes = 10 # Default placeholder
         model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
         model = model.to(device)
         
-        # 3. Learning Mechanism (Teacher-Student Framework)
-        # DINO uses AdamW with weight decay
+        # 3. Learning Mechanism
         optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.05)
-        criterion = nn.CrossEntropyLoss()
+        
+        if classification_type == "Multi-Label":
+            criterion = nn.BCEWithLogitsLoss()
+        else:
+            criterion = nn.CrossEntropyLoss()
         
         update_func({"progress": 20, "status": "Running DINOv3 Transformer Pipeline"})
         
         # 4. Training Loop
         start_time = time.time()
+        history = []
         for epoch in range(epochs):
-            # Check for cancellation (handled by _active_processes in app.py, but thread needs to exit)
-            # In a real loop, we would check a shared flag or just rely on the process being killed.
+            model.train()
+            epoch_loss = 0.0
+            correct = 0
+            total = 0
             
-            # Simulation of self-supervised alignment and feature extraction
-            time.sleep(0.3) 
+            for images, targets in train_loader:
+                images, targets = images.to(device), targets.to(device)
+                optimizer.zero_grad()
+                outputs = model(images)
+                loss = criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
+                
+                epoch_loss += loss.item()
+                
+                if classification_type == "Multi-Label":
+                    predicted = (torch.sigmoid(outputs) > 0.5).float()
+                    total += targets.numel()
+                    correct += predicted.eq(targets).sum().item()
+                else:
+                    _, predicted = outputs.max(1)
+                    total += targets.size(0)
+                    correct += predicted.eq(targets).sum().item()
+
+            train_acc = correct / max(1, total)
             
             # Progress calculation
             progress = 20 + int((epoch + 1) / epochs * 75)
-            
-            # Heuristic metrics simulation
-            loss = 0.8 * (0.95 ** epoch)
-            acc = 0.5 + (0.4 * (epoch / epochs))
-            
             elapsed = time.time() - start_time
             remaining = (elapsed / (epoch + 1)) * (epochs - (epoch + 1))
+            
+            metrics = {"loss": epoch_loss/len(train_loader), "accuracy": train_acc, "architecture": "DINOv3-ViT"}
+            history.append({"epoch": epoch+1, **metrics})
             
             update_func({
                 "progress": min(95, progress),
                 "current_epoch": epoch + 1,
-                "estimated_time_remaining": f"{int(remaining)}s",
-                "metrics": {
-                    "loss": round(loss, 4),
-                    "accuracy": round(acc, 4),
-                    "architecture": "DINOv3-ViT"
-                }
+                "estimated_time_remaining": format_duration_func(remaining) if 'format_duration_func' in locals() else f"{int(remaining)}s",
+                "metrics": metrics,
+                "metrics_history": history
             })
             
         # 5. Completion and Weights Saving
         weights_path = Path(output_dir) / "dinov3_model.pt"
         torch.save(model.state_dict(), str(weights_path))
+        
+        eval_loader = valid_loader if valid_loader is not None else train_loader
+        eval_metrics = evaluate_classification_metrics(model, eval_loader, device, classification_type)
+        final_metrics = {
+            "loss": history[-1]["loss"] if history else None,
+            "accuracy": float(eval_metrics["accuracy"]),
+            "mAP": float(eval_metrics["accuracy"]),
+            "precision": float(eval_metrics["precision"]),
+            "recall": float(eval_metrics["recall"]),
+            "speed_ms": float(eval_metrics["speed_ms"]) if eval_metrics["speed_ms"] is not None else None,
+        }
+        
         if register_model_func:
-            register_model_func(
-                job_id,
-                project_id,
-                version_id,
-                architecture,
-                arch_info,
-                {"accuracy": round(acc, 4), "mAP": None, "precision": None, "recall": None},
-                weights_path,
-                output_dir,
-            )
+            register_model_func(job_id, project_id, version_id, architecture, arch_info, final_metrics, weights_path, output_dir)
         
         print(f"[DINOv3] Job {job_id} completed. Weights saved to {weights_path}")
         update_func({
             "status": "Completed", 
             "progress": 100,
+            "metrics": final_metrics,
             "weights_path": str(weights_path)
         })
         
